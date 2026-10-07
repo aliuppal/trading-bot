@@ -38,7 +38,8 @@ let status = null;
 const RR_CANDLES = 8; // width of the risk/reward block, in candles
 
 // View window: `count` candle slots on screen, `offset` candles scrolled back from the latest (0 = live edge).
-const view = { count: null, offset: 0 };
+// yZoom / yPan stretch and move the price scale (1 / 0 = auto-fit), set by dragging the price axis or the chart.
+const view = { count: null, offset: 0, yZoom: 1, yPan: 0 };
 let pointer = null; // { x, y } in CSS px while the mouse is over the chart
 let geom = null; // last layout, for mouse interaction
 
@@ -76,9 +77,14 @@ function drawChart() {
   let hi = Math.max(...visible.map((c) => c.high), ...extra);
   const padY = (hi - lo) * 0.05 || hi * 0.001;
   lo -= padY; hi += padY;
+  if (view.yZoom !== 1 || view.yPan !== 0) { // manual price scale
+    const mid = (lo + hi) / 2 + view.yPan * (hi - lo);
+    const half = ((hi - lo) / 2) * view.yZoom;
+    lo = mid - half; hi = mid + half;
+  }
   const y = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
   const priceAt = (py) => lo + (1 - (py - pad.t) / (h - pad.t - pad.b)) * (hi - lo);
-  geom = { pad, w, h, step, start, total };
+  geom = { pad, w, h, step, start, total, range: hi - lo };
   const mono = "11px 'JetBrains Mono', ui-monospace, monospace";
   const fmtT = (t) => new Date(t).toLocaleString([], granularity >= 86400 ? { month: 'short', day: 'numeric' } : { hour: '2-digit', minute: '2-digit' });
 
@@ -90,7 +96,7 @@ function drawChart() {
     ctx.fillText(Math.round(p).toLocaleString(), w - pad.r + 8, y(p) + 4);
   }
   const every = Math.max(1, Math.ceil(view.count / 6));
-  for (let i = Math.ceil(Math.max(0, start) / every) * every; i <= Math.min(end, candles.length - 1); i += every) {
+  for (let i = Math.ceil(Math.max(0, start) / every) * every; i <= Math.min(Math.floor(end), candles.length - 1); i += every) {
     ctx.fillText(fmtT(candles[i].time), x(i) - 18, h - 6);
   }
 
@@ -143,7 +149,8 @@ function drawChart() {
 
   // candles (visible only)
   const cw = Math.max(1, step * 0.6);
-  for (let i = Math.max(0, start); i <= Math.min(end, candles.length - 1); i++) {
+  const first = Math.max(0, Math.floor(start)), last = Math.min(Math.ceil(end), candles.length - 1);
+  for (let i = first; i <= last; i++) {
     const c = candles[i];
     ctx.strokeStyle = ctx.fillStyle = c.close >= c.open ? css('--green') : css('--red');
     ctx.beginPath(); ctx.moveTo(x(i), y(c.high)); ctx.lineTo(x(i), y(c.low)); ctx.stroke();
@@ -154,7 +161,7 @@ function drawChart() {
   // SMA20
   ctx.strokeStyle = css('--blue'); ctx.lineWidth = 1.5; ctx.beginPath();
   let started = false;
-  for (let i = Math.max(19, Math.floor(start) - 1); i <= Math.min(end + 1, candles.length - 1); i++) {
+  for (let i = Math.max(19, first - 1); i <= Math.min(last + 1, candles.length - 1); i++) {
     const avg = candles.slice(i - 19, i + 1).reduce((a, b) => a + b.close, 0) / 20;
     if (started) ctx.lineTo(x(i), y(avg)); else { ctx.moveTo(x(i), y(avg)); started = true; }
   }
@@ -248,6 +255,8 @@ function panChart(dxPixels) {
 function resetChart() {
   view.count = null;
   view.offset = 0;
+  view.yZoom = 1;
+  view.yPan = 0;
   drawChart();
 }
 
@@ -257,11 +266,24 @@ function resetChart() {
   let pinch = null;
   const rel = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomChart(e.deltaY > 0 ? 1.15 : 1 / 1.15, rel(e).x); }, { passive: false });
-  canvas.addEventListener('mousedown', (e) => { drag = rel(e).x; canvas.classList.add('grabbing'); });
-  window.addEventListener('mouseup', () => { drag = null; canvas.classList.remove('grabbing'); });
+  // Where a drag started: the price axis (stretch price), the time axis (stretch time) or the chart (move).
+  const zone = (p) => (!geom ? 'plot' : p.x > geom.w - geom.pad.r ? 'price' : p.y > geom.h - geom.pad.b ? 'time' : 'plot');
+  let mode = null, last = null;
+  canvas.addEventListener('mousedown', (e) => { last = rel(e); mode = zone(last); drag = last.x; canvas.classList.add('grabbing'); });
+  window.addEventListener('mouseup', () => { drag = null; mode = null; canvas.classList.remove('grabbing'); });
   canvas.addEventListener('mousemove', (e) => {
     const p = rel(e);
-    if (drag !== null) { panChart(p.x - drag); drag = p.x; }
+    if (mode && last && geom) {
+      const dx = p.x - last.x, dy = p.y - last.y;
+      if (mode === 'price') view.yZoom = Math.min(20, Math.max(0.05, view.yZoom * Math.exp(dy * 0.006))); // drag down = compress
+      else if (mode === 'time') { zoomChart(Math.exp(dx * 0.006)); last = p; return; } // drag right = fewer candles
+      else {
+        view.offset = Math.max(0, view.offset + dx / geom.step);
+        view.yPan += dy / (geom.h - geom.pad.t - geom.pad.b); // drag up/down moves price
+      }
+      last = p;
+    }
+    canvas.style.cursor = mode ? 'grabbing' : ({ price: 'ns-resize', time: 'ew-resize', plot: 'crosshair' })[zone(p)];
     pointer = p;
     drawChart();
   });
