@@ -145,6 +145,11 @@ export function bracketFor(side, entry, zone, opts) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Smallest gap that counts, as % of price, per entry timeframe (1m gaps are naturally small).
+export const MIN_GAP_PCT = { 60: 0.01, 180: 0.015, 300: 0.02, 900: 0.03 };
+export const minGapFor = (seconds) => MIN_GAP_PCT[seconds] ?? 0.03;
+
+// ---------------------------------------------------------------------------------------------
 // Higher-timeframe (HTF) FVGs and taps
 // ---------------------------------------------------------------------------------------------
 

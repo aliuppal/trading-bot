@@ -418,3 +418,32 @@ test('leverage: brokers without leverage (simulator) always use 1x', async () =>
   const [t] = await s.bot.trades();
   assert.equal(t.leverage, 1);
 });
+
+test('cycle lock: only one holder at a time, stale locks are taken over', async () => {
+  const { SupabaseKV } = await import('../src/store.js');
+  const rows = new Map();
+  const fakeFetch = async (url, opts) => {
+    const u = new URL(url);
+    const key = u.searchParams.get('key')?.replace(/^eq\./, '');
+    if (opts.method === 'POST') {
+      const b = JSON.parse(opts.body);
+      if (rows.has(b.key)) return { ok: false, status: 409, text: async () => 'duplicate key' };
+      rows.set(b.key, b.value); return { ok: true, status: 201 };
+    }
+    if (opts.method === 'DELETE') { rows.delete(key); return { ok: true, status: 204 }; }
+    return { ok: true, status: 200, json: async () => (rows.has(key) ? [{ value: rows.get(key) }] : []) };
+  };
+  const kv = new SupabaseKV({ url: 'https://abc.supabase.co', key: 'sb_secret_x' }, fakeFetch);
+  assert.equal(await kv.tryLock('cycle', 60000), true);
+  assert.equal(await kv.tryLock('cycle', 60000), false); // second runner is turned away
+  await kv.unlock('cycle');
+  assert.equal(await kv.tryLock('cycle', 60000), true);
+  rows.set('lock_cycle', { until: Date.now() - 1 }); // holder crashed: lock expired
+  assert.equal(await kv.tryLock('cycle', 60000), true);
+});
+
+test('minimum gap size scales with the entry timeframe', async () => {
+  const { minGapFor } = await import('../src/ifvg.js');
+  assert.equal(minGapFor(60), 0.01);
+  assert.equal(minGapFor(900), 0.03);
+});

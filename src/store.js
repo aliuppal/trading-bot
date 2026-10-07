@@ -204,6 +204,28 @@ export class SupabaseKV {
     return this.upsert(key, [list.row(item)]);
   }
 
+  /** Atomic lock: inserting the lock row fails (409) while another holder has it. Stale locks expire. */
+  async tryLock(name, ttlMs = 90000) {
+    const key = `lock_${name}`;
+    const insert = () => this.fetch(`${this.base}/kv`, {
+      method: 'POST',
+      headers: { ...this.headers, Prefer: 'return=minimal' },
+      body: JSON.stringify({ key, value: { until: Date.now() + ttlMs }, updated_at: new Date().toISOString() }),
+    });
+    let res = await insert();
+    if (res.ok) return true;
+    if (res.status !== 409) throw new Error(`Supabase lock HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const cur = await this.get(key, null);
+    if (cur && cur.until > Date.now()) return false;
+    await this.req('DELETE', 'kv', `key=eq.${encodeURIComponent(key)}`); // stale: take it over
+    res = await insert();
+    return res.ok;
+  }
+
+  async unlock(name) {
+    await this.req('DELETE', 'kv', `key=eq.${encodeURIComponent(`lock_${name}`)}`);
+  }
+
   async del(key) {
     if (LISTS[key]) return this.req('DELETE', key, 'id=not.is.null');
     if (key === 'bot') return this.req('DELETE', 'settings', 'id=eq.bot');

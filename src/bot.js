@@ -266,11 +266,23 @@ export class TradingBot {
    * Called on a schedule (every minute locally, or by /api/cron on Vercel).
    * Always enforces open stops/targets; runs a full scan when the bot is on and the interval has passed.
    */
-  async tick() {
+  /** Run fn while holding the cross-instance cycle lock; returns null if another cycle holds it. */
+  async locked(fn) {
+    const kv = this.kv;
+    if (typeof kv.tryLock !== 'function') return fn(); // file / memory stores: single process
+    if (!(await kv.tryLock('cycle', 90000))) return null;
+    try { return await fn(); } finally { await kv.unlock('cycle').catch(() => {}); }
+  }
+
+  tick() {
+    return this.locked(() => this.tickUnlocked());
+  }
+
+  async tickUnlocked() {
     await this.load();
     const due = !this.state.lastRun
       || this.now() - new Date(this.state.lastRun).getTime() >= this.state.settings.intervalMinutes * 60000 - 5000;
-    if (this.state.running && due) return this.runOnce();
+    if (this.state.running && due) return this.runOnceUnlocked();
     const open = (await this.trades()).find((t) => t.status === 'open');
     if (!open) return null;
     const candles = await this.market.getCandles(open.granularity || this.state.settings.granularity, 200);
@@ -443,7 +455,13 @@ export class TradingBot {
    * One full cycle: enforce brackets, look for a fresh IFVG, ask the AI about it and execute what it decides.
    * manual: true when the user clicked "Ask AI now" (always asks the AI and always logs).
    */
-  async runOnce({ manual = false } = {}) {
+  async runOnce(opts = {}) {
+    const r = await this.locked(async () => { await this.load(); return this.runOnceUnlocked(opts); });
+    if (r === null) throw new Error('Another bot cycle is running right now, try again in a few seconds');
+    return r;
+  }
+
+  async runOnceUnlocked({ manual = false } = {}) {
     if (this.busy) throw new Error('Bot is already running a cycle');
     this.busy = true;
     const entry = { time: new Date(this.now()).toISOString() };

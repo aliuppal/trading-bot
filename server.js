@@ -7,7 +7,7 @@ import { LocalBroker } from './src/brokers/local.js';
 import { BinanceFuturesBroker } from './src/brokers/binance.js';
 import { TradingBot } from './src/bot.js';
 import { summarize } from './src/indicators.js';
-import { findIfvgs } from './src/ifvg.js';
+import { findIfvgs, minGapFor } from './src/ifvg.js';
 import { createKV } from './src/store.js';
 import { loadHtfZones } from './src/strategy.js';
 import { liquidityLevels } from './src/liquidity.js';
@@ -54,7 +54,7 @@ app.get('/api/market', wrap(async (req, res) => {
     .slice(-12);
   const liq = await liquidityLevels(market).catch(() => null);
   const liquidity = liq ? [...liq.above.slice(0, 5), ...liq.below.slice(0, 5)] : [];
-  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles, { strict: true }).slice(-6), htfZones, liquidity, lrlr: liq?.lrlr ?? null });
+  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles, { strict: true, minGapPct: minGapFor(granularity) }).slice(-6), htfZones, liquidity, lrlr: liq?.lrlr ?? null });
 }));
 app.get('/api/account', wrap(async (req, res) => res.json(await broker.getAccount())));
 app.get('/api/orders', wrap(async (req, res) => res.json(await broker.getOrders(100))));

@@ -8,7 +8,7 @@
 // In both, bullish setups need a tap of a bullish FVG (demand) and bearish setups a bearish one (supply),
 // and the entry IFVG must be confirmed on a closed candle: gap formed -> inverted within `ifvgMaxAge` candles (3-7),
 // entry within 2 candles of the inversion.
-import { activeFvgs, closedCandles, findHtfTap, formingIfvg, latestSetup } from './ifvg.js';
+import { activeFvgs, closedCandles, findHtfTap, formingIfvg, latestSetup, minGapFor } from './ifvg.js';
 import { liquidityLevels } from './liquidity.js';
 
 /**
@@ -64,10 +64,10 @@ async function evaluate(market, g, category, zones, settings, now, liquidity) {
   const candles = await market.getCandles(g, 200);
   const r = { candles, note: null, setup: null };
   const lookback = settings.ifvgMaxAge ?? 7;
-  r.forming = { bullish: formingIfvg(candles, g, 'bullish', now, { lookback }), bearish: formingIfvg(candles, g, 'bearish', now, { lookback }) };
+  r.forming = { bullish: formingIfvg(candles, g, 'bullish', now, { lookback, minGapPct: minGapFor(g) }), bearish: formingIfvg(candles, g, 'bearish', now, { lookback, minGapPct: minGapFor(g) }) };
   const closed = closedCandles(candles, g, now);
   const formation = settings.ifvgMaxAge ?? 7; // gap formed -> inverted within 3-7 candles
-  const s = latestSetup(closed, { maxAge: 2, maxGapAge: formation, displacement: settings.requireDisplacement === true });
+  const s = latestSetup(closed, { maxAge: 2, maxGapAge: formation, minGapPct: minGapFor(g), displacement: settings.requireDisplacement === true });
   const tag = `${category} ${tfLabel(g)}`;
   if (!s) { r.note = `${tag}: no fresh IFVG`; return r; }
   const quality = gradeSetup(s, liquidity);
