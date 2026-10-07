@@ -1,3 +1,5 @@
+import { describeLevels } from './liquidity.js';
+
 // Decision engine: asks Jev (TypeSafe's decisions model on OpenRouter), an OpenRouter chat model
 // or Google Gemini for BUY / SELL / HOLD.
 // Falls back to a simple rule-based strategy when no key is set or the API fails.
@@ -16,7 +18,7 @@ const RESPONSE_SCHEMA = {
 };
 
 export function buildPrompt({
-  indicators, account, recentCandles, granularity, recentDecisions = [], ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0,
+  indicators, account, recentCandles, granularity, recentDecisions = [], ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, liquidity,
 }) {
   const candleLines = recentCandles
     .map((c) => `${new Date(c.time).toISOString()} O:${c.open} H:${c.high} L:${c.low} C:${c.close} V:${Math.round(c.volume)}`)
@@ -40,6 +42,10 @@ Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
 Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
 Higher-timeframe confirmation: ${ifvg?.htf ? `price tapped a ${ifvg.htf.tf} ${ifvg.htf.type} FVG (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none'}
 Entry timeframe: ${ifvg?.granularity ? `${ifvg.granularity / 60}m` : `${granularity / 60}m`}${ifvg?.category ? ` (${ifvg.category} trade)` : ''}
+Liquidity above: ${liquidity ? describeLevels(liquidity.above, 4) : 'unknown'}
+Liquidity below: ${liquidity ? describeLevels(liquidity.below, 4) : 'unknown'}
+Draw on liquidity: ${liquidity?.draw ?? 'unclear'}${liquidity?.lrlr ? ` (low-resistance run ${liquidity.lrlr.side})` : ''}
+(PDH/PDL previous day high/low, DH/DL today, PWH/PWL previous week, EQH/EQL equal highs/lows, HTFH/HTFL higher-timeframe swings)
 Open trade: ${openTrade ? `${openTrade.side || 'long'} from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none'}
 ${review ? `RISK REVIEW of the open ${review.side}: open ${review.minutesOpen} min, currently ${review.unrealizedR}R. Decide whether to keep it (HOLD) or close it now to protect capital (${review.side === 'long' ? 'SELL' : 'BUY'} = close).` : ''}
 
@@ -206,13 +212,18 @@ export function scoreToLeverage(score) {
 }
 
 /** Flat state object for Jev: indicators, account and recent closes. */
-export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1 }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr' }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
     setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
     risk_reward: `1:${riskReward}`,
     breakeven_at_r: breakevenAtR || null,
     max_leverage: maxLeverage,
+    liquidity_above: liquidity ? describeLevels(liquidity.above, 4) : 'unknown',
+    liquidity_below: liquidity ? describeLevels(liquidity.below, 4) : 'unknown',
+    draw_on_liquidity: liquidity?.draw ?? null,
+    lrlr: liquidity?.lrlr ? `${liquidity.lrlr.side}: ${liquidity.lrlr.prices.map((p) => Math.round(p)).join(', ')}` : 'none',
+    target_mode: targetMode === 'liquidity' ? 'nearest liquidity level 1R-5R away' : `fixed 1:${riskReward}`,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
@@ -247,7 +258,9 @@ const JEV_QUESTIONS = {
     instructions: 'Decide the trade for a disciplined Bitcoin intraday trader using the Inverse Fair Value Gap (IFVG) model '
       + 'on a paper account. Bullish IFVG = long setup, bearish IFVG = short setup. Every trade uses a fixed bracket: '
       + 'stop just beyond the IFVG zone, target at the risk_reward multiple on the other side of entry. '
-      + 'At most max_trades_per_day trades per day. Only take the setup when the IFVG and momentum agree; otherwise HOLD.',
+      + 'At most max_trades_per_day trades per day. Only take the setup when the IFVG and momentum agree; otherwise HOLD. '
+      + 'Use the liquidity levels: favor trades toward the draw on liquidity (liquidity_above for longs, liquidity_below for shorts, '
+      + 'especially a low-resistance run, lrlr) and avoid trades whose path runs straight into nearby opposing liquidity.',
     criteria: {
       BUY: 'A bullish IFVG is holding as support and price should reach the target above before the stop (go long, or close an open short)',
       SELL: 'A bearish IFVG is holding as resistance and price should reach the target below before the stop (go short, or close an open long)',

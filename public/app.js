@@ -29,6 +29,7 @@ let granularity = 3600;
 let candles = [];
 let ifvgs = [];
 let htfZones = [];
+let liquidity = [];
 let trades = [];
 let status = null;
 
@@ -113,6 +114,18 @@ function drawChart() {
     labelled.push({ x: x0 + 4, y: ly, text: `${z.tf} ${bull ? 'bull' : 'bear'} FVG`, color: bull ? 'rgba(52, 211, 153, .85)' : 'rgba(251, 113, 133, .85)' });
   });
   labelled.forEach((l) => { ctx.fillStyle = l.color; ctx.fillText(l.text, l.x, l.y); });
+
+  // liquidity levels (PDH/PDL, today, previous week, equal highs/lows, HTF swings)
+  ctx.font = "10px 'JetBrains Mono', ui-monospace, monospace";
+  liquidity.forEach((l) => {
+    if (l.price < lo || l.price > hi) return;
+    ctx.strokeStyle = 'rgba(251, 191, 36, .55)'; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.l, y(l.price)); ctx.lineTo(w - pad.r, y(l.price)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(251, 191, 36, .9)';
+    ctx.fillText(l.type, w - pad.r - ctx.measureText(l.type).width - 4, y(l.price) - 3);
+  });
+  ctx.font = mono;
 
   // entry-timeframe IFVG zones
   ifvgs.forEach((z) => {
@@ -304,6 +317,7 @@ async function loadMarket() {
     candles = data.candles;
     ifvgs = data.ifvgs || [];
     htfZones = data.htfZones || [];
+    liquidity = data.liquidity || [];
     renderIndicators(data.indicators);
     $('chartUpdated').textContent = `updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     state.textContent = candles.length ? '' : 'No candle data returned for this timeframe.';
@@ -362,6 +376,9 @@ async function loadStatus() {
     $('brokerBadge').textContent = `Broker: ${s.broker}`;
     $('ruleLev').textContent = s.broker === 'binance' ? `Jev decides, max ${s.settings.maxLeverage ?? 5}x` : '1x (simulator)';
     $('ruleInv').textContent = `gap → inversion within ${s.settings.ifvgMaxAge ?? 7} candles, close ≥20% through it, entry ≤2 candles after${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
+    const lq = s.liquidity;
+    $('ruleLiq').textContent = lq ? `draw ${lq.draw ?? 'unclear'}${lq.lrlr ? ` · LRLR ${lq.lrlr.side}` : ''}${lq.above?.[0] ? ` · ↑ ${lq.above[0].type} ${Math.round(lq.above[0].price).toLocaleString()}` : ''}${lq.below?.[0] ? ` · ↓ ${lq.below[0].type} ${Math.round(lq.below[0].price).toLocaleString()}` : ''}` : 'scanning…';
+    $('ruleTarget').textContent = s.settings.targetMode === 'liquidity' ? 'nearest liquidity 1R-5R (else fixed R:R)' : `fixed 1 : ${s.settings.riskReward ?? 1}`;
     $('ruleRR').textContent = `1 : ${s.settings.riskReward ?? 1}`;
     $('ruleBE').textContent = s.settings.breakevenAtR ? `stop to entry at +${s.settings.breakevenAtR}R` : 'off';
     $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;
@@ -517,7 +534,9 @@ function pnlGroups(list, p) {
     const k = periodKey(t.exitTime, p);
     const g = groups.get(k) || { key: k, trades: 0, wins: 0, losses: 0, long: 0, short: 0, total: 0, r: 0 };
     g.trades++;
-    if (t.pnl >= 0) g.wins++; else g.losses++;
+    if (t.status === 'win' || (t.status !== 'breakeven' && t.pnl > 0)) g.wins++;
+    else if (t.status === 'loss' || t.pnl < 0) g.losses++;
+    else g.be = (g.be || 0) + 1; // breakeven: neither a win nor a loss
     g[t.side === 'short' ? 'short' : 'long'] += t.pnl;
     g.total += t.pnl;
     g.r += Number(t.r) || 0;
@@ -547,8 +566,8 @@ function renderPnl() {
       <td class="r">${g.trades}</td>
       <td class="r">${pnlSpan(g.long)}</td>
       <td class="r">${pnlSpan(g.short)}</td>
-      <td class="r">${g.wins} / ${g.losses}</td>
-      <td class="r">${Math.round((g.wins / g.trades) * 100)}%</td>
+      <td class="r">${g.wins} / ${g.losses}${g.be ? ` / ${g.be} BE` : ''}</td>
+      <td class="r">${g.wins + g.losses ? Math.round((g.wins / (g.wins + g.losses)) * 100) : 0}%</td>
       <td class="r">${g.r >= 0 ? '+' : ''}${g.r.toFixed(1)}R</td>
       <td><div class="pnl-cell"><div class="bar"><i class="${g.total >= 0 ? 'pos' : 'neg'}" style="width:${(Math.abs(g.total) / max) * 50}%"></i></div>${pnlSpan(g.total)}</div></td>
     </tr>`).join('')

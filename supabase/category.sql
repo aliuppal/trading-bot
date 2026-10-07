@@ -7,9 +7,9 @@ alter table public.trades
 create or replace view public.pnl_by_category as
 select category,
        count(*)                                                      as trades,
-       count(*) filter (where pnl >= 0)                              as wins,
-       count(*) filter (where pnl < 0)                               as losses,
-       round(100.0 * count(*) filter (where pnl >= 0) / count(*), 1) as win_rate_pct,
+       count(*) filter (where pnl > 0.005)                           as wins,
+       count(*) filter (where pnl < -0.005)                          as losses,
+       round(100.0 * count(*) filter (where pnl > 0.005) / nullif(count(*) filter (where abs(pnl) > 0.005), 0), 1) as win_rate_pct,
        round(sum(pnl), 2)                                            as total_pnl,
        round(sum(r), 2)                                              as net_r
 from public.trades

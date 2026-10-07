@@ -4,6 +4,7 @@ import { bracketFor } from './ifvg.js';
 import { scanSetups } from './strategy.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
+import { liquidityLevels, liquidityTarget, describeLevels } from './liquidity.js';
 
 const MIN_ORDER_USD = 10;
 const MAX_TRADES_KEPT = 200;
@@ -185,6 +186,7 @@ export class TradingBot {
       ai: this.ai.apiKey ? `${this.ai.provider}:${this.ai.model === 'auto' ? 'free models' : this.ai.model}` : 'rules (no AI key set)',
       broker: this.broker.name,
       storage: this.kv.name,
+      liquidity: s.liquidity ?? null,
     };
   }
 
@@ -231,6 +233,7 @@ export class TradingBot {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
     }
     if (patch.requireHtfTap !== undefined) s.requireHtfTap = patch.requireHtfTap === true || patch.requireHtfTap === 'true';
+    if (['rr', 'liquidity'].includes(patch.targetMode)) s.targetMode = patch.targetMode;
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
     if (patch.scalpEnabled !== undefined) s.scalpEnabled = patch.scalpEnabled === true || patch.scalpEnabled === 'true';
     if (['all', 'both', '180', '300', '900'].includes(String(patch.entryTimeframes))) s.entryTimeframes = String(patch.entryTimeframes);
@@ -323,10 +326,14 @@ export class TradingBot {
       pnl = short
         ? trade.notional * part - (trade.entryFee || 0) * part - exitPrice * qty - fee // proceeds - entry fee - buyback
         : exitPrice * qty - fee - trade.notional * part; // long notional already includes the entry fee
+    } else {
+      // No closing order went through (position already gone): still record the paper result from the prices.
+      pnl = (short ? trade.entryPrice - exitPrice : exitPrice - trade.entryPrice) * trade.qty;
     }
     const dir = short ? -1 : 1;
     Object.assign(trade, {
-      status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : reason === 'breakeven' ? 'breakeven' : pnl >= 0 ? 'win' : 'loss',
+      status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : reason === 'breakeven' ? 'breakeven'
+        : Math.abs(pnl) < 0.005 ? 'breakeven' : pnl > 0 ? 'win' : 'loss', // 0 P&L is breakeven, not a win
       exitTime: nowIso,
       exitPrice,
       exitReason: reason,
@@ -348,7 +355,7 @@ export class TradingBot {
     return trade;
   }
 
-  async openTrade({ side, setup, decision, account, price, candles }) {
+  async openTrade({ side, setup, decision, account, price, candles, liquidity }) {
     const label = side === 'short' ? 'SHORT' : 'BUY';
     if (!bracketFor(side, price, setup)) return { note: `${label} skipped: price is on the wrong side of the IFVG, no valid stop` };
     const margin = entryNotional(decision.sizePct, account, this.state.settings);
@@ -365,6 +372,12 @@ export class TradingBot {
     const qty = Number(order.qty) || (notional * 0.999) / entryPrice;
     const rr = this.state.settings.riskReward ?? 1;
     const b = bracketFor(side, entryPrice, setup, { rr }) || bracketFor(side, price, setup, { rr });
+    // Target at liquidity: the nearest level in the trade direction that is 1R-5R away (else the fixed R:R target).
+    let targetLevel = null;
+    if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
+      const lt = liquidityTarget(liquidity, side, entryPrice, b.risk, { minR: 1, maxR: 5 });
+      if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.type} ${Math.round(lt.price).toLocaleString('en-US')}`; }
+    }
     const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}` };
     const trade = {
       id: `T${this.now()}`,
@@ -383,6 +396,7 @@ export class TradingBot {
       stop: b.stop,
       initialStop: b.stop,
       rr: b.rr,
+      ...(targetLevel && { targetLevel }),
       breakevenAtR: this.state.settings.breakevenAtR || 0,
       target: b.target,
       risk: b.risk,
@@ -390,7 +404,7 @@ export class TradingBot {
       confidence: decision.confidence,
       source: decision.source,
       reasoning: decision.reasoning,
-      setupReason: `${describeSetup(setup, side)} · Jev ${decision.action} ${Math.round((decision.confidence || 0) * 100)}%${leverage > 1 ? ` · ${leverage}x` : ''}`,
+      setupReason: `${describeSetup(setup, side)}${targetLevel ? ` · target liquidity ${targetLevel}` : ''}${liquidity?.draw ? ` · draw on liquidity ${liquidity.draw}${liquidity.lrlr ? ' (LRLR)' : ''}` : ''} · Jev ${decision.action} ${Math.round((decision.confidence || 0) * 100)}%${leverage > 1 ? ` · ${leverage}x` : ''}`,
       orderId: order.id,
     };
     let trades = await this.trades();
@@ -451,6 +465,9 @@ export class TradingBot {
       }, this.now());
       const { setup, candles } = scan;
       const indicators = summarize(candles);
+      // Liquidity: PDH/PDL, today's high/low, PWH/PWL, equal highs/lows, HTF swings, LRLR.
+      const liquidity = await liquidityLevels(this.market, this.now()).catch(() => null);
+      this.state.liquidity = liquidity && { above: liquidity.above.slice(0, 4), below: liquidity.below.slice(0, 4), lrlr: liquidity.lrlr, draw: liquidity.draw };
       const price = indicators.price;
       entry.price = price;
       entry.setup = zoneSummary(setup);
@@ -497,6 +514,8 @@ export class TradingBot {
             riskReward: s.riskReward ?? 1,
             maxLeverage: this.broker.supportsLeverage ? s.maxLeverage ?? 5 : 1,
             breakevenAtR: s.breakevenAtR ?? 0,
+            liquidity,
+            targetMode: s.targetMode ?? 'rr',
             maxTradesPerDay: s.maxTradesPerDay,
             openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
           },
@@ -538,7 +557,7 @@ export class TradingBot {
           if (reason) entry.note = `${decision.action} not taken: ${reason}`;
           else if (!confident) entry.note = `Confidence ${decision.confidence} below minimum ${s.minConfidence}`;
           else {
-            const res = await this.openTrade({ side: want, setup, decision, account, price, candles });
+            const res = await this.openTrade({ side: want, setup, decision, account, price, candles, liquidity });
             entry.note = res.note;
             if (res.trade) { entry.executed = true; entry.tradeId = res.trade.id; entry.order = res.order; }
           }

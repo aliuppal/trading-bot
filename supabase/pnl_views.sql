@@ -5,15 +5,16 @@
 create or replace view public.pnl_daily as
 select date_trunc('day', exit_time at time zone 'UTC')::date                     as period,
        count(*)                                                                    as trades,
-       count(*) filter (where pnl >= 0)                                            as wins,
-       count(*) filter (where pnl < 0)                                             as losses,
-       round(100.0 * count(*) filter (where pnl >= 0) / count(*), 1)               as win_rate_pct,
+       count(*) filter (where pnl > 0.005)                                         as wins,
+       count(*) filter (where pnl < -0.005)                                        as losses,
+       round(100.0 * count(*) filter (where pnl > 0.005) / nullif(count(*) filter (where abs(pnl) > 0.005), 0), 1) as win_rate_pct,
        count(*) filter (where side = 'long')                                       as long_trades,
        count(*) filter (where side = 'short')                                      as short_trades,
        round(coalesce(sum(pnl) filter (where side = 'long'), 0), 2)                as long_pnl,
        round(coalesce(sum(pnl) filter (where side = 'short'), 0), 2)               as short_pnl,
        round(sum(pnl), 2)                                                          as total_pnl,
-       round(sum(r), 2)                                                            as net_r
+       round(sum(r), 2)                                                            as net_r,
+       count(*) filter (where abs(pnl) <= 0.005)                                   as breakevens  -- 0 P&L: not a win
 from public.trades
 where exit_time is not null and pnl is not null
 group by 1;
@@ -21,15 +22,16 @@ group by 1;
 create or replace view public.pnl_weekly as   -- weeks start Monday
 select date_trunc('week', exit_time at time zone 'UTC')::date                    as period,
        count(*)                                                                    as trades,
-       count(*) filter (where pnl >= 0)                                            as wins,
-       count(*) filter (where pnl < 0)                                             as losses,
-       round(100.0 * count(*) filter (where pnl >= 0) / count(*), 1)               as win_rate_pct,
+       count(*) filter (where pnl > 0.005)                                         as wins,
+       count(*) filter (where pnl < -0.005)                                        as losses,
+       round(100.0 * count(*) filter (where pnl > 0.005) / nullif(count(*) filter (where abs(pnl) > 0.005), 0), 1) as win_rate_pct,
        count(*) filter (where side = 'long')                                       as long_trades,
        count(*) filter (where side = 'short')                                      as short_trades,
        round(coalesce(sum(pnl) filter (where side = 'long'), 0), 2)                as long_pnl,
        round(coalesce(sum(pnl) filter (where side = 'short'), 0), 2)               as short_pnl,
        round(sum(pnl), 2)                                                          as total_pnl,
-       round(sum(r), 2)                                                            as net_r
+       round(sum(r), 2)                                                            as net_r,
+       count(*) filter (where abs(pnl) <= 0.005)                                   as breakevens  -- 0 P&L: not a win
 from public.trades
 where exit_time is not null and pnl is not null
 group by 1;
@@ -37,15 +39,16 @@ group by 1;
 create or replace view public.pnl_monthly as
 select date_trunc('month', exit_time at time zone 'UTC')::date                   as period,
        count(*)                                                                    as trades,
-       count(*) filter (where pnl >= 0)                                            as wins,
-       count(*) filter (where pnl < 0)                                             as losses,
-       round(100.0 * count(*) filter (where pnl >= 0) / count(*), 1)               as win_rate_pct,
+       count(*) filter (where pnl > 0.005)                                         as wins,
+       count(*) filter (where pnl < -0.005)                                        as losses,
+       round(100.0 * count(*) filter (where pnl > 0.005) / nullif(count(*) filter (where abs(pnl) > 0.005), 0), 1) as win_rate_pct,
        count(*) filter (where side = 'long')                                       as long_trades,
        count(*) filter (where side = 'short')                                      as short_trades,
        round(coalesce(sum(pnl) filter (where side = 'long'), 0), 2)                as long_pnl,
        round(coalesce(sum(pnl) filter (where side = 'short'), 0), 2)               as short_pnl,
        round(sum(pnl), 2)                                                          as total_pnl,
-       round(sum(r), 2)                                                            as net_r
+       round(sum(r), 2)                                                            as net_r,
+       count(*) filter (where abs(pnl) <= 0.005)                                   as breakevens  -- 0 P&L: not a win
 from public.trades
 where exit_time is not null and pnl is not null
 group by 1;

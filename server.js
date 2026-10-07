@@ -10,6 +10,7 @@ import { summarize } from './src/indicators.js';
 import { findIfvgs } from './src/ifvg.js';
 import { createKV } from './src/store.js';
 import { loadHtfZones } from './src/strategy.js';
+import { liquidityLevels } from './src/liquidity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,7 +52,9 @@ app.get('/api/market', wrap(async (req, res) => {
   const htfZones = (await loadHtfZones(market, ['30m', '1h', '2h', '4h']).catch(() => []))
     .filter((z) => ['30m', '1h', '2h', '4h'].includes(z.tf) && Math.abs((z.top + z.bottom) / 2 - price) / price < 0.03)
     .slice(-12);
-  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles, { strict: true }).slice(-6), htfZones });
+  const liq = await liquidityLevels(market).catch(() => null);
+  const liquidity = liq ? [...liq.above.slice(0, 5), ...liq.below.slice(0, 5)] : [];
+  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles, { strict: true }).slice(-6), htfZones, liquidity, lrlr: liq?.lrlr ?? null });
 }));
 app.get('/api/account', wrap(async (req, res) => res.json(await broker.getAccount())));
 app.get('/api/orders', wrap(async (req, res) => res.json(await broker.getOrders(100))));
