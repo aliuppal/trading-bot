@@ -4,7 +4,7 @@ import { config } from '../src/config.js';
 import * as market from '../src/market.js';
 import { askOpenRouter, askGemini, askJev } from '../src/ai.js';
 import { summarize } from '../src/indicators.js';
-import { AlpacaBroker } from '../src/brokers/alpaca.js';
+import { BinanceFuturesBroker } from '../src/brokers/binance.js';
 
 const mask = (s) => (s ? `${s.slice(0, 6)}…${s.slice(-4)}` : '(not set)');
 let failed = 0;
@@ -36,22 +36,18 @@ if (config.ai.provider === 'none') {
   });
 }
 
-if (config.broker === 'alpaca') {
-  await step(`Alpaca paper (key ${mask(config.alpaca.key)})`, async () => {
-    const b = new AlpacaBroker({ ...config.alpaca, getPrice: market.getPrice });
-    const acct = await b.req('GET', '/v2/account');
-    if (acct.crypto_status && acct.crypto_status !== 'ACTIVE') {
-      throw new Error(`account ${acct.account_number} has crypto_status=${acct.crypto_status}; enable crypto trading in the Alpaca dashboard`);
-    }
-    return `account ${acct.account_number} status ${acct.status}, cash $${Number(acct.cash).toLocaleString()}, crypto ${acct.crypto_status || 'unknown'}`;
+if (config.broker === 'binance') {
+  await step(`Binance demo futures (key ${mask(config.binance.key)})`, async () => {
+    const b = new BinanceFuturesBroker({ ...config.binance, getPrice: market.getPrice });
+    const a = await b.getAccount();
+    return `${config.binance.symbol} · available $${a.cash.toFixed(2)} · equity $${a.equity.toFixed(2)}`;
   });
 } else {
-  console.log('ℹ️  Broker: local simulated paper account (set BROKER=alpaca to use Alpaca)');
+  console.log('ℹ️  Broker: local simulated paper account (set BROKER=binance to use the Binance demo account)');
 }
 
 if (failed) {
   console.log(`\n${failed} check(s) failed.`);
-  console.log('Alpaca 401/403: use the API key + secret from the PAPER dashboard (https://app.alpaca.markets/paper/dashboard/overview → API Keys).');
   console.log('OpenRouter 401: the key is wrong or revoked; create one at https://openrouter.ai/keys.');
   process.exit(1);
 }

@@ -36,8 +36,7 @@ The bot trades the **Inverse Fair Value Gap (IFVG)** model with **Jev** making t
 The risk/reward box on the chart and in the snapshots grows with the trade until the stop or target is hit.
 
 If no AI key is set (or the AI errors), a simple rule-based strategy answers instead so the site keeps working.
-Shorts are simulated on the built-in local paper account. Alpaca crypto paper accounts cannot short, so with
-`BROKER=alpaca` bearish setups are skipped.
+Shorts work on both the built-in simulated account and the Binance demo futures account (`BROKER=binance`).
 
 The UI follows the **Obsidian Terminal** design system in [DESIGN.md](DESIGN.md).
 
@@ -51,7 +50,6 @@ npm start                 # http://localhost:3000
 
 1. Create an OpenRouter key at <https://openrouter.ai/keys> and set `OPENROUTER_API_KEY` in `.env`
    (or set `GEMINI_API_KEY` from <https://aistudio.google.com/apikey> instead).
-2. Run `npm run check` to confirm market data, the AI key and (if `BROKER=alpaca`) your Alpaca keys all work.
 3. Open <http://localhost:3000>, click **Ask AI now** to see a decision, or **Start bot** to run on a schedule.
 
 ## Paper accounts
@@ -59,9 +57,8 @@ npm start                 # http://localhost:3000
 | `BROKER` | What it is | Setup |
 |---|---|---|
 | `local` (default) | Built-in simulated account, $100k starting cash, 0.1% fee, saved to `data/account.json` | Nothing |
-| `alpaca` | Alpaca's free paper-trading account (real order engine, fake money, supports BTC/USD) | Sign up at <https://alpaca.markets>, open the **Paper** dashboard, generate API keys, set `ALPACA_API_KEY` / `ALPACA_API_SECRET` |
+| `binance` | Binance USD-M futures **demo** account, BTCUSDT perpetual: real order engine, demo money, **longs and shorts** | binance.com → Demo Trading → API Management, set `BINANCE_API_KEY` / `BINANCE_API_SECRET` |
 
-The Alpaca broker refuses to start unless the base URL is a `paper` endpoint, so
 it can't place live orders by accident.
 
 ## Configuration (`.env`)
@@ -74,7 +71,7 @@ it can't place live orders by accident.
 | `OPENROUTER_MODEL` | `auto` | `auto` = use OpenRouter's current free models (falls back to the next one if rate-limited), or a specific model id |
 | `GEMINI_API_KEY` | (none) | Free key from Google AI Studio |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Any Gemini model on your plan |
-| `BROKER` | `local` | `local` or `alpaca` |
+| `BROKER` | `local` | `local` or `binance` |
 | `STARTING_CASH` | `100000` | Local account starting balance |
 | `BOT_INTERVAL_MINUTES` | `5` | How often the bot scans for IFVG setups |
 | `CANDLE_GRANULARITY` | `900` | Candle size in seconds (300, 900, 3600, 21600, 86400) |
@@ -120,7 +117,6 @@ src/bot.js             Scheduler + risk rules (planTrade)
 src/indicators.js      RSI / SMA / EMA / MACD / Bollinger
 src/market.js          Coinbase / Binance public market data
 src/brokers/local.js   Simulated paper account
-src/brokers/alpaca.js  Alpaca paper-trading account
 public/                Dashboard (plain HTML/CSS/JS, no build step)
 test/                  node:test unit tests (npm test)
 ```

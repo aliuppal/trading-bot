@@ -16,10 +16,13 @@ export const config = {
   port: num(process.env.PORT, 3000),
   ai: resolveAi(),
   broker: (process.env.BROKER || 'local').toLowerCase(),
-  alpaca: {
-    key: process.env.ALPACA_API_KEY || '',
-    secret: process.env.ALPACA_API_SECRET || '',
-    baseUrl: process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets',
+  binance: {
+    key: process.env.BINANCE_API_KEY || '',
+    secret: process.env.BINANCE_API_SECRET || '',
+    // Binance Demo Trading futures; the futures testnet (https://testnet.binancefuture.com) also works
+    baseUrl: process.env.BINANCE_BASE_URL || 'https://demo-fapi.binance.com',
+    symbol: process.env.BINANCE_SYMBOL || 'BTCUSDT',
+    leverage: num(process.env.BINANCE_LEVERAGE, 1),
   },
   startingCash: num(process.env.STARTING_CASH, 100000),
   bot: {

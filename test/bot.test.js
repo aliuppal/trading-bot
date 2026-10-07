@@ -351,3 +351,50 @@ test('1:3 bracket with breakeven at +1R end to end: open, move to BE, stop out a
   assert.equal(closed.status, 'breakeven');
   assert.equal(closed.r, 0);
 });
+
+test('BinanceFuturesBroker signs requests, opens/covers shorts reduce-only, reads short positions', async () => {
+  const crypto = await import('node:crypto');
+  const { BinanceFuturesBroker } = await import('../src/brokers/binance.js');
+  const calls = [];
+  let position = 0;
+  const fakeFetch = async (url, opts) => {
+    const u = new URL(url);
+    const p = Object.fromEntries(u.searchParams);
+    calls.push({ method: opts.method, path: u.pathname, p, key: opts.headers['X-MBX-APIKEY'] });
+    const json = (body) => ({ ok: true, status: 200, json: async () => body });
+    if (u.pathname === '/fapi/v1/exchangeInfo') return json({ symbols: [{ symbol: 'BTCUSDT', filters: [{ filterType: 'MARKET_LOT_SIZE', stepSize: '0.001' }] }] });
+    if (u.pathname === '/fapi/v1/leverage') return json({ leverage: 1 });
+    if (u.pathname === '/fapi/v1/order') {
+      position += (p.side === 'BUY' ? 1 : -1) * Number(p.quantity);
+      return json({ orderId: 7, status: 'FILLED', executedQty: p.quantity, avgPrice: '50000', cumQuote: String(50000 * p.quantity), updateTime: 1 });
+    }
+    if (u.pathname === '/fapi/v2/account') return json({ availableBalance: '9000', totalMarginBalance: '10000' });
+    if (u.pathname === '/fapi/v2/positionRisk') return json([{ symbol: 'BTCUSDT', positionAmt: String(position), entryPrice: '50000', markPrice: '50000' }]);
+    return { ok: false, status: 404, json: async () => ({ code: -1, msg: 'nope' }) };
+  };
+  const b = new BinanceFuturesBroker({ key: 'K', secret: 'S', getPrice: async () => 50000 }, fakeFetch);
+
+  const short = await b.openShort({ notional: 5000, price: 50000 });
+  assert.equal(short.side, 'short');
+  assert.equal(short.qty, 0.1);
+  assert.equal(short.price, 50000);
+  const ord = calls.find((c) => c.path === '/fapi/v1/order');
+  assert.equal(ord.p.side, 'SELL');
+  assert.equal(ord.p.reduceOnly, undefined);
+  assert.equal(ord.key, 'K');
+  // signature = HMAC-SHA256(secret, query without signature)
+  const q = new URL(`http://x/?${new URLSearchParams(Object.entries(ord.p).filter(([k]) => k !== 'signature'))}`).search.slice(1);
+  assert.equal(ord.p.signature, crypto.createHmac('sha256', 'S').update(q).digest('hex'));
+
+  const a = await b.getAccount(50000);
+  assert.equal(a.shortBtc, 0.1);
+  assert.equal(a.btc, 0);
+  assert.equal(a.equity, 10000);
+
+  await b.coverShort({ qty: 0.1, reason: 'target' });
+  const cover = calls.filter((c) => c.path === '/fapi/v1/order').at(-1);
+  assert.equal(cover.p.side, 'BUY');
+  assert.equal(cover.p.reduceOnly, 'true');
+  assert.equal((await b.getAccount(50000)).shortBtc, 0);
+  assert.throws(() => new BinanceFuturesBroker({ key: 'K', secret: 'S', baseUrl: 'https://fapi.binance.com' }), /non-demo/);
+});

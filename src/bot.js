@@ -121,8 +121,10 @@ export class TradingBot {
    * kv: async key/value store (see store.js). settings: interval / risk / daily-limit settings.
    * autoStart: whether the bot is enabled the first time (saved state wins afterwards).
    */
-  constructor({ broker, market, ai, settings, kv, autoStart = true, fetchImpl = fetch, now = () => Date.now() }) {
+  constructor({ broker, market, ai, settings, kv, autoStart = true, fetchImpl = fetch, now = () => Date.now(), fallbackBroker = null }) {
     this.broker = broker;
+    // Trades opened on another broker (e.g. the simulator before switching to Binance) are closed there.
+    this.fallbackBroker = fallbackBroker;
     this.market = market;
     this.ai = ai;
     this.kv = kv;
@@ -280,17 +282,21 @@ export class TradingBot {
   async closeTrade(trade, exitPrice, reason, candles) {
     const nowIso = new Date(this.now()).toISOString();
     const short = trade.side === 'short';
-    const account = await this.broker.getAccount(exitPrice);
+    const broker = (trade.broker ?? 'local') !== this.broker.name && this.fallbackBroker?.name === (trade.broker ?? 'local')
+      ? this.fallbackBroker : this.broker;
+    const account = await broker.getAccount(exitPrice);
     const qty = Math.min(trade.qty, short ? account.shortBtc || 0 : account.btc);
     let order = null;
     let note = '';
     if (qty * exitPrice >= 1) {
       order = short
-        ? await this.broker.coverShort({ qty, price: exitPrice, source: 'ai', reason })
-        : await this.broker.placeOrder({ side: 'sell', qty, price: exitPrice, source: 'ai', reason });
+        ? await broker.coverShort({ qty, price: exitPrice, source: 'ai', reason })
+        : await broker.placeOrder({ side: 'sell', qty, price: exitPrice, source: 'ai', reason });
     } else {
       note = 'Position was already closed manually';
     }
+    // Use the broker's actual fill price when it reports one (Binance), else the stop / target level.
+    if (Number(order?.price) > 0) exitPrice = Number(order.price);
     const part = qty / trade.qty;
     const fee = order?.fee ?? 0;
     let pnl = 0;
@@ -348,6 +354,7 @@ export class TradingBot {
       entryFee: order.fee || 0,
       granularity: setup.granularity || this.state.settings.granularity,
       category: setup.category || 'swing',
+      broker: this.broker.name,
       stop: b.stop,
       initialStop: b.stop,
       rr: b.rr,

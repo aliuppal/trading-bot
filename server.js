@@ -4,8 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './src/config.js';
 import * as market from './src/market.js';
 import { LocalBroker } from './src/brokers/local.js';
-import { AlpacaBroker } from './src/brokers/alpaca.js';
-import { AlpacaWithSimShorts } from './src/brokers/alpaca-hybrid.js';
+import { BinanceFuturesBroker } from './src/brokers/binance.js';
 import { TradingBot } from './src/bot.js';
 import { summarize } from './src/indicators.js';
 import { findIfvgs } from './src/ifvg.js';
@@ -16,12 +15,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const kv = createKV({ dataDir: config.dataDir, redis: config.redis, supabase: config.supabase });
 const local = new LocalBroker({ kv, startingCash: config.startingCash, getPrice: market.getPrice });
-// BROKER=alpaca: longs go to the Alpaca paper account, shorts are simulated (Alpaca can't short crypto).
-const broker = config.broker === 'alpaca'
-  ? new AlpacaWithSimShorts({ alpaca: new AlpacaBroker({ ...config.alpaca, getPrice: market.getPrice }), sim: local })
+// BROKER=binance: Binance USD-M futures demo account (BTCUSDT, longs and shorts). Default: built-in simulation.
+const broker = config.broker === 'binance'
+  ? new BinanceFuturesBroker({ ...config.binance, getPrice: market.getPrice })
   : local;
 
-const bot = new TradingBot({ broker, market, ai: config.ai, settings: config.bot, kv, autoStart: config.bot.autoStart });
+const bot = new TradingBot({
+  broker, market, ai: config.ai, settings: config.bot, kv, autoStart: config.bot.autoStart,
+  fallbackBroker: broker === local ? null : local,
+});
 
 const app = express();
 app.use(express.json());
