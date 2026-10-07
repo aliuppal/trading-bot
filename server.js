@@ -12,7 +12,7 @@ import { createKV } from './src/store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const kv = createKV({ dataDir: config.dataDir, redis: config.redis });
+const kv = createKV({ dataDir: config.dataDir, redis: config.redis, supabase: config.supabase });
 const broker = config.broker === 'alpaca'
   ? new AlpacaBroker({ ...config.alpaca, getPrice: market.getPrice })
   : new LocalBroker({ kv, startingCash: config.startingCash, getPrice: market.getPrice });

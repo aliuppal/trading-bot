@@ -166,3 +166,27 @@ test('bullish IFVG ignores an AI SELL (direction must match the setup)', async (
   assert.equal(entry.executed, false);
   assert.match(entry.note, /does not match the bullish IFVG/);
 });
+
+test('SupabaseKV upserts, reads and deletes through the REST API', async () => {
+  const { SupabaseKV } = await import('../src/store.js');
+  const rows = new Map();
+  const calls = [];
+  const fakeFetch = async (url, opts) => {
+    const u = new URL(url);
+    calls.push({ method: opts.method, headers: opts.headers, path: u.pathname });
+    const key = u.searchParams.get('key')?.replace(/^eq\./, '');
+    if (opts.method === 'POST') { const b = JSON.parse(opts.body); rows.set(b.key, b.value); return { ok: true, status: 201 }; }
+    if (opts.method === 'DELETE') { rows.delete(key); return { ok: true, status: 204 }; }
+    return { ok: true, status: 200, json: async () => (rows.has(key) ? [{ value: rows.get(key) }] : []) };
+  };
+  const kv = new SupabaseKV({ url: 'https://abc.supabase.co/', key: 'sb_secret_x' }, fakeFetch);
+  assert.deepEqual(await kv.get('trades', []), []);
+  await kv.set('trades', [{ id: 'T1' }]);
+  await kv.set('trades', [{ id: 'T2' }]);
+  assert.deepEqual(await kv.get('trades', []), [{ id: 'T2' }]);
+  await kv.del('trades');
+  assert.equal(await kv.get('trades', null), null);
+  assert.equal(calls[0].path, '/rest/v1/kv');
+  assert.equal(calls[0].headers.apikey, 'sb_secret_x');
+  assert.match(calls[1].headers.Prefer, /merge-duplicates/);
+});

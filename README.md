@@ -71,7 +71,8 @@ it can't place live orders by accident.
 | `MAX_TRADE_PCT` | `10` | Max % of equity per buy |
 | `MAX_TRADES_PER_DAY` | `10` | New trades per UTC day (max 10) |
 | `AUTO_START` | `true` | Bot trades automatically; `false` to start stopped |
-| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | (none) | Upstash Redis storage (needed on Vercel) |
+| `SUPABASE_URL` / `SUPABASE_SECRET_KEY` | (none) | Supabase storage (recommended on Vercel) |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | (none) | Upstash Redis storage (alternative) |
 | `CRON_SECRET` | (none) | Protects `/api/cron` |
 
 Interval, candle size and risk limits can also be changed live from the dashboard.
@@ -84,8 +85,10 @@ request limits; an interval of 5–15 minutes stays well inside them.
 The Express app deploys to Vercel as-is (`server.js` exports the app; `public/` is served from the CDN).
 Serverless functions don't keep files or timers, so:
 
-1. **Storage**: add **Upstash Redis** from the Vercel Marketplace (Storage tab). It sets `KV_REST_API_URL` /
-   `KV_REST_API_TOKEN`, and the account, trades, snapshots and bot state are kept there. Without it, data
+1. **Storage (Supabase)**: in your Supabase project open **SQL Editor**, paste [supabase/schema.sql](supabase/schema.sql)
+   and run it. Then set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` (Project Settings -> API Keys -> secret key)
+   on Vercel. The account, trades, snapshots and bot state live in the `kv` table (browse trades via the
+   `trades` view). Upstash Redis (`KV_REST_API_URL` / `KV_REST_API_TOKEN`) also works. Without either, data
    lives in `/tmp` and is lost whenever the function cold-starts.
 2. **Schedule**: set a `CRON_SECRET` env var on Vercel, then add the GitHub repo secrets `BOT_URL`
    (your `https://<app>.vercel.app`) and `CRON_SECRET`. The workflow `.github/workflows/bot-tick.yml`
@@ -98,7 +101,8 @@ Serverless functions don't keep files or timers, so:
 server.js              Express server + REST API
 src/ifvg.js            FVG / IFVG detection and the 1:1 bracket
 src/snapshot.js        SVG trade chart snapshots
-src/store.js           File or Upstash Redis key/value storage
+src/store.js           File, Supabase or Upstash Redis key/value storage
+supabase/schema.sql    Supabase table for storage
 src/ai.js              Jev decisions call, OpenRouter / Gemini chat calls, rule-based fallback
 src/bot.js             Scheduler + risk rules (planTrade)
 src/indicators.js      RSI / SMA / EMA / MACD / Bollinger

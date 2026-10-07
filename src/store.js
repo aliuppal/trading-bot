@@ -64,7 +64,48 @@ export class RedisKV {
   }
 }
 
-export function createKV({ dataDir, redis }) {
+/**
+ * Supabase (Postgres) via its REST API. Uses one table, created by supabase/schema.sql:
+ *   kv (key text primary key, value jsonb not null, updated_at timestamptz)
+ * Needs the project URL and a server-side key (service_role or sb_secret_…); RLS stays on with no policies,
+ * so the public anon key cannot read or write it.
+ */
+export class SupabaseKV {
+  constructor({ url, key, table = 'kv' }, fetchImpl = fetch) {
+    this.base = `${url.replace(/\/$/, '')}/rest/v1/${table}`;
+    this.headers = { apikey: key, 'Content-Type': 'application/json' };
+    if (key.startsWith('eyJ')) this.headers.Authorization = `Bearer ${key}`; // legacy JWT keys
+    this.fetch = fetchImpl;
+    this.name = 'supabase';
+  }
+  async req(method, query, body, prefer) {
+    const res = await this.fetch(`${this.base}?${query}`, {
+      method,
+      headers: { ...this.headers, ...(prefer && { Prefer: prefer }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      const hint = /relation .* does not exist|PGRST205/.test(text) ? ' (run supabase/schema.sql in the Supabase SQL editor)' : '';
+      throw new Error(`Supabase ${method} HTTP ${res.status}: ${text.slice(0, 200)}${hint}`);
+    }
+    return res.status === 204 || method !== 'GET' ? null : res.json();
+  }
+  async get(key, fallback) {
+    const rows = await this.req('GET', `key=eq.${encodeURIComponent(key)}&select=value`);
+    return rows?.length ? rows[0].value : clone(fallback);
+  }
+  async set(key, value) {
+    await this.req('POST', 'on_conflict=key', { key, value, updated_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=minimal');
+  }
+  async del(key) {
+    await this.req('DELETE', `key=eq.${encodeURIComponent(key)}`);
+  }
+}
+
+/** Supabase if configured, else Upstash Redis, else local JSON files. */
+export function createKV({ dataDir, redis, supabase }) {
+  if (supabase?.url && supabase?.key) return new SupabaseKV(supabase);
   if (redis?.url && redis?.token) return new RedisKV(redis);
   return new FileKV(dataDir);
 }

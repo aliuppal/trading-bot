@@ -37,6 +37,11 @@ export const config = {
     url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '',
     token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '',
   },
+  // Supabase storage (preferred). The Vercel <-> Supabase integration sets SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.
+  supabase: {
+    url: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+    key: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  },
   cronSecret: process.env.CRON_SECRET || '',
   serverless: Boolean(process.env.VERCEL),
 };
