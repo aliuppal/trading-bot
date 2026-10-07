@@ -450,7 +450,6 @@ async function loadStatus() {
     const sel = $('chartSymbol');
     const html = syms.map((x) => `<option value="${esc(x)}"${x === chartSymbol ? ' selected' : ''}>${esc(x)}${opens.some((t) => symOf(t) === x) ? ' ●' : ''}</option>`).join('');
     if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
-    $('brandSub').textContent = `Binance futures demo · ${syms.length} symbols · max ${s.settings.maxOpenTrades ?? 2} open`;
 
     if (!settingsLoaded) {
       const f = $('settingsForm');
@@ -479,21 +478,9 @@ function decisionLabel(d) {
 }
 const labelClass = (l) => (l.startsWith('CLOSE') ? 'OPEN' : l === 'LONG' ? 'BUY' : l === 'SHORT' ? 'SELL' : l);
 
-function renderDecision(d) {
-  if (!d) return '';
-  const lbl = decisionLabel(d);
-  return `<div class="decision-head"><span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span>
-    <span class="num">${d.confidence !== undefined ? `conf ${esc(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
-    ${d.reasoning ? `<p>${esc(d.reasoning)}</p>` : ''}
-    <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}${d.aiError ? ` · AI error: ${esc(d.aiError)}` : ''}</div>`;
-}
-
 async function loadDecisions() {
   try {
     const decisions = await api('/api/decisions');
-    const last = decisions[0];
-    $('lastDecision').className = `decision ${esc(last?.action || '')}`;
-    $('lastDecision').innerHTML = renderDecision(last);
     $('decisions').querySelector('tbody').innerHTML = decisions.map((d) => `<tr>
       <td class="t">${fmtTime(d.time)}</td><td class="r">${d.symbol ? `<span class="src">${esc(d.symbol)}</span> ` : ''}${px(d.price)}</td>
       <td><span class="pill ${esc(labelClass(decisionLabel(d)))}">${esc(decisionLabel(d))}</span></td>
@@ -765,10 +752,19 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('shot
 
 $('startBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/start', { method: 'POST' }); toast('Bot started: IFVG setups will be traded automatically'); refreshAll(); });
 $('stopBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/stop', { method: 'POST' }); toast('Bot stopped (open trades keep their stop and target)'); refreshAll(); });
+// JEV: check every symbol now, one row per symbol
 $('runBtn').onclick = (e) => withBtn(e.target, async () => {
-  $('botState').textContent = 'Thinking…';
+  $('botState').textContent = 'Jev checking…';
+  const n = status?.symbols?.length || 1;
+  $('jevCheck').innerHTML = `<div class="jev-head"><b>Jev</b><span class="num">checking ${n} symbol${n > 1 ? 's' : ''}…</span></div>`;
   const d = await api('/api/bot/run', { method: 'POST' });
-  toast(`AI says ${d.action}${d.executed ? ' — order executed' : d.note ? ` — ${d.note}` : ''}`, d.action === 'ERROR');
+  const rows = d.results || [d];
+  $('jevCheck').innerHTML = `<div class="jev-head"><b>Jev</b><span class="num">${fmtTime(Date.now())}${d.executed ? ` · ${d.executed} executed` : ''}</span></div>`
+    + rows.map((r) => {
+      const lbl = decisionLabel(r);
+      return `<div class="jev-row"><b>${esc(r.symbol || '')}</b><span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span><span class="num">${r.confidence !== undefined ? `${Math.round(r.confidence * 100)}%` : ''}</span><span class="jev-note" title="${esc(r.note)}">${r.executed ? '<span class="ok">✓ executed</span> ' : ''}${esc(r.note)}</span></div>`;
+    }).join('');
+  toast(d.executed ? `Jev opened ${d.executed} trade${d.executed > 1 ? 's' : ''}` : 'Jev checked all symbols: no new trade');
   await Promise.all([refreshAll(), loadMarket()]);
 });
 $('settingsForm').onsubmit = (e) => {

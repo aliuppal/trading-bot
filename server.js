@@ -123,7 +123,9 @@ app.post('/api/bot/run', wrap(async (req, res) => {
   // "Ask AI now": every symbol, one after another
   const out = await bot.locked(async () => { const r = []; for (const b of bots) { await b.load(); r.push(await b.runOnceUnlocked({ manual: true })); } return r; });
   if (out === null) throw new Error('Another bot cycle is running right now, try again in a few seconds');
-  res.json(out.find((e) => e.executed) || { action: 'HOLD', note: out.map((e) => `${e.symbol || ''} ${e.action}${e.confidence !== undefined ? ` ${Math.round(e.confidence * 100)}%` : ''}`).join(' · ') });
+  // one row per symbol for the JEV check panel
+  const results = out.map((e, i) => ({ symbol: e.symbol || bots[i].symbol, action: e.action, label: e.label, confidence: e.confidence, executed: Boolean(e.executed), note: e.note || '', time: e.time }));
+  res.json({ results, executed: results.filter((r) => r.executed).length });
 }));
 app.post('/api/settings', wrap(async (req, res) => res.json(await bot.updateSettings(req.body || {}))));
 
