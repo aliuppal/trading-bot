@@ -196,3 +196,17 @@ test('Jev bad key goes straight to rules', async () => {
   assert.equal(calls, 1);
   assert.equal(d.source, 'rules (Jev error)');
 });
+
+test('buildJevState carries the IFVG setup, 1:1 R:R and trades today', () => {
+  const st = buildJevState({
+    indicators: { price: 1, macd: null, bollinger: null },
+    account: { cash: 1, btc: 0, avgEntry: 0, equity: 1 },
+    recentCandles: [],
+    granularity: 900,
+    ifvg: { direction: 'bullish', top: 2, bottom: 1, ageCandles: 0 },
+    tradesToday: 7,
+  });
+  assert.equal(st.setup, 'Bullish IFVG pattern detected');
+  assert.equal(st.risk_reward, '1:1');
+  assert.equal(st.trades_today, 7);
+});

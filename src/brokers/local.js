@@ -1,23 +1,25 @@
-// Built-in simulated paper account. Persists to data/account.json.
-import path from 'node:path';
-import { JsonStore } from '../store.js';
-
+// Built-in simulated paper account. Persists under the "account" key of the KV store.
 const FEE_RATE = 0.001; // 0.1% simulated taker fee
+const KEY = 'account';
 
 export class LocalBroker {
-  constructor({ dataDir, startingCash, getPrice }) {
+  constructor({ kv, startingCash, getPrice }) {
     this.name = 'local';
+    this.kv = kv;
     this.startingCash = startingCash;
     this.getPrice = getPrice;
-    this.store = new JsonStore(path.join(dataDir, 'account.json'), this.fresh());
   }
 
   fresh() {
     return { cash: this.startingCash, btc: 0, avgEntry: 0, startingCash: this.startingCash, orders: [] };
   }
 
+  read() {
+    return this.kv.get(KEY, this.fresh());
+  }
+
   async getAccount(price) {
-    const s = this.store.read();
+    const s = await this.read();
     const p = price ?? (await this.getPrice());
     return {
       broker: this.name,
@@ -31,12 +33,12 @@ export class LocalBroker {
   }
 
   async getOrders(limit = 50) {
-    return this.store.read().orders.slice(0, limit);
+    return (await this.read()).orders.slice(0, limit);
   }
 
   /** side: 'buy' | 'sell'; buy uses notional USD, sell uses BTC qty */
-  async placeOrder({ side, notional, qty, price, source = 'manual' }) {
-    const s = this.store.read();
+  async placeOrder({ side, notional, qty, price, source = 'manual', reason }) {
+    const s = await this.read();
     const p = price ?? (await this.getPrice());
     let order;
     if (side === 'buy') {
@@ -61,14 +63,16 @@ export class LocalBroker {
     } else {
       throw new Error(`Unknown side ${side}`);
     }
-    const record = { id: `L${Date.now()}`, time: new Date().toISOString(), price: p, status: 'filled', source, ...order };
+    const record = {
+      id: `L${Date.now()}`, time: new Date().toISOString(), price: p, status: 'filled', source, ...(reason && { reason }), ...order,
+    };
     s.orders.unshift(record);
     s.orders = s.orders.slice(0, 500);
-    this.store.write(s);
+    await this.kv.set(KEY, s);
     return record;
   }
 
   async reset() {
-    this.store.write(this.fresh());
+    await this.kv.set(KEY, this.fresh());
   }
 }

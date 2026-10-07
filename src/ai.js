@@ -15,7 +15,9 @@ const RESPONSE_SCHEMA = {
   required: ['action', 'confidence', 'size_pct', 'reasoning'],
 };
 
-export function buildPrompt({ indicators, account, recentCandles, granularity, recentDecisions = [] }) {
+export function buildPrompt({
+  indicators, account, recentCandles, granularity, recentDecisions = [], ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade,
+}) {
   const candleLines = recentCandles
     .map((c) => `${new Date(c.time).toISOString()} O:${c.open} H:${c.high} L:${c.low} C:${c.close} V:${Math.round(c.volume)}`)
     .join('\n');
@@ -29,6 +31,12 @@ Decide whether to BUY, SELL, or HOLD right now. Capital preservation matters mor
 prefer HOLD when signals are mixed. Never risk more than necessary.
 
 Candle size: ${granularity / 60} minutes.
+
+Strategy: Inverse Fair Value Gap (IFVG). Longs are only taken off a bullish IFVG (a bearish fair value gap
+that price closed back above, now acting as support). Every trade is a 1:1 bracket: stop just below the
+IFVG zone, target the same distance above entry. Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
+Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
+Open trade: ${openTrade ? `long from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none'}
 
 Technical indicators (latest):
 ${JSON.stringify(indicators, null, 2)}
@@ -184,9 +192,17 @@ const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
 
 /** Flat state object for Jev: indicators, account and recent closes. */
-export function buildJevState({ indicators, account, recentCandles, granularity }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
+    setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
+    risk_reward: '1:1',
+    trades_today: tradesToday,
+    max_trades_per_day: maxTradesPerDay,
+    ifvg_top: ifvg?.top ?? null,
+    ifvg_bottom: ifvg?.bottom ?? null,
+    ifvg_age_candles: ifvg?.ageCandles ?? null,
+    open_trade: openTrade ? `long from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none',
     symbol: 'BTC/USD',
     candle_minutes: granularity / 60,
     ...rest,
@@ -207,11 +223,12 @@ export function buildJevState({ indicators, account, recentCandles, granularity 
 const JEV_QUESTIONS = {
   action: {
     type: 'choice',
-    instructions: 'Decide the trade for a disciplined Bitcoin swing trader managing a paper account. '
-      + 'Capital preservation matters more than activity: prefer HOLD when signals are mixed.',
+    instructions: 'Decide the trade for a disciplined Bitcoin intraday trader using the Inverse Fair Value Gap (IFVG) model '
+      + 'on a paper account. Every long uses a 1:1 bracket: stop just below the IFVG zone, target the same distance above entry. '
+      + 'At most max_trades_per_day trades per day. Only take the setup when the IFVG and momentum agree; otherwise HOLD.',
     criteria: {
-      BUY: 'Signals clearly favor price rising; open or add to a BTC position',
-      SELL: 'Signals clearly favor price falling; reduce or close the BTC position',
+      BUY: 'A bullish IFVG is holding as support and momentum favors price reaching a 1:1 target before the stop',
+      SELL: 'A bearish IFVG is rejecting price; close the open long early',
       HOLD: 'Signals are mixed or weak; do nothing',
     },
   },

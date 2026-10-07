@@ -1,8 +1,10 @@
 const $ = (id) => document.getElementById(id);
 const usd = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? '—'
   : `${v < 0 ? '-' : ''}$${Math.abs(Number(v)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
-const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '—');
+const signedUsd = (v) => `${v >= 0 ? '+' : ''}${usd(v)}`;
+const fmtTime = (t) => (t ? new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -23,8 +25,13 @@ function toast(msg, isError = false) {
   toast.t = setTimeout(() => (el.className = ''), 4000);
 }
 
+let granularity = 3600;
 let candles = [];
-let decisions = [];
+let ifvgs = [];
+let trades = [];
+let status = null;
+
+/* ---------------- chart ---------------- */
 
 function drawChart() {
   const canvas = $('chart');
@@ -34,36 +41,53 @@ function drawChart() {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, w, h);
-  if (!candles.length) return;
+  if (candles.length < 2) return;
 
-  const pad = { l: 8, r: 70, t: 10, b: 20 };
-  const lo = Math.min(...candles.map((c) => c.low));
-  const hi = Math.max(...candles.map((c) => c.high));
-  const x = (i) => pad.l + (i / (candles.length - 1)) * (w - pad.l - pad.r);
+  const open = status?.openTrade;
+  const pad = { l: 4, r: 72, t: 10, b: 20 };
+  const extra = open ? [open.stop, open.target] : [];
+  const lo = Math.min(...candles.map((c) => c.low), ...extra);
+  const hi = Math.max(...candles.map((c) => c.high), ...extra);
+  const step = (w - pad.l - pad.r) / candles.length;
+  const x = (i) => pad.l + step * (i + 0.5);
   const y = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
-  const css = getComputedStyle(document.documentElement);
+  const t0 = candles[0].time;
+  const idxAt = (t) => Math.max(0, Math.min(candles.length - 1, Math.floor((t - t0) / (granularity * 1000))));
+  const mono = "11px 'JetBrains Mono', ui-monospace, monospace";
 
   // grid + price labels
-  ctx.strokeStyle = css.getPropertyValue('--border'); ctx.fillStyle = css.getPropertyValue('--muted');
-  ctx.font = '11px system-ui'; ctx.lineWidth = 1;
+  ctx.strokeStyle = css('--border'); ctx.fillStyle = css('--dim'); ctx.font = mono; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const p = lo + ((hi - lo) * i) / 4;
     ctx.beginPath(); ctx.moveTo(pad.l, y(p)); ctx.lineTo(w - pad.r, y(p)); ctx.stroke();
-    ctx.fillText(Math.round(p).toLocaleString(), w - pad.r + 6, y(p) + 4);
+    ctx.fillText(Math.round(p).toLocaleString(), w - pad.r + 8, y(p) + 4);
   }
 
+  // IFVG zones
+  ifvgs.forEach((z) => {
+    if (z.formedAt < t0) return;
+    const bull = z.direction === 'bullish';
+    const x0 = x(idxAt(z.formedAt)) - step / 2;
+    const zh = Math.max(1, y(z.bottom) - y(z.top));
+    ctx.fillStyle = bull ? 'rgba(6, 182, 212, .12)' : 'rgba(244, 63, 94, .08)';
+    ctx.fillRect(x0, y(z.top), w - pad.r - x0, zh);
+    ctx.strokeStyle = bull ? 'rgba(6, 182, 212, .5)' : 'rgba(244, 63, 94, .35)';
+    ctx.setLineDash([3, 3]);
+    ctx.strokeRect(x0, y(z.top), w - pad.r - x0, zh);
+    ctx.setLineDash([]);
+  });
+
   // candles
-  const cw = Math.max(1, ((w - pad.l - pad.r) / candles.length) * 0.6);
+  const cw = Math.max(1, step * 0.6);
   candles.forEach((c, i) => {
-    const up = c.close >= c.open;
-    ctx.strokeStyle = ctx.fillStyle = up ? css.getPropertyValue('--green') : css.getPropertyValue('--red');
+    ctx.strokeStyle = ctx.fillStyle = c.close >= c.open ? css('--green') : css('--red');
     ctx.beginPath(); ctx.moveTo(x(i), y(c.high)); ctx.lineTo(x(i), y(c.low)); ctx.stroke();
     const top = y(Math.max(c.open, c.close));
     ctx.fillRect(x(i) - cw / 2, top, cw, Math.max(1, y(Math.min(c.open, c.close)) - top));
   });
 
   // SMA20
-  ctx.strokeStyle = css.getPropertyValue('--blue'); ctx.lineWidth = 1.5; ctx.beginPath();
+  ctx.strokeStyle = css('--blue'); ctx.lineWidth = 1.5; ctx.beginPath();
   candles.forEach((c, i) => {
     if (i < 19) return;
     const avg = candles.slice(i - 19, i + 1).reduce((a, b) => a + b.close, 0) / 20;
@@ -71,18 +95,29 @@ function drawChart() {
   });
   ctx.stroke();
 
-  // executed AI trades as markers
-  const t0 = candles[0].time, t1 = candles[candles.length - 1].time;
-  decisions.filter((d) => d.executed && d.price).forEach((d) => {
-    const t = new Date(d.time).getTime();
-    if (t < t0) return;
-    const i = Math.min(candles.length - 1, ((t - t0) / (t1 - t0 || 1)) * (candles.length - 1));
-    const buy = d.action === 'BUY';
-    ctx.fillStyle = buy ? css.getPropertyValue('--green') : css.getPropertyValue('--red');
-    const px = x(i), py = y(d.price) + (buy ? 14 : -14);
-    ctx.beginPath();
-    ctx.moveTo(px, py + (buy ? -8 : 8)); ctx.lineTo(px - 6, py + (buy ? 2 : -2)); ctx.lineTo(px + 6, py + (buy ? 2 : -2));
-    ctx.closePath(); ctx.fill();
+  // open trade bracket
+  if (open) {
+    const ex = x(idxAt(new Date(open.entryTime).getTime()));
+    [[open.target, css('--green'), 'TP'], [open.entryPrice, css('--text-2'), 'IN'], [open.stop, css('--red'), 'SL']].forEach(([p, col, name]) => {
+      ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.setLineDash(name === 'IN' ? [4, 3] : []);
+      ctx.beginPath(); ctx.moveTo(ex, y(p)); ctx.lineTo(w - pad.r, y(p)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = col; ctx.fillText(name, w - pad.r - 18, y(p) - 4);
+    });
+  }
+
+  // trade markers: entries (triangles) and exits (rings)
+  trades.forEach((t) => {
+    const et = new Date(t.entryTime).getTime();
+    if (et >= t0) {
+      const px = x(idxAt(et)), py = y(t.entryPrice) + 12;
+      ctx.fillStyle = css('--green');
+      ctx.beginPath(); ctx.moveTo(px, py - 7); ctx.lineTo(px - 5, py + 2); ctx.lineTo(px + 5, py + 2); ctx.closePath(); ctx.fill();
+    }
+    if (t.exitTime && new Date(t.exitTime).getTime() >= t0) {
+      ctx.strokeStyle = t.pnl >= 0 ? css('--green') : css('--red'); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x(idxAt(new Date(t.exitTime).getTime())), y(t.exitPrice), 4, 0, Math.PI * 2); ctx.stroke();
+    }
   });
 }
 
@@ -97,30 +132,42 @@ function renderIndicators(ind) {
   ];
   $('indicators').innerHTML = items.map(([k, v]) => `<div><span>${k}</span>${esc(v ?? '—')}</div>`).join('');
   $('price').textContent = usd(ind.price);
+  $('stripPrice').textContent = usd(ind.price);
   const ch = ind.change_24;
-  $('change').innerHTML = ch === null ? '—' : `<span class="${ch >= 0 ? 'up' : 'down'}">${ch >= 0 ? '+' : ''}${ch}%</span> last 24 candles`;
+  $('change').innerHTML = ch === null ? '—' : `<span class="num ${ch >= 0 ? 'up' : 'down'}">${ch >= 0 ? '+' : ''}${ch}%</span> last 24 candles`;
 }
 
 async function loadMarket() {
+  const state = $('chartState');
+  if (!candles.length) { state.className = 'chart-state'; state.textContent = 'Loading candles…'; }
   try {
-    const data = await api(`/api/market?granularity=${$('granularity').value}`);
+    const data = await api(`/api/market?granularity=${granularity}`);
     candles = data.candles;
+    ifvgs = data.ifvgs || [];
     renderIndicators(data.indicators);
+    state.textContent = candles.length ? '' : 'No candle data returned for this timeframe.';
     drawChart();
-  } catch (e) { toast(`Market data: ${e.message}`, true); }
+  } catch (e) {
+    state.className = 'chart-state error';
+    state.textContent = `Couldn't load market data: ${e.message}. Retrying in a minute.`;
+  }
 }
+
+/* ---------------- account / status ---------------- */
 
 async function loadAccount() {
   try {
     const a = await api('/api/account');
     $('equity').textContent = usd(a.equity);
     $('cash').textContent = usd(a.cash);
-    $('btc').textContent = `${Number(a.btc).toFixed(6)} BTC`;
-    $('avgEntry').textContent = a.avgEntry ? `avg entry ${usd(a.avgEntry)} · worth ${usd(a.btc * a.price)}` : 'no position';
+    $('btc').textContent = `${Number(a.btc).toFixed(6)}`;
+    $('avgEntry').textContent = a.avgEntry ? `avg ${usd(a.avgEntry)} · worth ${usd(a.btc * a.price)}` : 'No open position';
     if (a.startingCash) {
       const pnl = a.equity - a.startingCash;
       const pct = (pnl / a.startingCash) * 100;
-      $('pnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${pnl >= 0 ? '+' : ''}${usd(pnl)} (${pct.toFixed(2)}%)</span>`;
+      const cls = pnl >= 0 ? 'up' : 'down';
+      $('pnl').innerHTML = `<span class="num ${cls}">${signedUsd(pnl)} (${pct.toFixed(2)}%)</span>`;
+      $('stripPnl').innerHTML = `<span class="${cls}">${signedUsd(pnl)}</span>`;
     } else {
       $('pnl').textContent = a.accountEquity ? `total account ${usd(a.accountEquity)}` : '';
     }
@@ -128,70 +175,209 @@ async function loadAccount() {
   } catch (e) { toast(`Account: ${e.message}`, true); }
 }
 
-function renderDecision(d) {
-  if (!d) return '';
-  return `<div><span class="pill ${esc(d.action)}">${esc(d.action)}</span>
-    ${d.confidence !== undefined ? ` confidence ${esc(d.confidence)}` : ''} · ${fmtTime(d.time)}</div>
-    <p>${esc(d.reasoning || '')}</p>
-    <div class="sub">${esc(d.note || '')}${d.executed ? ' ✓ executed' : ''}${d.aiError ? ` · AI error: ${esc(d.aiError)}` : ''}</div>`;
-}
-
-async function loadDecisions() {
-  try {
-    decisions = await api('/api/decisions');
-    $('lastDecision').innerHTML = renderDecision(decisions[0]);
-    $('decisions').querySelector('tbody').innerHTML = decisions.map((d) => `<tr>
-      <td>${fmtTime(d.time)}</td><td>${usd(d.price)}</td>
-      <td><span class="pill ${esc(d.action)}">${esc(d.action)}</span></td>
-      <td>${d.confidence ?? '—'}</td>
-      <td>${d.executed ? '✓ ' : ''}${esc(d.note || '')}</td>
-      <td class="reason">${esc(d.reasoning || '')}</td>
-      <td>${esc(d.source || '')}</td></tr>`).join('') || '<tr><td colspan="7" class="sub">No decisions yet. Click "Ask AI now".</td></tr>';
-    drawChart();
-  } catch (e) { toast(`Decisions: ${e.message}`, true); }
-}
-
-async function loadOrders() {
-  try {
-    const orders = await api('/api/orders');
-    $('orders').querySelector('tbody').innerHTML = orders.map((o) => `<tr>
-      <td>${fmtTime(o.time)}</td><td><span class="pill ${esc(o.side)}">${esc(o.side?.toUpperCase())}</span></td>
-      <td>${o.qty ? Number(o.qty).toFixed(6) : '—'}</td><td>${usd(o.price)}</td><td>${usd(o.notional)}</td>
-      <td>${o.pnl !== undefined ? `<span class="${o.pnl >= 0 ? 'up' : 'down'}">${usd(o.pnl)}</span>` : '—'}</td>
-      <td>${esc(o.status)}</td><td>${esc(o.source)}</td></tr>`).join('') || '<tr><td colspan="8" class="sub">No orders yet.</td></tr>';
-  } catch (e) { toast(`Orders: ${e.message}`, true); }
+function renderOpenTrade(t) {
+  if (!t) return '';
+  const price = candles.at(-1)?.close ?? t.entryPrice;
+  const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
+  const upnl = (price - t.entryPrice) * t.qty;
+  return `<div class="ot-head"><span><span class="pill OPEN">OPEN LONG</span> ${fmtTime(t.entryTime)}</span>
+      <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
+    <div class="ot-levels">
+      <div><span>Stop</span><em class="down">${usd(t.stop)}</em></div>
+      <div><span>Entry</span>${usd(t.entryPrice)}</div>
+      <div><span>Target</span><em class="up">${usd(t.target)}</em></div>
+    </div>
+    <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>`;
 }
 
 let settingsLoaded = false;
 async function loadStatus() {
   try {
     const s = await api('/api/status');
+    status = s;
     $('aiBadge').textContent = `AI: ${s.ai}`;
     $('brokerBadge').textContent = `Broker: ${s.broker}`;
+    $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;
     $('botDot').className = `dot${s.running ? ' on' : ''}`;
     $('botState').textContent = s.busy ? 'Thinking…' : s.running ? 'Running' : 'Stopped';
-    $('botTimes').textContent = `Last run: ${fmtTime(s.lastRun)}${s.nextRun ? ` · Next: ${fmtTime(s.nextRun)}` : ''}`;
+    $('startBtn').textContent = s.running ? 'Auto-trading on' : 'Start bot';
+    const scan = s.lastScan?.note ? ` · ${s.lastScan.note}` : '';
+    $('botTimes').textContent = `Last scan ${fmtTime(s.lastRun)}${s.nextRun ? ` · next ${fmtTime(s.nextRun)}` : ''}${scan}`;
+
+    const max = s.settings.maxTradesPerDay ?? 10;
+    $('tradesToday').textContent = `${s.tradesToday} / ${max}`;
+    $('stripTrades').textContent = `${s.tradesToday}/${max}`;
+    const track = $('meterTrack');
+    track.className = `meter-track${s.tradesToday >= max ? ' full' : ''}`;
+    track.style.gridTemplateColumns = `repeat(${Math.max(1, max)}, 1fr)`;
+    track.innerHTML = Array.from({ length: Math.max(1, max) }, (_, i) => `<i class="${i < s.tradesToday ? 'used' : ''}"></i>`).join('');
+    $('openTrade').innerHTML = renderOpenTrade(s.openTrade);
+
     if (!settingsLoaded) {
       const f = $('settingsForm');
       for (const [k, v] of Object.entries(s.settings)) if (f.elements[k]) f.elements[k].value = v;
+      granularity = s.settings.granularity;
+      setSegment(granularity);
       settingsLoaded = true;
+      loadMarket();
     }
   } catch (e) { toast(`Status: ${e.message}`, true); }
 }
 
-const refreshAll = () => Promise.all([loadStatus(), loadAccount(), loadDecisions(), loadOrders()]);
+/* ---------------- tables ---------------- */
+
+function renderDecision(d) {
+  if (!d) return '';
+  return `<div class="decision-head"><span class="pill ${esc(d.action)}">${esc(d.action)}</span>
+    <span class="num">${d.confidence !== undefined ? `conf ${esc(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
+    ${d.reasoning ? `<p>${esc(d.reasoning)}</p>` : ''}
+    <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}${d.aiError ? ` · AI error: ${esc(d.aiError)}` : ''}</div>`;
+}
+
+async function loadDecisions() {
+  try {
+    const decisions = await api('/api/decisions');
+    const last = decisions[0];
+    $('lastDecision').className = `decision ${esc(last?.action || '')}`;
+    $('lastDecision').innerHTML = renderDecision(last);
+    $('decisions').querySelector('tbody').innerHTML = decisions.map((d) => `<tr>
+      <td class="t">${fmtTime(d.time)}</td><td class="r">${usd(d.price)}</td>
+      <td><span class="pill ${esc(d.action)}">${esc(d.action)}</span></td>
+      <td class="r">${d.confidence ?? '—'}</td>
+      <td>${d.executed ? '<span class="ok">✓</span> ' : ''}${esc(d.note || '')}</td>
+      <td class="reason">${esc(d.reasoning || '')}</td>
+      <td class="src">${esc(d.source || '')}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="empty"><b>No AI decisions yet</b>The bot asks Jev when a fresh IFVG forms. Click "Ask AI now" to ask right away.</td></tr>';
+  } catch (e) {
+    $('decisions').querySelector('tbody').innerHTML = `<tr><td colspan="7" class="empty"><b>Couldn't load decisions</b>${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function loadOrders() {
+  try {
+    const orders = await api('/api/orders');
+    $('orders').querySelector('tbody').innerHTML = orders.map((o) => `<tr>
+      <td class="t">${fmtTime(o.time)}</td><td><span class="pill ${esc(o.side)}">${esc(o.side?.toUpperCase())}</span></td>
+      <td class="r">${o.qty ? Number(o.qty).toFixed(6) : '—'}</td><td class="r">${usd(o.price)}</td><td class="r">${usd(o.notional)}</td>
+      <td class="r">${o.pnl !== undefined ? `<span class="${o.pnl >= 0 ? 'up' : 'down'}">${signedUsd(o.pnl)}</span>` : '—'}</td>
+      <td>${esc(o.status)}${o.reason ? ` · ${esc(o.reason)}` : ''}</td><td class="src">${esc(o.source)}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="empty"><b>No orders yet</b>Orders appear here when the bot or you trade.</td></tr>';
+  } catch (e) {
+    $('orders').querySelector('tbody').innerHTML = `<tr><td colspan="8" class="empty"><b>Couldn't load orders</b>${esc(e.message)}</td></tr>`;
+  }
+}
+
+const shotCache = new Map(); // `${id}:${status}` -> Promise<{ entry, exit }>
+function getShots(t) {
+  const key = `${t.id}:${t.status}`;
+  if (!shotCache.has(key)) shotCache.set(key, api(`/api/trades/${encodeURIComponent(t.id)}/shots`).catch(() => ({})));
+  return shotCache.get(key);
+}
+
+const RESULT = { open: 'OPEN', win: 'WIN', loss: 'LOSS' };
+async function loadTrades() {
+  try {
+    trades = await api('/api/trades');
+    const closed = trades.filter((t) => t.status !== 'open');
+    const wins = closed.filter((t) => t.status === 'win').length;
+    $('tradeCount').textContent = trades.length ? ` ${trades.length}${closed.length ? ` · ${Math.round((wins / closed.length) * 100)}% win` : ''}` : '';
+    const body = $('trades').querySelector('tbody');
+    if (!trades.length) {
+      body.innerHTML = '<tr><td colspan="10" class="empty"><b>No trades yet</b>When a bullish IFVG forms and Jev says BUY, the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
+      drawChart();
+      return;
+    }
+    body.innerHTML = trades.map((t, i) => `<tr>
+      <td><button type="button" class="thumb" data-trade="${i}" aria-label="Open chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">…</span></button></td>
+      <td class="t">${fmtTime(t.entryTime)}</td>
+      <td><span class="pill ${RESULT[t.status] || ''}">${RESULT[t.status] || esc(String(t.status).toUpperCase())}</span></td>
+      <td class="r">${usd(t.entryPrice)}</td><td class="r down">${usd(t.stop)}</td><td class="r up">${usd(t.target)}</td>
+      <td class="r">${t.exitPrice ? usd(t.exitPrice) : '—'}</td>
+      <td class="r">${t.r !== undefined ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
+      <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>` : '—'}</td>
+      <td class="src">${esc(t.source || '')}</td></tr>`).join('');
+    // thumbnails for the most recent trades
+    trades.slice(0, 25).forEach(async (t, i) => {
+      const shots = await getShots(t);
+      const btn = body.querySelector(`[data-trade="${i}"]`);
+      const svg = shots.exit || shots.entry;
+      if (btn) btn.innerHTML = svg || '<span class="no-shot">no chart</span>';
+    });
+    drawChart();
+  } catch (e) {
+    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="10" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function openShot(t) {
+  $('shotTitle').textContent = `Trade · ${fmtTime(t.entryTime)} · ${RESULT[t.status] || t.status}`;
+  $('shotBody').innerHTML = '<p class="sub">Loading chart…</p>';
+  $('shotMeta').innerHTML = [
+    ['Entry', usd(t.entryPrice)], ['Stop', usd(t.stop)], ['Target', usd(t.target)],
+    ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
+    ['P&L', t.pnl !== undefined ? signedUsd(t.pnl) : '—'], ['Confidence', t.confidence ?? '—'],
+    ['IFVG zone', t.ifvg ? `${usd(t.ifvg.bottom)} – ${usd(t.ifvg.top)}` : '—'],
+  ].map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');
+  $('shotNote').textContent = t.reasoning || '';
+  $('shotModal').hidden = false;
+  $('shotClose').focus();
+  const shots = await getShots(t);
+  const figs = [['At entry', shots.entry], ['At exit', shots.exit]].filter(([, s]) => s);
+  $('shotBody').innerHTML = figs.map(([cap, svg]) => `<figure><figcaption>${cap}</figcaption>${svg}</figure>`).join('')
+    || '<p class="sub">No chart was saved for this trade.</p>';
+}
+
+/* ---------------- controls ---------------- */
+
+const refreshAll = () => Promise.all([loadStatus(), loadAccount(), loadDecisions(), loadOrders(), loadTrades()]);
 
 async function withBtn(btn, fn) {
   btn.disabled = true;
   try { await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
 }
 
-$('startBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/start', { method: 'POST' }); toast('Bot started'); setTimeout(refreshAll, 1500); refreshAll(); });
-$('stopBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/stop', { method: 'POST' }); toast('Bot stopped'); refreshAll(); });
+function setSegment(g) {
+  document.querySelectorAll('#granularity button').forEach((b) => {
+    const on = Number(b.dataset.g) === Number(g);
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+}
+
+$('granularity').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  granularity = Number(b.dataset.g);
+  setSegment(granularity);
+  candles = [];
+  loadMarket();
+};
+
+$('tabs').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  document.querySelectorAll('#tabs button').forEach((x) => {
+    x.classList.toggle('active', x === b);
+    x.setAttribute('aria-selected', String(x === b));
+  });
+  document.querySelectorAll('.tab-pane').forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+};
+
+$('trades').onclick = (e) => {
+  const b = e.target.closest('[data-trade]');
+  if (b) openShot(trades[Number(b.dataset.trade)]);
+};
+const closeShot = () => { $('shotModal').hidden = true; };
+$('shotClose').onclick = closeShot;
+$('shotModal').onclick = (e) => { if (e.target === $('shotModal')) closeShot(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('shotModal').hidden) closeShot(); });
+
+$('startBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/start', { method: 'POST' }); toast('Bot started: IFVG setups will be traded automatically'); refreshAll(); });
+$('stopBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/stop', { method: 'POST' }); toast('Bot stopped (open trades keep their stop and target)'); refreshAll(); });
 $('runBtn').onclick = (e) => withBtn(e.target, async () => {
   $('botState').textContent = 'Thinking…';
   const d = await api('/api/bot/run', { method: 'POST' });
-  toast(`AI says ${d.action}${d.executed ? ' — order executed' : ''}`, d.action === 'ERROR');
+  toast(`AI says ${d.action}${d.executed ? ' — order executed' : d.note ? ` — ${d.note}` : ''}`, d.action === 'ERROR');
   await Promise.all([refreshAll(), loadMarket()]);
 });
 $('settingsForm').onsubmit = (e) => {
@@ -210,13 +396,11 @@ $('sellBtn').onclick = (e) => withBtn(e.target, async () => {
   toast('Sell order placed'); $('sellAmount').value = ''; refreshAll();
 });
 $('resetBtn').onclick = (e) => {
-  if (!confirm('Reset the local paper account to starting cash? Order history will be cleared.')) return;
-  withBtn(e.target, async () => { await api('/api/reset', { method: 'POST' }); toast('Account reset'); refreshAll(); });
+  if (!confirm('Reset the local paper account to starting cash? Orders, trades and decisions will be cleared.')) return;
+  withBtn(e.target, async () => { await api('/api/reset', { method: 'POST' }); shotCache.clear(); toast('Account reset'); refreshAll(); });
 };
-$('granularity').onchange = loadMarket;
 window.addEventListener('resize', drawChart);
 
 refreshAll();
-loadMarket();
 setInterval(refreshAll, 15000);
 setInterval(loadMarket, 60000);

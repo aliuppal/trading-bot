@@ -3,95 +3,187 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090D14" />
   <title>BTC AI Paper Trader</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>₿</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23090D14%22/><path d=%22M6 22l6-7 5 4 9-11%22 fill=%22none%22 stroke=%22%2310B981%22 stroke-width=%223%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>₿ BTC AI Paper Trader</h1>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M6 22l6-7 5 4 9-11" /></svg>
+      <div>
+        <h1>BTC AI Paper Trader</h1>
+        <p class="brand-sub">BTC-USD · simulated execution</p>
+      </div>
+    </div>
     <div class="badges">
-      <span id="aiBadge" class="badge">AI: …</span>
-      <span id="brokerBadge" class="badge">Broker: …</span>
-      <span class="badge warn">Paper money only</span>
+      <span id="aiBadge" class="tag tag-cyan">AI: …</span>
+      <span id="brokerBadge" class="tag">Broker: …</span>
+      <span class="tag tag-rose">Paper money only</span>
     </div>
   </header>
 
   <main>
-    <section class="cards">
-      <div class="card"><div class="label">BTC price</div><div class="value" id="price">—</div><div class="sub" id="change">—</div></div>
-      <div class="card"><div class="label">Equity</div><div class="value" id="equity">—</div><div class="sub" id="pnl">—</div></div>
-      <div class="card"><div class="label">Cash</div><div class="value" id="cash">—</div></div>
-      <div class="card"><div class="label">BTC held</div><div class="value" id="btc">—</div><div class="sub" id="avgEntry">—</div></div>
+    <section class="metrics" aria-label="Account summary">
+      <article class="metric">
+        <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12l4-4 3 2 5-6" /></svg>BTC price</h2>
+        <div class="value num" id="price"><span class="skeleton"></span></div>
+        <div class="sub" id="change">Loading market…</div>
+      </article>
+      <article class="metric">
+        <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13h12M4 10v3M8 6v7M12 3v10" /></svg>Equity</h2>
+        <div class="value num" id="equity"><span class="skeleton"></span></div>
+        <div class="sub" id="pnl"></div>
+      </article>
+      <article class="metric">
+        <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="4" width="12" height="9" rx="1.5" /><path d="M2 7h12" /></svg>Cash</h2>
+        <div class="value num" id="cash"><span class="skeleton"></span></div>
+        <div class="sub">Available buying power</div>
+      </article>
+      <article class="metric">
+        <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M6.5 5v6M6.5 5h2.2a1.5 1.5 0 010 3H6.5h2.6a1.5 1.5 0 010 3H6.5" /></svg>BTC held</h2>
+        <div class="value num" id="btc"><span class="skeleton"></span></div>
+        <div class="sub num" id="avgEntry"></div>
+      </article>
     </section>
 
     <section class="grid">
+      <div class="col-main">
       <div class="panel chart-panel">
         <div class="panel-head">
-          <h2>Price</h2>
-          <select id="granularity">
-            <option value="300">5m</option>
-            <option value="900">15m</option>
-            <option value="3600" selected>1h</option>
-            <option value="21600">6h</option>
-            <option value="86400">1d</option>
-          </select>
+          <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M8 2v12M12 4v8" /></svg>Price · SMA 20</h2>
+          <div class="segmented" id="granularity" role="tablist" aria-label="Candle size">
+            <button type="button" role="tab" data-g="300">5m</button>
+            <button type="button" role="tab" data-g="900">15m</button>
+            <button type="button" role="tab" data-g="3600" class="active" aria-selected="true">1h</button>
+            <button type="button" role="tab" data-g="21600">6h</button>
+            <button type="button" role="tab" data-g="86400">1d</button>
+          </div>
         </div>
-        <canvas id="chart" height="320"></canvas>
+        <div class="legend">
+          <span><i style="background:rgba(6,182,212,.35);border:1px dashed #06B6D4"></i>IFVG zone</span>
+          <span><i style="background:#06B6D4;height:2px;vertical-align:3px"></i>SMA 20</span>
+          <span><i style="background:#10B981;height:2px;vertical-align:3px"></i>Target</span>
+          <span><i style="background:#F43F5E;height:2px;vertical-align:3px"></i>Stop</span>
+        </div>
+        <div class="chart-body">
+          <canvas id="chart" height="320"></canvas>
+          <div id="chartState" class="chart-state">Loading candles…</div>
+        </div>
         <div id="indicators" class="indicators"></div>
       </div>
 
-      <div class="panel">
-        <h2>AI bot</h2>
-        <div class="bot-status"><span id="botDot" class="dot"></span><span id="botState">—</span></div>
-        <div class="sub" id="botTimes"></div>
-        <div class="btn-row">
-          <button id="startBtn" class="primary">Start bot</button>
-          <button id="stopBtn">Stop</button>
-          <button id="runBtn">Ask AI now</button>
+      <section class="panel activity-panel">
+        <div class="panel-head">
+          <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h6" /></svg>Activity</h2>
+          <div class="segmented" id="tabs" role="tablist" aria-label="Activity">
+            <button type="button" role="tab" data-tab="trades" class="active" aria-selected="true">Trade history<span class="count num" id="tradeCount"></span></button>
+            <button type="button" role="tab" data-tab="decisions">AI decisions</button>
+            <button type="button" role="tab" data-tab="orders">Orders</button>
+          </div>
         </div>
-        <div id="lastDecision" class="decision"></div>
+  
+        <div class="tab-pane" data-pane="trades">
+          <div class="table-wrap"><table id="trades"><thead><tr>
+            <th>Chart</th><th>Opened</th><th>Result</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Exit</th><th class="r">R</th><th class="r">P&amp;L</th><th>Source</th>
+          </tr></thead><tbody><tr><td colspan="10" class="empty">Loading trades…</td></tr></tbody></table></div>
+        </div>
+  
+        <div class="tab-pane" data-pane="decisions" hidden>
+          <div class="table-wrap"><table id="decisions"><thead><tr>
+            <th>Time</th><th class="r">Price</th><th>Action</th><th class="r">Conf.</th><th>Result</th><th>Reasoning</th><th>Source</th>
+          </tr></thead><tbody><tr><td colspan="7" class="empty">Loading decisions…</td></tr></tbody></table></div>
+        </div>
+  
+        <div class="tab-pane" data-pane="orders" hidden>
+          <div class="table-wrap"><table id="orders"><thead><tr>
+            <th>Time</th><th>Side</th><th class="r">Qty (BTC)</th><th class="r">Price</th><th class="r">Value</th><th class="r">P&amp;L</th><th>Status</th><th>By</th>
+          </tr></thead><tbody><tr><td colspan="8" class="empty">Loading orders…</td></tr></tbody></table></div>
+        </div>
+      </section>
+      </div>
 
-        <h3>Settings</h3>
-        <form id="settingsForm" class="settings">
-          <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
-          <label>Candles<select name="granularity">
-            <option value="300">5m</option><option value="900">15m</option><option value="3600">1h</option>
-            <option value="21600">6h</option><option value="86400">1d</option></select></label>
-          <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
-          <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
-          <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
-          <button type="submit">Save</button>
-        </form>
+      <div class="panel bot-panel">
+        <div class="panel-head">
+          <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="5" width="10" height="8" rx="2" /><path d="M8 2v3" /></svg>AI bot</h2>
+          <div class="bot-status"><span id="botDot" class="dot"></span><span id="botState">—</span></div>
+        </div>
+        <div class="panel-body">
+          <div class="sub num" id="botTimes"></div>
+          <div class="meter">
+            <div class="meter-head"><span>Trades today (UTC)</span><b id="tradesToday">0 / 10</b></div>
+            <div class="meter-track" id="meterTrack"></div>
+          </div>
+          <div id="openTrade" class="open-trade"></div>
+          <div class="btn-row">
+            <button id="startBtn" class="btn btn-primary">Start bot</button>
+            <button id="stopBtn" class="btn btn-ghost">Stop</button>
+            <button id="runBtn" class="btn btn-ghost">Ask AI now</button>
+          </div>
+          <div id="lastDecision" class="decision"></div>
 
-        <h3>Manual trade</h3>
-        <form id="manualForm" class="manual">
-          <input id="buyAmount" type="number" min="1" step="any" placeholder="USD to buy" />
-          <button type="button" id="buyBtn" class="buy">Buy</button>
-          <input id="sellAmount" type="number" min="0" step="any" placeholder="BTC to sell" />
-          <button type="button" id="sellBtn" class="sell">Sell</button>
-        </form>
-        <button id="resetBtn" class="link">Reset local paper account</button>
+          <h3 class="section-label">Strategy</h3>
+          <ul class="rules">
+            <li>Setup <b>Bullish IFVG</b></li>
+            <li>Decision <b id="ruleAi">Jev, auto-execute</b></li>
+            <li>Risk : reward <b>1 : 1</b></li>
+            <li>Stop <b>below IFVG zone</b></li>
+          </ul>
+
+          <h3 class="section-label">Risk settings</h3>
+          <form id="settingsForm" class="settings">
+            <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
+            <label>Candles<select name="granularity">
+              <option value="300">5m</option><option value="900">15m</option><option value="3600">1h</option>
+              <option value="21600">6h</option><option value="86400">1d</option></select></label>
+            <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
+            <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
+            <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
+            <label>Trades / day (max 10)<input name="maxTradesPerDay" type="number" min="0" max="10" step="1" /></label>
+            <button type="submit" class="btn btn-ghost">Save settings</button>
+          </form>
+
+          <h3 class="section-label">Manual trade</h3>
+          <form id="manualForm" class="manual">
+            <label class="sr-only" for="buyAmount">USD to buy</label>
+            <input id="buyAmount" type="number" min="1" step="any" placeholder="USD to buy" />
+            <button type="button" id="buyBtn" class="btn btn-primary">Buy</button>
+            <label class="sr-only" for="sellAmount">BTC to sell</label>
+            <input id="sellAmount" type="number" min="0" step="any" placeholder="BTC to sell" />
+            <button type="button" id="sellBtn" class="btn btn-sell">Sell</button>
+          </form>
+          <button id="resetBtn" class="btn-link">Reset local paper account</button>
+        </div>
       </div>
     </section>
 
-    <section class="panel">
-      <h2>AI decisions</h2>
-      <div class="table-wrap"><table id="decisions"><thead><tr>
-        <th>Time</th><th>Price</th><th>Action</th><th>Conf.</th><th>Result</th><th>Reasoning</th><th>Source</th>
-      </tr></thead><tbody></tbody></table></div>
-    </section>
-
-    <section class="panel">
-      <h2>Orders</h2>
-      <div class="table-wrap"><table id="orders"><thead><tr>
-        <th>Time</th><th>Side</th><th>Qty (BTC)</th><th>Price</th><th>Value</th><th>P&amp;L</th><th>Status</th><th>By</th>
-      </tr></thead><tbody></tbody></table></div>
-    </section>
   </main>
 
+  <div class="modal" id="shotModal" hidden role="dialog" aria-modal="true" aria-labelledby="shotTitle">
+    <div class="modal-card">
+      <div class="panel-head">
+        <h2 class="card-title" id="shotTitle">Trade</h2>
+        <button type="button" class="btn btn-ghost" id="shotClose">Close</button>
+      </div>
+      <div class="modal-shots" id="shotBody"></div>
+      <div class="modal-meta" id="shotMeta"></div>
+      <p class="modal-note" id="shotNote"></p>
+    </div>
+  </div>
+
   <footer>Educational paper-trading demo. Not financial advice. AI decisions can be wrong.</footer>
-  <div id="toast"></div>
+
+  <div class="mobile-strip" aria-hidden="true">
+    <div><span>BTC</span><b class="num" id="stripPrice">—</b></div>
+    <div><span>P&amp;L</span><b class="num" id="stripPnl">—</b></div>
+    <div><span>Trades</span><b class="num" id="stripTrades">—</b></div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>

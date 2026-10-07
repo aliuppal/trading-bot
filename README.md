@@ -6,25 +6,25 @@ BUY, SELL or HOLD. Free OpenRouter chat models and Google Gemini's free tier are
 
 ## How it works
 
-Every *N* minutes (or when you click **Ask AI now**) the bot:
+The bot trades the **Inverse Fair Value Gap (IFVG)** model with **Jev** making the call:
 
 1. Pulls BTC-USD candles from Coinbase's public API (Binance as fallback). No key needed.
-2. Calculates RSI, SMA 20/50, EMA 12/26, MACD and Bollinger Bands.
-3. Sends the indicators, the last 24 closes and your account balance to **Jev** via
-   OpenRouter's decisions endpoint (`/api/alpha/decisions`). Jev answers a BUY/SELL/HOLD
-   choice with a probability for each option and scores the trade size; the probability of
-   the chosen action is used as the confidence. Each decision costs about $0.00002–0.00004
-   of OpenRouter credit. If Jev is unavailable, the bot falls back to OpenRouter's free
-   chat models (which return `{ action, confidence, size_pct, reasoning }` JSON).
-4. Applies risk rules before trading:
-   - skip if confidence is below **Min confidence** (default 0.6)
-   - each buy is at most **Max per trade %** of equity (default 10%)
-   - total BTC exposure never exceeds **Max position %** of equity (default 50%)
-5. Places a market order on the paper account and logs the decision and its reasoning.
+2. Finds fair value gaps (3-candle imbalances) and watches for an **inversion**: a bearish FVG that
+   price closes back above becomes a **bullish IFVG** (old resistance turned support). That is the long setup.
+3. When a fresh bullish IFVG appears, it asks **Jev** (OpenRouter's decisions endpoint) whether to take it.
+   Jev's state includes `setup`, `risk_reward: "1:1"`, `trades_today`, the IFVG zone and the usual indicators.
+4. If Jev says **BUY** with enough confidence, the order is **executed automatically** with a **1:1 bracket**:
+   stop just below the IFVG zone, target the same distance above the entry.
+5. Every minute the open trade is checked: target hit = **+1R win**, stop hit = **-1R loss**
+   (if one candle touches both, the stop is assumed first). A fresh bearish IFVG + Jev SELL closes it early.
+6. At most **10 trades per UTC day** (configurable lower, never above 10) and one open trade at a time.
+7. Each trade gets a **chart snapshot** (SVG rendered on the server) at entry and at exit, shown in the
+   **Trade history** tab. Click a thumbnail to see both charts with the IFVG zone, entry, stop and target.
 
-If no AI key is set (or the AI errors or hits its rate limit), a simple
-rule-based strategy is used instead so the site keeps working. The **Source**
-column shows which one made each decision.
+If no AI key is set (or the AI errors), a simple rule-based strategy answers instead so the site keeps working.
+Spot BTC is long-only, so bearish IFVGs never open shorts.
+
+The UI follows the **Obsidian Terminal** design system in [DESIGN.md](DESIGN.md).
 
 ## Quick start
 
@@ -61,22 +61,41 @@ it can't place live orders by accident.
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Any Gemini model on your plan |
 | `BROKER` | `local` | `local` or `alpaca` |
 | `STARTING_CASH` | `100000` | Local account starting balance |
-| `BOT_INTERVAL_MINUTES` | `15` | How often the bot asks the AI |
-| `CANDLE_GRANULARITY` | `3600` | Candle size in seconds (300, 900, 3600, 21600, 86400) |
+| `BOT_INTERVAL_MINUTES` | `5` | How often the bot scans for IFVG setups |
+| `CANDLE_GRANULARITY` | `900` | Candle size in seconds (300, 900, 3600, 21600, 86400) |
 | `MIN_CONFIDENCE` | `0.6` | Ignore weaker AI calls |
 | `MAX_POSITION_PCT` | `50` | Max % of equity held in BTC |
 | `MAX_TRADE_PCT` | `10` | Max % of equity per buy |
-| `AUTO_START` | `false` | Start the bot when the server boots |
+| `MAX_TRADES_PER_DAY` | `10` | New trades per UTC day (max 10) |
+| `AUTO_START` | `true` | Bot trades automatically; `false` to start stopped |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | (none) | Upstash Redis storage (needed on Vercel) |
+| `CRON_SECRET` | (none) | Protects `/api/cron` |
 
 Interval, candle size and risk limits can also be changed live from the dashboard.
 
 Free OpenRouter models and the free Gemini tier both have per-minute and per-day
 request limits; an interval of 5–15 minutes stays well inside them.
 
+## Deploying to Vercel
+
+The Express app deploys to Vercel as-is (`server.js` exports the app; `public/` is served from the CDN).
+Serverless functions don't keep files or timers, so:
+
+1. **Storage**: add **Upstash Redis** from the Vercel Marketplace (Storage tab). It sets `KV_REST_API_URL` /
+   `KV_REST_API_TOKEN`, and the account, trades, snapshots and bot state are kept there. Without it, data
+   lives in `/tmp` and is lost whenever the function cold-starts.
+2. **Schedule**: set a `CRON_SECRET` env var on Vercel, then add the GitHub repo secrets `BOT_URL`
+   (your `https://<app>.vercel.app`) and `CRON_SECRET`. The workflow `.github/workflows/bot-tick.yml`
+   calls `/api/cron` every 5 minutes. An open dashboard also drives the bot while it's open.
+3. Set `OPENROUTER_API_KEY` (and any settings from `.env.example`) in the Vercel project.
+
 ## Project layout
 
 ```
 server.js              Express server + REST API
+src/ifvg.js            FVG / IFVG detection and the 1:1 bracket
+src/snapshot.js        SVG trade chart snapshots
+src/store.js           File or Upstash Redis key/value storage
 src/ai.js              Jev decisions call, OpenRouter / Gemini chat calls, rule-based fallback
 src/bot.js             Scheduler + risk rules (planTrade)
 src/indicators.js      RSI / SMA / EMA / MACD / Bollinger
@@ -96,6 +115,9 @@ test/                  node:test unit tests (npm test)
 | GET | `/api/account` | Cash, BTC, equity |
 | GET | `/api/orders` | Order history |
 | GET | `/api/decisions` | AI decision log |
+| GET | `/api/trades` | IFVG trades (entry, stop, target, exit, R, P&L) |
+| GET | `/api/trades/:id/shots` | Entry / exit chart snapshots (SVG) |
+| GET/POST | `/api/cron` | Scheduler tick (`Authorization: Bearer $CRON_SECRET`) |
 | POST | `/api/bot/start`, `/api/bot/stop`, `/api/bot/run` | Control the bot |
 | POST | `/api/settings` | Update interval / risk limits |
 | POST | `/api/order` | Manual trade `{ side: "buy", amount: <USD> }` or `{ side: "sell", amount: <BTC> }` |

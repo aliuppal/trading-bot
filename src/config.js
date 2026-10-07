@@ -23,12 +23,20 @@ export const config = {
   },
   startingCash: num(process.env.STARTING_CASH, 100000),
   bot: {
-    intervalMinutes: num(process.env.BOT_INTERVAL_MINUTES, 15),
-    granularity: num(process.env.CANDLE_GRANULARITY, 3600),
+    intervalMinutes: num(process.env.BOT_INTERVAL_MINUTES, 5),
+    granularity: num(process.env.CANDLE_GRANULARITY, 900),
     minConfidence: num(process.env.MIN_CONFIDENCE, 0.6),
     maxPositionPct: num(process.env.MAX_POSITION_PCT, 50),
     maxTradePct: num(process.env.MAX_TRADE_PCT, 10),
-    autoStart: process.env.AUTO_START === 'true',
+    maxTradesPerDay: Math.min(10, num(process.env.MAX_TRADES_PER_DAY, 10)),
+    autoStart: process.env.AUTO_START !== 'false',
   },
-  dataDir: process.env.DATA_DIR || 'data',
+  // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).
+  dataDir: process.env.DATA_DIR || (process.env.VERCEL ? '/tmp/trading-bot' : 'data'),
+  redis: {
+    url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '',
+    token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '',
+  },
+  cronSecret: process.env.CRON_SECRET || '',
+  serverless: Boolean(process.env.VERCEL),
 };
