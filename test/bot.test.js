@@ -546,3 +546,19 @@ test('exchange bracket: SL/TP placed on the exchange, breakeven moves the stop, 
   assert.ok(Math.abs(closed.pnl - (123.45 - 1 - 2)) < 0.01, String(closed.pnl));
   assert.ok(ex.cancelled.includes(t.stopAlgoId), 'leftover stop cancelled');
 });
+
+test('daily scan counter tallies every scan and where it stopped', async () => {
+  const { scanOutcome } = await import('../src/bot.js');
+  assert.equal(scanOutcome('No setup · swing 15m: no fresh IFVG · scalp 1m: no fresh IFVG'), 'noIfvg');
+  assert.equal(scanOutcome('No setup · swing 5m: bullish IFVG, no bullish 30m/1h/2h/4h FVG tap'), 'noTap');
+  assert.equal(scanOutcome('Managing open trade (bracket active, next review 10:00 UTC)'), 'inTrade');
+  assert.equal(scanOutcome(null), 'asked');
+  const s = setup();
+  await s.bot.runOnce(); // takes a trade
+  s.bot.now = () => NOW + 60000;
+  await s.bot.runOnce(); // managing it
+  const st = (await s.bot.status()).scanStats;
+  assert.equal(st.scans, 2);
+  assert.equal(st.taken, 1);
+  assert.equal(st.inTrade, 1);
+});

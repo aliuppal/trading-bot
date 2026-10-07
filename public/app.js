@@ -427,6 +427,10 @@ async function loadStatus() {
     track.className = `meter-track${s.tradesToday >= max ? ' full' : ''}`;
     track.style.gridTemplateColumns = `repeat(${Math.max(1, max)}, 1fr)`;
     track.innerHTML = Array.from({ length: Math.max(1, max) }, (_, i) => `<i class="${i < s.tradesToday ? 'used' : ''}"></i>`).join('');
+    const ss = s.scanStats;
+    $('scanStats').innerHTML = ss
+      ? `<b>Scans today ${ss.scans}</b> · no IFVG ${ss.noIfvg || 0} · IFVG but no FVG tap ${ss.noTap || 0} · waiting ${ss.waiting || 0} · in trade ${ss.inTrade || 0}${ss.limit ? ` · limit ${ss.limit}` : ''} · <b>sent to Jev ${ss.askedJev || 0}</b> · <b>taken ${ss.taken || 0}</b>`
+      : 'Scans today: counting starts with the next scan';
     $('meterSplit').innerHTML = `<span><span class="pill SWING">SWING</span> ${s.swingToday ?? 0} / ${s.settings.maxSwingPerDay ?? 5}</span>`
       + `<span><span class="pill SCALP">SCALP</span> ${s.scalpToday ?? 0} / ${s.settings.maxScalpPerDay ?? 5}</span>`;
     $('openTrade').innerHTML = renderOpenTrade(s.openTrade);

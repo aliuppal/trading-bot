@@ -59,6 +59,18 @@ export function riskSize({ riskUsd, stopDist, price, cash, levPick = 1, maxLev =
 
 const utcDay = (t) => new Date(t).toISOString().slice(0, 10);
 
+/** Where a scan stopped, for the daily scan counter. */
+export function scanOutcome(reason) {
+  if (!reason) return 'asked';
+  if (/Managing open trade/.test(reason)) return 'inTrade';
+  if (/limit/i.test(reason)) return 'limit';
+  if (/waiting for/.test(reason)) return 'waiting';
+  if (/FVG tap|not A+/.test(reason)) return 'noTap';
+  if (/Already evaluated/.test(reason)) return 'seen';
+  if (/no fresh IFVG|No fresh IFVG/i.test(reason)) return 'noIfvg';
+  return 'other';
+}
+
 /** Number of trades opened on the same UTC day as `now` (optionally only one category: 'swing' / 'scalp'). */
 export function tradesToday(trades, now = Date.now(), category) {
   const day = utcDay(now);
@@ -194,6 +206,7 @@ export class TradingBot {
       busy: this.busy,
       lastRun: s.lastRun,
       lastScan: s.lastScan,
+      scanStats: s.scanStats?.day === utcDay(this.now()) ? s.scanStats : null,
       nextRun: s.running && s.lastRun
         ? new Date(new Date(s.lastRun).getTime() + s.settings.intervalMinutes * 60000).toISOString()
         : null,
@@ -571,6 +584,7 @@ export class TradingBot {
     this.busy = true;
     const entry = { time: new Date(this.now()).toISOString() };
     let persist = manual;
+    let scanClass = 'error';
     try {
       const s = this.state.settings;
       // 1. Enforce the open trade's stop / target on its own timeframe.
@@ -635,6 +649,7 @@ export class TradingBot {
       else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';
       else if (!open && asked) reason = 'Already evaluated this IFVG';
 
+      scanClass = scanOutcome(reason);
       this.state.lastScan = { time: entry.time, setup: entry.setup, note: reason || (review ? 'Jev reviewing open trade' : 'Asked AI') };
 
       if (reason && !manual) {
@@ -723,6 +738,14 @@ export class TradingBot {
     } finally {
       this.busy = false;
       this.state.lastRun = entry.time;
+      // daily scan counter (UTC): how many scans ran and where each one stopped
+      const day = utcDay(this.now());
+      const st = this.state.scanStats?.day === day ? this.state.scanStats : { day };
+      const outcome = entry.executed ? 'taken' : scanClass;
+      st.scans = (st.scans || 0) + 1;
+      st[outcome] = (st[outcome] || 0) + 1;
+      if (outcome === 'taken' || (scanClass === 'asked' && entry.confidence !== undefined)) st.askedJev = (st.askedJev || 0) + 1;
+      this.state.scanStats = st;
       try {
         if (persist) await this.log(entry);
         await this.save();

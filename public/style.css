@@ -167,6 +167,8 @@ select { font-family: var(--font-mono); font-size: 13px; }
 .meter-track i.used { background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 6px rgba(6, 182, 212, .35); }
 .meter-track.full i.used { background: var(--rose); border-color: var(--rose); box-shadow: none; }
 
+.scan-stats { margin-top: 8px; font: 400 11px/16px var(--font-mono); color: var(--dim); }
+.scan-stats b { color: var(--text-2); font-weight: 500; }
 .meter-split { display: flex; gap: 16px; margin-top: 8px; font: 500 11px/16px var(--font-mono); color: var(--muted); }
 .meter-split > span { display: inline-flex; align-items: center; gap: 6px; }
 
