@@ -33,7 +33,8 @@ npm start                 # http://localhost:3000
 
 1. Create an OpenRouter key at <https://openrouter.ai/keys> and set `OPENROUTER_API_KEY` in `.env`
    (or set `GEMINI_API_KEY` from <https://aistudio.google.com/apikey> instead).
-2. Open <http://localhost:3000>, click **Ask AI now** to see a decision, or **Start bot** to run on a schedule.
+2. Run `npm run check` to confirm market data, the AI key and (if `BROKER=alpaca`) your Alpaca keys all work.
+3. Open <http://localhost:3000>, click **Ask AI now** to see a decision, or **Start bot** to run on a schedule.
 
 ## Paper accounts
 
