@@ -640,7 +640,7 @@ $('pnlPeriod').onclick = (e) => {
   renderPnl();
 };
 
-async function openShot(t) {
+async function openShot(t, phase = 'exit') {
   $('shotTitle').textContent = `Trade · ${fmtTime(t.entryTime)} · ${RESULT[t.status] || t.status}`;
   $('shotBody').innerHTML = '<p class="sub">Loading chart…</p>';
   $('shotMeta').innerHTML = [
@@ -653,9 +653,15 @@ async function openShot(t) {
   $('shotModal').hidden = false;
   $('shotClose').focus();
   const shots = await getShots(t);
-  const figs = [['At entry', shots.entry], ['At exit', shots.exit]].filter(([, s]) => s);
-  $('shotBody').innerHTML = figs.map(([cap, svg]) => `<figure><figcaption>${cap}</figcaption>${shotHtml(svg, cap)}</figure>`).join('')
-    || '<p class="sub">No chart was saved for this trade.</p>';
+  // Entry / Exit tabs; opens on the snapshot that was clicked (exit falls back to entry while the trade is open).
+  const views = { entry: ['At entry', shots.entry], exit: [t.status === 'open' ? 'Exit (trade still open)' : `At exit · ${RESULT[t.status] || t.status}`, shots.exit] };
+  const show = (p) => {
+    const [cap, img] = views[p];
+    $('shotBody').innerHTML = `<div class="segmented shot-tabs" role="tablist">${['entry', 'exit'].map((k) => `<button type="button" role="tab" data-shot="${k}" class="${k === p ? 'active' : ''}" aria-selected="${k === p}">${k === 'entry' ? 'Entry' : 'Exit'}</button>`).join('')}</div>`
+      + (img ? `<figure><figcaption>${cap}</figcaption>${shotHtml(img, cap)}</figure>` : `<p class="sub">${p === 'exit' && t.status === 'open' ? 'The exit chart is saved when the trade closes.' : 'No chart was saved for this snapshot.'}</p>`);
+    $('shotBody').querySelectorAll('[data-shot]').forEach((b) => { b.onclick = () => show(b.dataset.shot); });
+  };
+  show(phase === 'exit' && !shots.exit && t.status === 'open' ? 'entry' : phase);
 }
 
 /* ---------------- controls ---------------- */
@@ -698,7 +704,7 @@ $('tabs').onclick = (e) => {
 
 $('trades').onclick = (e) => {
   const b = e.target.closest('[data-trade]');
-  if (b) openShot(trades[Number(b.dataset.trade)]);
+  if (b) openShot(trades[Number(b.dataset.trade)], b.dataset.phase || 'exit');
 };
 const closeShot = () => { $('shotModal').hidden = true; };
 $('shotClose').onclick = closeShot;

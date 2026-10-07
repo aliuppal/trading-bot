@@ -253,6 +253,7 @@ td.empty b { display: block; margin-bottom: 4px; font: 600 14px/20px var(--font-
 .modal-card .panel-head { position: sticky; top: 0; background: var(--l3); }
 .modal-shots { display: grid; gap: 12px; padding: 16px; }
 .modal-shots figure { margin: 0; }
+.shot-tabs { justify-self: start; }
 .modal-shots figcaption { margin-bottom: 6px; font: 600 10px/14px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
 .modal-shots svg, .modal-shots img { width: 100%; height: auto; display: block; border-radius: var(--r-lg); border: 1px solid var(--line-soft); }
 .modal-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; padding: 0 16px 16px; }
