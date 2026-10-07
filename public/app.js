@@ -464,11 +464,40 @@ async function loadDecisions() {
 async function loadOrders() {
   try {
     const orders = await api('/api/orders');
-    $('orders').querySelector('tbody').innerHTML = orders.map((o) => `<tr>
-      <td class="t">${fmtTime(o.time)}</td><td><span class="pill ${esc(o.side)}">${esc(o.side?.toUpperCase())}</span></td>
+    // Link orders to trades: the entry order of the open trade is ACTIVE; a closing order shows its trade's P&L.
+    const open = status?.openTrade;
+    const entryOf = new Map(trades.filter((t) => t.orderId).map((t) => [String(t.orderId), t]));
+    const exitOf = new Map(trades.filter((t) => t.exitOrderId).map((t) => [String(t.exitOrderId), t]));
+    // older trades: match the closing order by time (within 90 s of the exit) and side
+    for (const t of trades) {
+      if (t.exitOrderId || !t.exitTime) continue;
+      const want = t.side === 'short' ? 'cover' : 'sell';
+      const o = orders.find((x) => x.side === want && Math.abs(new Date(x.time) - new Date(t.exitTime)) < 90000 && !exitOf.has(String(x.id)));
+      if (o) exitOf.set(String(o.id), t);
+    }
+    const price = candles.at(-1)?.close;
+    $('orders').querySelector('tbody').innerHTML = orders.map((o) => {
+      const id = String(o.id);
+      const active = open && String(open.orderId) === id;
+      const closed = exitOf.get(id);
+      const opened = entryOf.get(id);
+      let pnl = o.pnl;
+      let note = o.reason ? ` · ${esc(o.reason)}` : '';
+      if (active && price) {
+        pnl = (open.side === 'short' ? open.entryPrice - price : price - open.entryPrice) * open.qty;
+        note = ` · open ${esc(open.side)} · SL ${usd(open.stop)} · TP ${usd(open.target)}`;
+      } else if (closed) {
+        pnl = closed.pnl;
+        note = ` · closed ${esc(closed.side)} (${esc(closed.exitReason)}, ${closed.r > 0 ? '+' : ''}${closed.r}R)`;
+      } else if (opened && opened.status !== 'open') {
+        note = ` · opened ${esc(opened.side)} → ${esc(String(opened.status).toUpperCase())}`;
+      }
+      return `<tr class="${active ? 'active-order' : ''}">
+      <td class="t">${fmtTime(o.time)}</td><td><span class="pill ${esc(o.side)}">${esc(o.side?.toUpperCase())}</span>${active ? ' <span class="pill OPEN">ACTIVE</span>' : ''}</td>
       <td class="r">${o.qty ? Number(o.qty).toFixed(6) : '—'}</td><td class="r">${usd(o.price)}</td><td class="r">${usd(o.notional)}</td>
-      <td class="r">${o.pnl !== undefined ? `<span class="${o.pnl >= 0 ? 'up' : 'down'}">${signedUsd(o.pnl)}</span>` : '—'}</td>
-      <td>${esc(o.status)}${o.reason ? ` · ${esc(o.reason)}` : ''}</td><td class="src">${esc(o.source)}</td></tr>`).join('')
+      <td class="r">${pnl !== undefined && pnl !== null ? `<span class="${pnl > 0 ? 'up' : pnl < 0 ? 'down' : ''}">${signedUsd(pnl)}</span>${active ? ' <span class="src">live</span>' : ''}` : '—'}</td>
+      <td>${esc(o.status)}${note}</td><td class="src">${esc(o.source)}</td></tr>`;
+    }).join('')
       || '<tr><td colspan="8" class="empty"><b>No orders yet</b>Orders appear here when the bot or you trade.</td></tr>';
   } catch (e) {
     $('orders').querySelector('tbody').innerHTML = `<tr><td colspan="8" class="empty"><b>Couldn't load orders</b>${esc(e.message)}</td></tr>`;
@@ -627,7 +656,7 @@ async function openShot(t) {
 
 /* ---------------- controls ---------------- */
 
-const refreshAll = () => Promise.all([loadStatus(), loadAccount(), loadDecisions(), loadOrders(), loadTrades()]);
+const refreshAll = () => Promise.all([loadStatus(), loadAccount(), loadDecisions(), loadTrades()]).then(loadOrders);
 
 async function withBtn(btn, fn) {
   btn.disabled = true;

@@ -5,8 +5,9 @@ const FEE_RATE = 0.001; // 0.1% simulated taker fee
 const KEY = 'account';
 
 export class LocalBroker {
-  constructor({ kv, startingCash, getPrice }) {
+  constructor({ kv, startingCash, getPrice, feeRate = FEE_RATE }) {
     this.name = 'local';
+    this.feeRate = feeRate;
     this.kv = kv;
     this.startingCash = startingCash;
     this.getPrice = getPrice;
@@ -50,7 +51,7 @@ export class LocalBroker {
     if (side === 'buy') {
       const usd = Math.min(Number(notional), s.cash);
       if (!(usd >= 1)) throw new Error('Insufficient cash (min $1)');
-      const fee = usd * FEE_RATE;
+      const fee = usd * this.feeRate;
       const btc = (usd - fee) / p;
       s.avgEntry = (s.avgEntry * s.btc + p * btc) / (s.btc + btc);
       s.btc += btc;
@@ -60,7 +61,7 @@ export class LocalBroker {
       const btc = Math.min(Number(qty), s.btc);
       if (!(btc > 0) || btc * p < 1) throw new Error('Insufficient BTC (min $1)');
       const gross = btc * p;
-      const fee = gross * FEE_RATE;
+      const fee = gross * this.feeRate;
       const pnl = (p - s.avgEntry) * btc - fee;
       s.btc -= btc;
       s.cash += gross - fee;
@@ -79,7 +80,7 @@ export class LocalBroker {
     const usd = Math.min(Number(notional), s.cash);
     if (!(usd >= 1)) throw new Error('Insufficient cash to back a short (min $1)');
     const qty = usd / p;
-    const fee = usd * FEE_RATE;
+    const fee = usd * this.feeRate;
     const held = s.shortBtc || 0;
     s.shortEntry = ((s.shortEntry || 0) * held + p * qty) / (held + qty);
     s.shortBtc = held + qty;
@@ -94,7 +95,7 @@ export class LocalBroker {
     const btc = Math.min(Number(qty), s.shortBtc || 0);
     if (!(btc > 0) || btc * p < 1) throw new Error('No short position to cover');
     const cost = btc * p;
-    const fee = cost * FEE_RATE;
+    const fee = cost * this.feeRate;
     const pnl = (s.shortEntry - p) * btc - fee;
     s.shortBtc -= btc;
     s.cash -= cost + fee;

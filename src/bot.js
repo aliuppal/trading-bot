@@ -231,7 +231,7 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
-    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR', 'maxLeverage'];
+    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR', 'maxLeverage', 'minStopPct'];
     const s = this.state.settings;
     for (const k of allowed) {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
@@ -254,6 +254,7 @@ export class TradingBot {
     s.breakevenAtR = Math.max(0, Number(s.breakevenAtR ?? 0));
     if (s.breakevenAtR >= s.riskReward) s.breakevenAtR = 0;
     s.maxLeverage = Math.min(20, Math.max(1, Math.round(s.maxLeverage ?? 5)));
+    s.minStopPct = Math.min(2, Math.max(0.05, Number(s.minStopPct ?? 0.15))); // smallest stop distance, % of price
     await this.save();
     return s;
   }
@@ -353,6 +354,7 @@ export class TradingBot {
       exitTime: nowIso,
       exitPrice,
       exitReason: reason,
+      ...(order?.id && { exitOrderId: String(order.id) }),
       pnl: Number(pnl.toFixed(2)),
       r: Number(((dir * (exitPrice - trade.entryPrice)) / Math.abs(trade.entryPrice - (trade.initialStop ?? trade.stop))).toFixed(2)),
       ...(note && { note }),
@@ -387,7 +389,8 @@ export class TradingBot {
     const notional = Number(order.notional ?? size);
     const qty = Number(order.qty) || (notional * 0.999) / entryPrice;
     const rr = this.state.settings.riskReward ?? 1;
-    const b = bracketFor(side, entryPrice, setup, { rr }) || bracketFor(side, price, setup, { rr });
+    const minRiskPct = this.state.settings.minStopPct ?? 0.15;
+    const b = bracketFor(side, entryPrice, setup, { rr, minRiskPct }) || bracketFor(side, price, setup, { rr, minRiskPct });
     // Target at liquidity: the nearest level in the trade direction that is 1R-5R away (else the fixed R:R target).
     let targetLevel = null;
     if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
@@ -496,7 +499,7 @@ export class TradingBot {
       // Clear path: no opposing 3m/5m/15m FVG between entry and the (fixed R:R) target.
       if (setup) {
         const sd = SIDE_FOR[setup.direction];
-        const b0 = bracketFor(sd, price, setup, { rr: s.riskReward ?? 1 });
+        const b0 = bracketFor(sd, price, setup, { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
         if (b0) {
           const blockers = pathBlockers(scan.zones || [], sd, price, b0.target);
           setup.clearPath = blockers.length === 0;
