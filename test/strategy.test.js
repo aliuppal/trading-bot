@@ -26,7 +26,7 @@ function forming15m() {
   return [...closed, { time: NOW - 60000, open: last.close, high: 60150, low: last.close - 10, close: 60100, volume: 1 }];
 }
 
-const market = (byTf) => ({ getCandles: async (g) => byTf[g] ?? byTf.default });
+const market = (byTf) => ({ getCandles: async (g) => byTf[g] ?? byTf.default ?? [] });
 
 test('aggregate builds 2h candles from 1h', () => {
   const h = [0, 1, 2, 3].map((i) => ({ time: i * H1, open: i, high: i + 1, low: i - 1, close: i + 0.5, volume: 1 }));
@@ -120,4 +120,18 @@ test('not A+ when the draw on liquidity is the other way: still needs the HTF ta
   const liqBelow = { draw: 'below', lrlr: null, above: [], below: [{ type: 'PDL', price: 58000 }] };
   const r = await scanSetups(market({ 3600: flatH1, default: ifvgCandles(NOW) }), { entryTimeframes: '900', scalpEnabled: false }, NOW, { liquidity: liqBelow });
   assert.equal(r.setup, null);
+});
+
+test('path check: opposing 3m/5m/15m FVGs between entry and target block the path', async () => {
+  const { pathBlockers } = await import('../src/strategy.js');
+  const zones = [
+    { tf: '5m', type: 'bullish', bottom: 99.2, top: 99.5 }, // support in the way of a short 100 -> 99
+    { tf: '5m', type: 'bearish', bottom: 99.2, top: 99.5 }, // same direction: not a blocker for a short
+    { tf: '1h', type: 'bullish', bottom: 99.3, top: 99.4 }, // not a 3m/5m/15m zone
+    { tf: '15m', type: 'bullish', bottom: 97, top: 98 }, // beyond the target
+  ];
+  const b = pathBlockers(zones, 'short', 100, 99);
+  assert.equal(b.length, 1);
+  assert.equal(b[0].tf, '5m');
+  assert.equal(pathBlockers(zones, 'long', 100, 101).length, 0);
 });

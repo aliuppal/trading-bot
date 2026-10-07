@@ -17,6 +17,16 @@ import { liquidityLevels } from './liquidity.js';
  *       direction (an LRLR that way adds to it). Tradeable even without a higher-timeframe FVG tap.
  *   A   the normal setup: IFVG after a tap of a same-direction higher-timeframe FVG.
  */
+/**
+ * Opposing 3m/5m/15m FVGs between entry and target: for a long, active bearish FVGs (resistance) in the way up;
+ * for a short, active bullish FVGs (support) in the way down. Returns the blocking zones.
+ */
+export function pathBlockers(zones, side, entry, target, tfs = ['3m', '5m', '15m']) {
+  const lo = Math.min(entry, target), hi = Math.max(entry, target);
+  const type = side === 'long' ? 'bearish' : 'bullish';
+  return zones.filter((z) => tfs.includes(z.tf) && z.type === type && z.top > lo && z.bottom < hi);
+}
+
 export function gradeSetup(s, liquidity) {
   const toward = s.direction === 'bullish' ? 'above' : 'below';
   const perfect = s.formationCandles != null && s.formationCandles <= 5;
@@ -39,7 +49,7 @@ export const ZONES_FOR_ENTRY = {
   300: ['30m', '1h', '2h', '4h'],
   900: ['1h', '2h', '4h'],
 };
-const ZONE_TFS = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400 };
+const ZONE_TFS = { '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400 };
 const TAP_WINDOW_MINUTES = { swing: 180, scalp: 60 }; // how recent the zone tap must be
 export const tfLabel = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 
@@ -99,10 +109,9 @@ async function scanCore(market, settings, now, liquidity) {
   const needTap = settings.requireHtfTap !== false;
   const scalpOn = settings.scalpEnabled !== false;
   const swingOn = settings.swingEnabled !== false;
-  const zoneTfs = needTap
-    ? [...new Set([...(scalpOn ? ['5m', '15m', '30m'] : []), ...(swingOn ? ['30m', '1h', '2h', '4h'] : [])])]
-    : [];
-  const zones = needTap ? await loadHtfZones(market, zoneTfs) : [];
+  // 3m/5m/15m zones are always loaded too: they are checked for gaps in the path to the target.
+  const zoneTfs = [...new Set(['3m', '5m', '15m', ...(needTap ? [...(scalpOn ? ['30m'] : []), ...(swingOn ? ['30m', '1h', '2h', '4h'] : [])] : [])])];
+  const zones = await loadHtfZones(market, zoneTfs);
   const notes = [];
 
   // Swing: highest entry timeframe first.

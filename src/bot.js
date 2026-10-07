@@ -1,7 +1,7 @@
 import { decide } from './ai.js';
 import { summarize } from './indicators.js';
 import { bracketFor } from './ifvg.js';
-import { scanSetups } from './strategy.js';
+import { scanSetups, pathBlockers } from './strategy.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
 import { liquidityLevels, liquidityTarget, describeLevels } from './liquidity.js';
@@ -129,7 +129,7 @@ export function describeSetup(setup, side) {
 
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: Number(z.top.toFixed(2)), bottom: Number(z.bottom.toFixed(2)),
-  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, grade: z.grade, qualityReasons: z.qualityReasons, granularity: z.granularity, category: z.category, displacement: z.displacement,
+  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, grade: z.grade, qualityReasons: z.qualityReasons, clearPath: z.clearPath, granularity: z.granularity, category: z.category, displacement: z.displacement,
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
   }),
@@ -485,14 +485,34 @@ export class TradingBot {
       const scan = await scanSetups(this.market, {
         ...s, swingEnabled: s.swingEnabled !== false && swingLeft, scalpEnabled: s.scalpEnabled !== false && scalpLeft,
       }, this.now());
-      const { setup, candles } = scan;
+      let { setup } = scan;
+      const { candles } = scan;
       const indicators = summarize(candles);
       // Liquidity: PDH/PDL, today's high/low, PWH/PWL, equal highs/lows, HTF swings, LRLR.
       const liquidity = scan.liquidity !== undefined ? scan.liquidity : await liquidityLevels(this.market, this.now()).catch(() => null);
       this.state.liquidity = liquidity && { above: liquidity.above.slice(0, 4), below: liquidity.below.slice(0, 4), lrlr: liquidity.lrlr, draw: liquidity.draw };
       const price = indicators.price;
       entry.price = price;
-      entry.setup = zoneSummary(setup);
+      // Clear path: no opposing 3m/5m/15m FVG between entry and the (fixed R:R) target.
+      if (setup) {
+        const sd = SIDE_FOR[setup.direction];
+        const b0 = bracketFor(sd, price, setup, { rr: s.riskReward ?? 1 });
+        if (b0) {
+          const blockers = pathBlockers(scan.zones || [], sd, price, b0.target);
+          setup.clearPath = blockers.length === 0;
+          const why = setup.clearPath ? 'clear path to TP'
+            : `path blocked by ${blockers.slice(0, 2).map((z) => `${z.tf} ${z.type} FVG ${Math.round(z.bottom).toLocaleString('en-US')}-${Math.round(z.top).toLocaleString('en-US')}`).join(', ')}`;
+          setup.qualityReasons = [...(setup.qualityReasons || []), why];
+          // A+ needs a clear path; without it an untapped "A+" is not tradeable.
+          if (setup.grade === 'A+' && !setup.clearPath) setup.grade = 'A';
+        }
+      }
+      if (setup && !setup.htf && setup.grade !== 'A+' && s.requireHtfTap !== false) {
+        scan.note = `${setup.category} ${setup.granularity / 60}m: ${setup.qualityReasons.at(-1)}, not A+ and no FVG tap`;
+        scan.setup = null;
+        setup = null;
+      }
+      entry.setup = zoneSummary(scan.setup);
       const trades = await this.trades();
       open = trades.find((t) => t.status === 'open');
       const count = tradesToday(trades, this.now());
