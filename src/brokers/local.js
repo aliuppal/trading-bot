@@ -1,4 +1,6 @@
-// Built-in simulated paper account. Persists under the "account" key of the KV store.
+// Built-in simulated paper account. Balances persist under the "account" key, orders under "orders".
+import { appendList } from '../store.js';
+
 const FEE_RATE = 0.001; // 0.1% simulated taker fee
 const KEY = 'account';
 
@@ -11,7 +13,7 @@ export class LocalBroker {
   }
 
   fresh() {
-    return { cash: this.startingCash, btc: 0, avgEntry: 0, shortBtc: 0, shortEntry: 0, startingCash: this.startingCash, orders: [] };
+    return { cash: this.startingCash, btc: 0, avgEntry: 0, shortBtc: 0, shortEntry: 0, startingCash: this.startingCash };
   }
 
   read() {
@@ -36,7 +38,8 @@ export class LocalBroker {
   }
 
   async getOrders(limit = 50) {
-    return (await this.read()).orders.slice(0, limit);
+    const orders = await this.kv.get('orders', null);
+    return (orders ?? (await this.read()).orders ?? []).slice(0, limit); // older data kept orders inside the account
   }
 
   /** side: 'buy' | 'sell'; buy uses notional USD, sell uses BTC qty */
@@ -101,15 +104,20 @@ export class LocalBroker {
 
   async record(s, order, p, source, reason) {
     const rec = {
-      id: `L${Date.now()}`, time: new Date().toISOString(), price: p, status: 'filled', source, ...(reason && { reason }), ...order,
+      id: `L${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, time: new Date().toISOString(), price: p, status: 'filled',
+      source, ...(reason && { reason }), ...order,
     };
-    s.orders.unshift(rec);
-    s.orders = s.orders.slice(0, 500);
+    if (s.orders) { // move orders out of the account document (older data)
+      if (!(await this.kv.get('orders', null))) await this.kv.set('orders', s.orders);
+      delete s.orders;
+    }
     await this.kv.set(KEY, s);
+    await appendList(this.kv, 'orders', rec, 500);
     return rec;
   }
 
   async reset() {
     await this.kv.set(KEY, this.fresh());
+    await this.kv.set('orders', []);
   }
 }

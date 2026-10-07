@@ -2,6 +2,7 @@ import { decide } from './ai.js';
 import { summarize } from './indicators.js';
 import { latestSetup, bracketFor } from './ifvg.js';
 import { renderTradeImage } from './snapshot.js';
+import { appendList } from './store.js';
 
 const MIN_ORDER_USD = 10;
 const MAX_TRADES_KEPT = 200;
@@ -300,9 +301,8 @@ export class TradingBot {
   }
 
   async log(entry) {
-    const all = await this.kv.get('decisions', []);
-    all.unshift(entry);
-    await this.kv.set('decisions', all.slice(0, MAX_DECISIONS_KEPT));
+    entry.id ??= `D${this.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await appendList(this.kv, 'decisions', entry, MAX_DECISIONS_KEPT);
   }
 
   rememberAsked(id) {

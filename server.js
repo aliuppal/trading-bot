@@ -5,6 +5,7 @@ import { config } from './src/config.js';
 import * as market from './src/market.js';
 import { LocalBroker } from './src/brokers/local.js';
 import { AlpacaBroker } from './src/brokers/alpaca.js';
+import { AlpacaWithSimShorts } from './src/brokers/alpaca-hybrid.js';
 import { TradingBot } from './src/bot.js';
 import { summarize } from './src/indicators.js';
 import { findIfvgs } from './src/ifvg.js';
@@ -13,9 +14,11 @@ import { createKV } from './src/store.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const kv = createKV({ dataDir: config.dataDir, redis: config.redis, supabase: config.supabase });
+const local = new LocalBroker({ kv, startingCash: config.startingCash, getPrice: market.getPrice });
+// BROKER=alpaca: longs go to the Alpaca paper account, shorts are simulated (Alpaca can't short crypto).
 const broker = config.broker === 'alpaca'
-  ? new AlpacaBroker({ ...config.alpaca, getPrice: market.getPrice })
-  : new LocalBroker({ kv, startingCash: config.startingCash, getPrice: market.getPrice });
+  ? new AlpacaWithSimShorts({ alpaca: new AlpacaBroker({ ...config.alpaca, getPrice: market.getPrice }), sim: local })
+  : local;
 
 const bot = new TradingBot({ broker, market, ai: config.ai, settings: config.bot, kv, autoStart: config.bot.autoStart });
 

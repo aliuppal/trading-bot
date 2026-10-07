@@ -167,28 +167,82 @@ test('bullish IFVG ignores an AI SELL (direction must match the setup)', async (
   assert.match(entry.note, /does not match the bullish IFVG/);
 });
 
-test('SupabaseKV upserts, reads and deletes through the REST API', async () => {
-  const { SupabaseKV } = await import('../src/store.js');
-  const rows = new Map();
+/** Minimal in-memory PostgREST: tables keyed by id (kv keyed by key); supports eq filters, upsert, patch, delete. */
+function fakeSupabase() {
+  const tables = {};
   const calls = [];
-  const fakeFetch = async (url, opts) => {
+  const fetchImpl = async (url, opts) => {
     const u = new URL(url);
-    calls.push({ method: opts.method, headers: opts.headers, path: u.pathname });
-    const key = u.searchParams.get('key')?.replace(/^eq\./, '');
-    if (opts.method === 'POST') { const b = JSON.parse(opts.body); rows.set(b.key, b.value); return { ok: true, status: 201 }; }
-    if (opts.method === 'DELETE') { rows.delete(key); return { ok: true, status: 204 }; }
-    return { ok: true, status: 200, json: async () => (rows.has(key) ? [{ value: rows.get(key) }] : []) };
+    const table = u.pathname.split('/').pop();
+    const t = (tables[table] ??= new Map());
+    const pk = table === 'kv' ? 'key' : 'id';
+    const eq = u.searchParams.get(pk)?.startsWith('eq.') ? u.searchParams.get(pk).slice(3) : null;
+    calls.push({ method: opts.method, table, headers: opts.headers });
+    if (opts.method === 'POST') {
+      for (const row of [].concat(JSON.parse(opts.body))) t.set(row[pk], { ...t.get(row[pk]), ...row });
+      return { ok: true, status: 201 };
+    }
+    if (opts.method === 'PATCH') { if (t.has(eq)) t.set(eq, { ...t.get(eq), ...JSON.parse(opts.body) }); return { ok: true, status: 204 }; }
+    if (opts.method === 'DELETE') { if (eq) t.delete(eq); else t.clear(); return { ok: true, status: 204 }; }
+    let rows = [...t.values()];
+    if (eq) rows = rows.filter((r) => r[pk] === eq);
+    const order = u.searchParams.get('order');
+    if (order) { const [col] = order.split('.'); rows.sort((a, b) => String(b[col]).localeCompare(String(a[col]))); }
+    return { ok: true, status: 200, json: async () => rows };
   };
-  const kv = new SupabaseKV({ url: 'https://abc.supabase.co/', key: 'sb_secret_x' }, fakeFetch);
+  return { tables, calls, fetchImpl };
+}
+
+test('SupabaseKV stores trades, images, decisions, orders and settings in their own tables', async () => {
+  const { SupabaseKV, appendList } = await import('../src/store.js');
+  const fake = fakeSupabase();
+  const kv = new SupabaseKV({ url: 'https://abc.supabase.co/', key: 'sb_secret_x' }, fake.fetchImpl);
+
+  // trades + base64 images on the same row
+  const trade = { id: 'T1', side: 'short', status: 'open', entryTime: '2026-10-07T01:00:00Z', entryPrice: 100, stop: 101, target: 99 };
+  await kv.set('trades', [trade]);
+  await kv.set('shot_T1', { entry: 'data:image/svg+xml;base64,AAA' });
+  const row = fake.tables.trades.get('T1');
+  assert.equal(row.side, 'short');
+  assert.equal(row.entry_price, 100);
+  assert.equal(row.entry_image, 'data:image/svg+xml;base64,AAA');
+  assert.deepEqual(await kv.get('trades', []), [trade]);
+  assert.deepEqual(await kv.get('shot_T1', {}), { entry: 'data:image/svg+xml;base64,AAA' });
+  await kv.set('trades', [{ ...trade, status: 'win', exitPrice: 99 }]); // update keeps the image
+  assert.equal(fake.tables.trades.get('T1').entry_image, 'data:image/svg+xml;base64,AAA');
+  assert.equal(fake.tables.trades.get('T1').status, 'win');
+
+  // decisions and orders are appended one row at a time
+  await appendList(kv, 'decisions', { id: 'D1', time: '2026-10-07T01:00:00Z', action: 'SELL', confidence: 0.8 });
+  await appendList(kv, 'decisions', { id: 'D2', time: '2026-10-07T01:05:00Z', action: 'HOLD' });
+  assert.deepEqual((await kv.get('decisions', [])).map((d) => d.id), ['D2', 'D1']);
+  assert.equal(fake.tables.decisions.get('D1').action, 'SELL');
+  await appendList(kv, 'orders', { id: 'L1', time: '2026-10-07T01:00:00Z', side: 'short', qty: 0.1, price: 100 });
+  assert.equal(fake.tables.orders.get('L1').side, 'short');
+
+  // settings row + kv fallback for the account
+  await kv.set('bot', { running: true, settings: { intervalMinutes: 5, maxTradesPerDay: 10 } });
+  assert.equal(fake.tables.settings.get('bot').max_trades_per_day, 10);
+  assert.equal((await kv.get('bot', null)).running, true);
+  await kv.set('account', { cash: 1 });
+  assert.deepEqual(await kv.get('account', null), { cash: 1 });
+
+  // reset clears a table
+  await kv.set('trades', []);
   assert.deepEqual(await kv.get('trades', []), []);
-  await kv.set('trades', [{ id: 'T1' }]);
-  await kv.set('trades', [{ id: 'T2' }]);
-  assert.deepEqual(await kv.get('trades', []), [{ id: 'T2' }]);
-  await kv.del('trades');
-  assert.equal(await kv.get('trades', null), null);
-  assert.equal(calls[0].path, '/rest/v1/kv');
-  assert.equal(calls[0].headers.apikey, 'sb_secret_x');
-  assert.match(calls[1].headers.Prefer, /merge-duplicates/);
+  assert.equal(fake.calls[0].headers.apikey, 'sb_secret_x');
+});
+
+test('LocalBroker on SupabaseKV writes each order as its own row', async () => {
+  const { SupabaseKV } = await import('../src/store.js');
+  const fake = fakeSupabase();
+  const kv = new SupabaseKV({ url: 'https://abc.supabase.co', key: 'sb_secret_x' }, fake.fetchImpl);
+  const b = new LocalBroker({ kv, startingCash: 10000, getPrice: async () => 50000 });
+  await b.placeOrder({ side: 'buy', notional: 1000, price: 50000 });
+  await b.openShort({ notional: 1000, price: 50000 });
+  assert.equal(fake.tables.orders.size, 2);
+  assert.equal((await b.getOrders()).length, 2);
+  assert.equal(fake.tables.kv.get('account').value.orders, undefined);
 });
 
 test('missing snapshots are re-rendered on demand as base64 images', async () => {
