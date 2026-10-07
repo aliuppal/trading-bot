@@ -65,6 +65,8 @@ const MODELS = {
     { id: 'paid/model', pricing: { prompt: '0.000001', completion: '0.000002' }, context_length: 999999 },
     { id: 'vendor/big:free', pricing: { prompt: '0', completion: '0' }, context_length: 128000 },
     { id: 'vendor/small:free', pricing: { prompt: '0', completion: '0' }, context_length: 32000 },
+    { id: 'music/gen', pricing: { prompt: '0', completion: '0' }, context_length: 9999999, architecture: { input_modalities: ['text'], output_modalities: ['text', 'audio'] } },
+    { id: 'vendor/content-safety:free', pricing: { prompt: '0', completion: '0' }, context_length: 9999999 },
   ],
 };
 const chat = (obj, model) => json({ model, choices: [{ message: { content: '```json\n' + JSON.stringify(obj) + '\n```' } }] });
@@ -121,4 +123,13 @@ test('OpenRouter uses a fixed model when configured', async () => {
   const d = await decide(ctx, { provider: 'openrouter', apiKey: 'k', model: 'x/y:free' }, fetchImpl);
   assert.equal(d.source, 'openrouter:x/y:free');
   assert.equal(listed, false);
+});
+
+test('listFreeModels keeps only text chat models and puts openrouter/free last', async () => {
+  resetFreeModelCache();
+  const { listFreeModels } = await import('../src/ai.js');
+  const data = [...MODELS.data, { id: 'openrouter/free', pricing: { prompt: '0', completion: '0' }, context_length: 99999999 }];
+  const ids = await listFreeModels(async () => json({ data }));
+  assert.deepEqual(ids, ['vendor/big:free', 'vendor/small:free', 'openrouter/free']);
+  resetFreeModelCache();
 });

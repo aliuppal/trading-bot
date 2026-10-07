@@ -104,11 +104,20 @@ export async function listFreeModels(fetchImpl = fetch, now = Date.now()) {
   const res = await fetchImpl(`${OPENROUTER}/models`);
   if (!res.ok) throw new Error(`OpenRouter models HTTP ${res.status}`);
   const { data = [] } = await res.json();
+  const isFree = (m) => m.id.endsWith(':free') || (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0);
+  // Chat models only: text in, text-only out (skips music/image generators), no classifiers or code-only models.
+  const isChat = (m) => {
+    const a = m.architecture || {};
+    const out = a.output_modalities || [a.modality?.split('->')[1] || 'text'];
+    const inp = a.input_modalities || ['text'];
+    return out.length === 1 && out[0] === 'text' && inp.includes('text') && !/safety|guard|embed|code/i.test(m.id);
+  };
   const ids = data
-    .filter((m) => m.id.endsWith(':free') || (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0))
-    .filter((m) => !/image|vision-only|embed/i.test(m.id))
+    .filter((m) => isFree(m) && isChat(m) && m.id !== 'openrouter/free')
     .sort((a, b) => (b.context_length || 0) - (a.context_length || 0))
     .map((m) => m.id);
+  // OpenRouter's own free-model router goes last as a catch-all.
+  if (data.some((m) => m.id === 'openrouter/free')) ids.push('openrouter/free');
   freeModelCache = { at: now, ids };
   return ids;
 }
@@ -152,7 +161,11 @@ async function openRouterChat(prompt, model, apiKey, fetchImpl) {
  * (tries up to 3 if one is rate-limited or unavailable).
  */
 export async function askOpenRouter(prompt, { apiKey, model }, fetchImpl = fetch) {
-  const candidates = model && model !== 'auto' ? [model] : (await listFreeModels(fetchImpl)).slice(0, 3);
+  let candidates = [model];
+  if (!model || model === 'auto') {
+    const free = await listFreeModels(fetchImpl);
+    candidates = [...free.filter((id) => id !== 'openrouter/free').slice(0, 3), ...free.filter((id) => id === 'openrouter/free')];
+  }
   if (!candidates.length) throw new Error('No free OpenRouter models available right now');
   let lastErr;
   for (const m of candidates) {
