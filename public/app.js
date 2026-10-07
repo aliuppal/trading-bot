@@ -386,6 +386,7 @@ function renderOpenTrade(t) {
       <div><span>Target</span><em class="up">${usd(t.target)}</em></div>
     </div>
     <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
+    <div class="ot-risk">Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
     ${t.setupReason ? `<div class="ot-reason">${esc(t.setupReason)}</div>` : ''}`;
 }
 
@@ -485,10 +486,12 @@ async function loadOrders() {
       let note = o.reason ? ` · ${esc(o.reason)}` : '';
       if (active && price) {
         pnl = (open.side === 'short' ? open.entryPrice - price : price - open.entryPrice) * open.qty;
-        note = ` · open ${esc(open.side)} · SL ${usd(open.stop)} · TP ${usd(open.target)}`;
+        const t = open;
+        note = ` · open ${esc(open.side)} · risking ${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))} · SL ${usd(open.stop)} · TP ${usd(open.target)}`;
       } else if (closed) {
         pnl = closed.pnl;
-        note = ` · closed ${esc(closed.side)} (${esc(closed.exitReason)}, ${closed.r > 0 ? '+' : ''}${closed.r}R)`;
+        const t = closed;
+        note = ` · closed ${esc(closed.side)} (${esc(closed.exitReason)}, ${closed.r > 0 ? '+' : ''}${closed.r}R, risked ${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))})`;
       } else if (opened && opened.status !== 'open') {
         note = ` · opened ${esc(opened.side)} → ${esc(String(opened.status).toUpperCase())}`;
       }
@@ -523,7 +526,7 @@ async function loadTrades() {
     $('tradeCount').textContent = trades.length ? ` ${trades.length}${closed.length ? ` · ${Math.round((wins / closed.length) * 100)}% win` : ''}` : '';
     const body = $('trades').querySelector('tbody');
     if (!trades.length) {
-      body.innerHTML = '<tr><td colspan="13" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
+      body.innerHTML = '<tr><td colspan="14" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
       drawChart();
       renderPnl();
       return;
@@ -538,6 +541,7 @@ async function loadTrades() {
       <td><span class="pill ${t.side === 'short' ? 'SELL' : 'BUY'}">${t.side === 'short' ? 'SHORT' : 'LONG'}</span></td>
       <td><span class="pill ${RESULT[t.status] || ''}">${RESULT[t.status] || esc(String(t.status).toUpperCase())}</span></td>
       <td class="r">${usd(t.entryPrice)}</td><td class="r down">${usd(t.stop)}</td><td class="r up">${usd(t.target)}</td>
+      <td class="r">${(t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)) ? usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null))) : '—'}</td>
       <td class="r">${t.exitPrice ? usd(t.exitPrice) : '—'}</td>
       <td class="r">${t.r !== undefined ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
       <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>` : '—'}</td>
@@ -554,7 +558,7 @@ async function loadTrades() {
     drawChart();
     renderPnl();
   } catch (e) {
-    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="13" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
+    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="14" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -645,7 +649,7 @@ async function openShot(t, phase = 'exit') {
   $('shotBody').innerHTML = '<p class="sub">Loading chart…</p>';
   $('shotMeta').innerHTML = [
     ['Entry', usd(t.entryPrice)], ['Stop', usd(t.stop)], ['Target', usd(t.target)],
-    ['Type', t.category === 'scalp' ? 'Scalp' : 'Swing'], ['Side', t.side === 'short' ? 'Short' : 'Long'], ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
+    ['Type', t.category === 'scalp' ? 'Scalp' : 'Swing'], ['Side', t.side === 'short' ? 'Short' : 'Long'], ['Risk', (t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)) ? usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null))) : '—'], ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
     ['P&L', t.pnl !== undefined ? signedUsd(t.pnl) : '—'], ['Confidence', t.confidence ?? '—'],
     ['IFVG zone', t.ifvg ? `${usd(t.ifvg.bottom)} – ${usd(t.ifvg.top)}` : '—'],
   ].map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');

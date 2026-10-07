@@ -447,3 +447,29 @@ test('minimum gap size scales with the entry timeframe', async () => {
   assert.equal(minGapFor(60), 0.01);
   assert.equal(minGapFor(900), 0.03);
 });
+
+test('futures broker: P&L comes from filled qty x price, not the requested size; $ risk recorded', async () => {
+  const s = setup();
+  // Binance-like broker: rounds qty down to 0.001 BTC and reports the *requested* notional (the old bug's trigger)
+  const fills = [];
+  s.bot.broker = {
+    name: 'binance',
+    getAccount: async (p) => ({ cash: 100000, btc: fills.reduce((a, f) => a + (f.side === 'buy' ? f.qty : -f.qty), 0), shortBtc: 0, price: p, equity: 100000 }),
+    placeOrder: async ({ side, notional, qty, price }) => {
+      const q = side === 'buy' ? Math.floor((notional / price) * 1000) / 1000 : qty;
+      const f = { id: `B${fills.length}`, side, qty: q, price, notional: side === 'buy' ? notional : q * price, fee: q * price * 0.0004 };
+      fills.push(f);
+      return f;
+    },
+  };
+  await s.bot.runOnce();
+  const [t] = await s.bot.trades();
+  assert.ok(Math.abs(t.notional - t.qty * t.entryPrice) < 0.01, 'notional = filled qty x price');
+  assert.ok(Math.abs(t.riskUsd - Math.abs(t.entryPrice - t.stop) * t.qty) < 0.01);
+  s.candles.push({ time: NOW + 60000, open: t.entryPrice, high: t.target + 5, low: t.entryPrice - 1, close: t.target, volume: 1 });
+  s.bot.now = () => NOW + 120000;
+  const closed = await s.bot.manageOpen(s.candles, t.target);
+  const expected = (t.target - t.entryPrice) * t.qty - t.entryFee - t.qty * t.target * 0.0004;
+  assert.ok(Math.abs(closed.pnl - expected) < 0.02, `pnl ${closed.pnl} vs ${expected}`);
+  assert.equal(closed.status, 'win');
+});

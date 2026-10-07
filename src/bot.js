@@ -343,6 +343,10 @@ export class TradingBot {
       pnl = short
         ? trade.notional * part - (trade.entryFee || 0) * part - exitPrice * qty - fee // proceeds - entry fee - buyback
         : exitPrice * qty - fee - trade.notional * part; // long notional already includes the entry fee
+      if ((trade.broker ?? 'local') !== 'local') {
+        // real broker: price move x filled qty, minus entry and exit fees
+        pnl = (short ? trade.entryPrice - exitPrice : exitPrice - trade.entryPrice) * qty - (trade.entryFee || 0) * part - fee;
+      }
     } else {
       // No closing order went through (position already gone): still record the paper result from the prices.
       pnl = (short ? trade.entryPrice - exitPrice : exitPrice - trade.entryPrice) * trade.qty;
@@ -385,9 +389,10 @@ export class TradingBot {
     const order = side === 'short'
       ? await this.broker.openShort({ notional: size, price, source: 'ai', leverage })
       : await this.broker.placeOrder({ side: 'buy', notional: size, price, source: 'ai', leverage });
-    const entryPrice = Number(order.price ?? price);
-    const notional = Number(order.notional ?? size);
-    const qty = Number(order.qty) || (notional * 0.999) / entryPrice;
+    const entryPrice = Number(order.price) || price;
+    // Position value = what actually filled (qty x price); the requested size can differ after quantity rounding.
+    const qty = Number(order.qty) || ((Number(order.notional) || size) * 0.999) / entryPrice;
+    const notional = this.broker.name === 'local' ? Number(order.notional ?? size) : Number((qty * entryPrice).toFixed(2));
     const rr = this.state.settings.riskReward ?? 1;
     const minRiskPct = this.state.settings.minStopPct ?? 0.15;
     const b = bracketFor(side, entryPrice, setup, { rr, minRiskPct }) || bracketFor(side, price, setup, { rr, minRiskPct });
@@ -419,6 +424,7 @@ export class TradingBot {
       breakevenAtR: this.state.settings.breakevenAtR || 0,
       target: b.target,
       risk: b.risk,
+      riskUsd: Number((Math.abs(entryPrice - b.stop) * qty).toFixed(2)), // $ lost if the stop is hit (before fees)
       ifvg: zoneSummary(setup),
       confidence: decision.confidence,
       source: decision.source,
@@ -436,7 +442,7 @@ export class TradingBot {
       entry: renderTradeImage({ candles, trade, phase: 'entry', granularity: trade.granularity }),
     });
     const be = trade.breakevenAtR ? ` · breakeven at +${trade.breakevenAtR}R` : '';
-    return { trade, order, note: `${trade.setupReason} | ${plan.note} · SL ${b.stop} · TP ${b.target} (1:${b.rr})${be}` };
+    return { trade, order, note: `${trade.setupReason} | ${plan.note} · risking $${trade.riskUsd} · SL ${b.stop} · TP ${b.target} (1:${b.rr})${be}` };
   }
 
   async log(entry) {

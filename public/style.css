@@ -179,6 +179,8 @@ select { font-family: var(--font-mono); font-size: 13px; }
 .ot-levels div { font: 500 13px/18px var(--font-mono); font-feature-settings: "tnum"; }
 .ot-levels span { display: block; font: 600 10px/14px var(--font-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
 .ot-levels em { font-style: normal; }
+.ot-risk { margin-top: 8px; font: 500 12px/16px var(--font-mono); color: var(--muted); }
+.ot-risk b { color: var(--text); font-weight: 500; }
 .ot-reason { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-soft); font: 400 12px/17px var(--font-mono); color: var(--text-2); }
 .legend .live { margin-left: auto; color: var(--faint); }
 .legend .live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--emerald); vertical-align: 1px; animation: pulse 2s ease-in-out infinite; }
