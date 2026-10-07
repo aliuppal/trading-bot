@@ -162,10 +162,9 @@ export function describeLevels(list, n = 3) {
 
 /**
  * Liquidity-based target: the nearest liquidity in the trade direction (LRLR swing points, equal highs / lows,
- * PDH/PDL, today, previous week, HTF swings), placed frontPct % in front of the level so it fills as price
- * reaches it. Accepted between minR and maxR x risk. Returns { price, level, r } or null.
+ * PDH/PDL, today, previous week, HTF swings), placed at the level itself (frontPct % in front if set). Accepted between minR and maxR x risk. Returns { price, level, r } or null.
  */
-export function liquidityTarget(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0.02 } = {}) {
+export function liquidityTarget(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0 } = {}) {
   if (!liq || !risk) return null;
   const toward = side === 'long' ? 'above' : 'below';
   const cands = [...(side === 'long' ? liq.above : liq.below)];

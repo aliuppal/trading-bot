@@ -47,11 +47,11 @@ test('liquidityLevels finds previous day high / low', async () => {
   assert.ok(l.below.some((x) => x.type.includes('PDL') && x.price === 90));
 });
 
-test('liquidity target takes the LRLR swing low in front of the level, even below 1R', () => {
+test('liquidity target sits on the LRLR swing low / EQL, even below 1R', () => {
   // the case from the chart: short 83,291 with stop 83,502 (risk 211), LRLR / equal lows at 83,098 (~0.9R)
   const liq = { below: [{ type: 'EQL', price: 83098 }], above: [], lrlr: { side: 'below', prices: [83098, 83140] } };
   const t = liquidityTarget(liq, 'short', 83291.4, 210.43);
   assert.ok(t, 'target found');
-  assert.ok(t.price > 83098 && t.price < 83120, `in front of the level: ${t.price}`);
+  assert.equal(t.price, 83098); // at the liquidity level itself
   assert.ok(t.r >= 0.75 && t.r < 1);
 });
