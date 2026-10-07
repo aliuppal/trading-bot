@@ -140,7 +140,9 @@ const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 
 const tfName = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 const hhmm = (t) => new Date(t).toISOString().slice(11, 16);
-const px = (v) => Math.round(v).toLocaleString('en-US');
+// prices for any symbol: 83,291 (BTC) / 3,512.40 (ETH) / 2.3457 (XRP)
+export const fmtPx = (v) => { const a = Math.abs(v); return Number(v).toLocaleString('en-US', { maximumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 4, minimumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 4 }); };
+const px = fmtPx;
 
 /**
  * Plain-language reason a trade was taken, e.g.
@@ -169,7 +171,13 @@ export class TradingBot {
    * kv: async key/value store (see store.js). settings: interval / risk / daily-limit settings.
    * autoStart: whether the bot is enabled the first time (saved state wins afterwards).
    */
-  constructor({ broker, market, ai, settings, kv, autoStart = true, fetchImpl = fetch, now = () => Date.now(), fallbackBroker = null }) {
+  /**
+   * symbol: the market this bot trades (one bot per symbol). The primary bot (BTCUSDC) owns the shared settings
+   * (stored under "bot"); the others keep their own state under "bot_<SYMBOL>" and read the shared settings.
+   */
+  constructor({ broker, market, ai, settings, kv, autoStart = true, fetchImpl = fetch, now = () => Date.now(), fallbackBroker = null, symbol = 'BTCUSDC', primary = true }) {
+    this.symbol = symbol;
+    this.primary = primary;
     this.broker = broker;
     // Trades opened on another broker (e.g. the simulator before switching to Binance) are closed there.
     this.fallbackBroker = fallbackBroker;
@@ -187,22 +195,26 @@ export class TradingBot {
 
   /** Reload persisted state (needed per request on serverless, where instances don't share memory). */
   async load() {
-    const saved = await this.kv.get('bot', null);
-    if (saved) this.state = { ...this.state, ...saved, settings: { ...this.defaults, ...saved.settings } };
+    const shared = await this.kv.get('bot', null);
+    const saved = this.primary ? shared : await this.kv.get(`bot_${this.symbol}`, null);
+    if (saved) this.state = { ...this.state, ...saved };
+    this.state.settings = { ...this.defaults, ...(shared?.settings || {}) };
+    if (!this.primary && shared) this.state.running = shared.running; // one Start / Stop for every symbol
     // Every entry model is always considered (swing 15m/5m/3m and scalp 1m); daily limits control how many.
     this.state.settings.entryTimeframes = 'all';
-    this.state.settings.scalpEnabled = true;
+    this.state.settings.swingEnabled = this.state.settings.swingEnabled !== false;
+    this.state.settings.scalpEnabled = this.state.settings.scalpEnabled !== false;
     // Total trades per day = swing limit + scalp limit.
     this.state.settings.maxTradesPerDay = (this.state.settings.maxSwingPerDay ?? 5) + (this.state.settings.maxScalpPerDay ?? 5);
     return this.state;
   }
 
   async save() {
-    await this.kv.set('bot', this.state);
+    await this.kv.set(this.primary ? 'bot' : `bot_${this.symbol}`, this.state);
   }
 
   async status() {
-    const trades = await this.trades();
+    const trades = await this.allTrades();
     const s = this.state;
     return {
       running: s.running,
@@ -219,6 +231,8 @@ export class TradingBot {
       swingToday: tradesToday(trades, this.now(), 'swing'),
       scalpToday: tradesToday(trades, this.now(), 'scalp'),
       openTrade: trades.find((t) => t.status === 'open') || null,
+      openTrades: trades.filter((t) => t.status === 'open'),
+      symbol: this.symbol,
       ai: this.ai.apiKey ? `${this.ai.provider}:${this.ai.model === 'auto' ? 'free models' : this.ai.model}` : 'rules (no AI key set)',
       broker: this.broker.name,
       storage: this.kv.name,
@@ -240,7 +254,13 @@ export class TradingBot {
     return (await this.kv.get('decisions', [])).slice(0, limit);
   }
 
+  /** This bot's symbol's trades (older trades without a symbol are BTCUSDC). */
   async trades(limit = MAX_TRADES_KEPT) {
+    return (await this.allTrades()).filter((t) => (t.symbol || 'BTCUSDC') === this.symbol).slice(0, limit);
+  }
+
+  /** Trades of every symbol (daily limits and the open-trade cap are shared). */
+  async allTrades(limit = MAX_TRADES_KEPT * 3) {
     return (await this.kv.get('trades', [])).slice(0, limit);
   }
 
@@ -254,7 +274,7 @@ export class TradingBot {
    */
   async shotsFor(id) {
     const shots = await this.shots(id);
-    const trade = (await this.trades()).find((t) => t.id === id);
+    const trade = (await this.allTrades()).find((t) => t.id === id);
     if (!trade) return shots;
     const needEntry = !shots.entry;
     const needExit = trade.status !== 'open' && !shots.exit;
@@ -273,7 +293,7 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
-    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR', 'maxLeverage', 'minStopPct', 'riskPerTradeUsd'];
+    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'maxOpenTrades', 'riskReward', 'breakevenAtR', 'maxLeverage', 'minStopPct', 'riskPerTradeUsd'];
     const s = this.state.settings;
     for (const k of allowed) {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
@@ -283,7 +303,8 @@ export class TradingBot {
     if (['percent', 'risk'].includes(patch.sizingMode)) s.sizingMode = patch.sizingMode;
     s.riskPerTradeUsd = Math.min(100000, Math.max(1, Number(s.riskPerTradeUsd ?? 50)));
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
-    s.scalpEnabled = true; // use Scalp trades / day = 0 to stop scalps
+    // Swing / scalp on-off switches (a disabled type is not scanned at all)
+    for (const k of ['swingEnabled', 'scalpEnabled']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
     s.entryTimeframes = 'all'; // all entry models, always
     s.ifvgMaxAge = Math.min(7, Math.max(3, Math.round(s.ifvgMaxAge ?? 7)));
     s.intervalMinutes = Math.max(1, s.intervalMinutes);
@@ -294,6 +315,7 @@ export class TradingBot {
     s.maxSwingPerDay = Math.min(10, Math.max(0, Math.round(s.maxSwingPerDay ?? 5)));
     s.maxScalpPerDay = Math.min(10, Math.max(0, Math.round(s.maxScalpPerDay ?? 5)));
     s.maxTradesPerDay = s.maxSwingPerDay + s.maxScalpPerDay; // total per day = swing + scalp limits
+    s.maxOpenTrades = Math.min(6, Math.max(1, Math.round(s.maxOpenTrades ?? 2))); // trades open at once, all symbols
     s.riskReward = Math.min(10, Math.max(0.5, Number(s.riskReward ?? 1)));
     // Breakeven trigger (in R) must sit before the target; 0 = off.
     s.breakevenAtR = Math.max(0, Number(s.breakevenAtR ?? 0));
@@ -498,12 +520,13 @@ export class TradingBot {
     // Target at liquidity: the nearest level (LRLR / equal highs-lows / PDH-PDL ...) 0.75R-5R away (else the fixed R:R target).
     let targetLevel = null;
     if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
-      const lt = liquidityTarget(liquidity, side, entryPrice, b.risk); // 0.75R-5R, just in front of the level
-      if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.type} ${Math.round(lt.price).toLocaleString('en-US')}`; }
+      const lt = liquidityTarget(liquidity, side, entryPrice, b.risk); // nearest swing low (short) / high (long) or other liquidity, 0.75R-5R, on the level
+      if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.label || lt.level.type} ${fmtPx(lt.price)}`; }
     }
     const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}` };
     const trade = {
-      id: `T${this.now()}`,
+      id: `T${this.now()}-${this.symbol}`,
+      symbol: this.symbol,
       status: 'open',
       side,
       entryTime: new Date(this.now()).toISOString(),
@@ -556,6 +579,7 @@ export class TradingBot {
   }
 
   async log(entry) {
+    entry.symbol ??= this.symbol;
     entry.id ??= `D${this.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await appendList(this.kv, 'decisions', entry, MAX_DECISIONS_KEPT);
   }
@@ -599,7 +623,7 @@ export class TradingBot {
       }
 
       // 2. Multi-timeframe scan. A category whose daily limit is used up is not scanned.
-      const before = await this.trades();
+      const before = await this.allTrades(); // daily limits count every symbol
       const swingLeft = tradesToday(before, this.now(), 'swing') < (s.maxSwingPerDay ?? 5);
       const scalpLeft = tradesToday(before, this.now(), 'scalp') < (s.maxScalpPerDay ?? 5);
       const scan = await scanSetups(this.market, {
@@ -635,7 +659,9 @@ export class TradingBot {
       entry.setup = zoneSummary(scan.setup);
       const trades = await this.trades();
       open = trades.find((t) => t.status === 'open');
-      const count = tradesToday(trades, this.now());
+      const everything = await this.allTrades();
+      const count = tradesToday(everything, this.now());
+      const openAll = everything.filter((t) => t.status === 'open').length;
       const asked = setup && ((this.state.askedIfvgs || []).includes(setup.id) || trades.some((t) => t.ifvg?.id === setup.id));
 
       const want = setup ? SIDE_FOR[setup.direction] : null; // trade direction the setup offers
@@ -648,6 +674,7 @@ export class TradingBot {
       let reason = null; // why the AI is not consulted / an entry can't be taken
       if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
       else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
+      else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `${openAll} trades already open (max ${s.maxOpenTrades ?? 2} at a time)`;
       else if (!open && !swingLeft && !scalpLeft) reason = `Daily swing (${s.maxSwingPerDay ?? 5}) and scalp (${s.maxScalpPerDay ?? 5}) limits reached`;
       else if (!open && !setup) reason = `${!swingLeft ? 'Swing limit reached · ' : ''}${!scalpLeft ? 'Scalp limit reached · ' : ''}${scan.note ? `No setup · ${scan.note}` : 'No fresh IFVG setup'}`;
       else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';

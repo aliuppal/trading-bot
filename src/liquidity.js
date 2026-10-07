@@ -5,6 +5,7 @@
 //   PWH / PWL   previous week high / low (weeks start Monday, UTC)
 //   EQH / EQL   equal highs / lows: 2+ swing points on 15m or 1h within 0.05% of each other, not yet taken
 //   HTF H / L   recent 1h and 4h swing highs / lows not yet taken
+//   SWH / SWL   recent 5m and 15m swing highs / lows not yet taken (the nearest target for a trade)
 //   LRLR        low-resistance liquidity run: 3+ stepped swing highs above price (each lower than the last)
 //               or stepped swing lows below price (each higher than the last), none taken yet
 //
@@ -76,6 +77,9 @@ export function lrlr(candles, { highs, lows }, price, min = 3) {
   return null;
 }
 
+/** Round a price to 6 significant digits (BTC 83,094.0 · XRP 2.51234). */
+const roundPx = (p) => Number(Number(p).toPrecision(p >= 100000 ? 8 : 6));
+
 const dayKey = (t) => new Date(t).toISOString().slice(0, 10);
 function weekKey(t) {
   const d = new Date(t);
@@ -88,13 +92,14 @@ function weekKey(t) {
  * where above / below are the levels sorted nearest first, and draw is the side with the nearest major liquidity.
  */
 export async function liquidityLevels(market, now = Date.now()) {
-  const [daily, h1, m15, h4] = await Promise.all([
+  const [daily, h1, m15, h4, m5] = await Promise.all([
     market.getCandles(86400, 30), market.getCandles(3600, 300), market.getCandles(900, 200), market.getCandles(14400, 100),
+    market.getCandles(300, 200).catch(() => []),
   ]);
   const price = m15.at(-1)?.close ?? h1.at(-1)?.close;
   if (!price) return { price: null, levels: [], above: [], below: [], lrlr: null, draw: null };
   const levels = [];
-  const add = (type, label, p) => { if (Number.isFinite(p)) levels.push({ type, label, price: Number(p.toFixed(2)) }); };
+  const add = (type, label, p) => { if (Number.isFinite(p)) levels.push({ type, label, price: roundPx(p) }); };
 
   const today = dayKey(now);
   const days = daily.filter((c) => dayKey(c.time) < today);
@@ -120,6 +125,13 @@ export async function liquidityLevels(market, now = Date.now()) {
     s.highs.filter((p) => !swept(c, p.index, p.price, 'high')).slice(-3).forEach((p) => add('HTFH', `${tf} swing high`, p.price));
     s.lows.filter((p) => !swept(c, p.index, p.price, 'low')).slice(-3).forEach((p) => add('HTFL', `${tf} swing low`, p.price));
   }
+  // Short-term swing points: where a trade's target sits (shorts: swing low below, longs: swing high above).
+  for (const [tf, c] of [['5m', m5], ['15m', m15]]) {
+    if (c.length < 10) continue;
+    const s = swings(c, 2);
+    s.highs.filter((p) => !swept(c, p.index, p.price, 'high')).slice(-4).forEach((p) => add('SWH', `${tf} swing high`, p.price));
+    s.lows.filter((p) => !swept(c, p.index, p.price, 'low')).slice(-4).forEach((p) => add('SWL', `${tf} swing low`, p.price));
+  }
   // LRLR only from the last 16 hours of 15m candles, and within 1.5% of price.
   const recent = m15.slice(-64);
   const sw = swings(recent, 2);
@@ -127,7 +139,7 @@ export async function liquidityLevels(market, now = Date.now()) {
   const run = lrlr(recent, { highs: sw.highs.filter(near), lows: sw.lows.filter(near) }, price);
 
   // Merge levels within 0.02% of each other, keeping the most important name (e.g. "PDH+HTFH").
-  const rank = ['PWH', 'PWL', 'PDH', 'PDL', 'EQH', 'EQL', 'DH', 'DL', 'HTFH', 'HTFL'];
+  const rank = ['PWH', 'PWL', 'PDH', 'PDL', 'EQH', 'EQL', 'DH', 'DL', 'HTFH', 'HTFL', 'SWH', 'SWL'];
   levels.sort((a, b) => rank.indexOf(a.type) - rank.indexOf(b.type));
   const merged = [];
   for (const l of levels) {
@@ -157,12 +169,12 @@ export async function liquidityLevels(market, now = Date.now()) {
 
 /** Short text for Jev / reasons: nearest few levels on one side. */
 export function describeLevels(list, n = 3) {
-  return list.slice(0, n).map((l) => `${l.type} ${Math.round(l.price).toLocaleString('en-US')} (${l.distPct > 0 ? '+' : ''}${l.distPct}%)`).join(', ') || 'none';
+  return list.slice(0, n).map((l) => `${l.type} ${l.price.toLocaleString('en-US', { maximumFractionDigits: l.price >= 100 ? 0 : 4 })} (${l.distPct > 0 ? '+' : ''}${l.distPct}%)`).join(', ') || 'none';
 }
 
 /**
- * Liquidity-based target: the nearest liquidity in the trade direction (LRLR swing points, equal highs / lows,
- * PDH/PDL, today, previous week, HTF swings), placed at the level itself (frontPct % in front if set). Accepted between minR and maxR x risk. Returns { price, level, r } or null.
+ * Liquidity-based target: the nearest liquidity in the trade direction (swing low for a short, swing high for a long,
+ * LRLR swing points, equal highs / lows, PDH/PDL, today, previous week, HTF swings), placed at the level itself (frontPct % in front if set). Accepted between minR and maxR x risk. Returns { price, level, r } or null.
  */
 export function liquidityTarget(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0 } = {}) {
   if (!liq || !risk) return null;
@@ -177,7 +189,7 @@ export function liquidityTarget(liq, side, entry, risk, { minR = 0.75, maxR = 5,
   for (const l of ahead) {
     const price = side === 'long' ? l.price * (1 - frontPct / 100) : l.price * (1 + frontPct / 100);
     const r = Math.abs(price - entry) / risk;
-    if (r >= minR && r <= maxR) return { price: Number(price.toFixed(2)), level: l, r: Number(r.toFixed(2)) };
+    if (r >= minR && r <= maxR) return { price: roundPx(price), level: l, r: Number(r.toFixed(2)) };
   }
   return null;
 }

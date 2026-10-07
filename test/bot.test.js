@@ -562,3 +562,15 @@ test('daily scan counter tallies every scan and where it stopped', async () => {
   assert.equal(st.taken, 1);
   assert.equal(st.inTrade, 1);
 });
+
+test('swing / scalp can be switched off and on', async () => {
+  const { bot } = setup({ kv: new MemKV() });
+  await bot.updateSettings({ swingEnabled: 'false', scalpEnabled: true });
+  assert.equal(bot.state.settings.swingEnabled, false);
+  assert.equal(bot.state.settings.scalpEnabled, true);
+  await bot.load();
+  assert.equal(bot.state.settings.swingEnabled, false, 'kept after reload');
+  await bot.updateSettings({ swingEnabled: 'true', scalpEnabled: 'false' });
+  assert.equal(bot.state.settings.swingEnabled, true);
+  assert.equal(bot.state.settings.scalpEnabled, false);
+});

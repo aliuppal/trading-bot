@@ -1,4 +1,4 @@
-# ₿ BTC AI Paper Trader
+# CryptoQuant Pro
 
 A small web app that trades Bitcoin on a **paper (fake money) account**, using the
 **Jev** (TypeSafe's decisions model on [OpenRouter](https://openrouter.ai)) to decide whether to

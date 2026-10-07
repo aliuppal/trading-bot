@@ -47,7 +47,7 @@ Entry timeframe: ${ifvg?.granularity ? `${ifvg.granularity / 60}m` : `${granular
 Liquidity above: ${liquidity ? describeLevels(liquidity.above, 4) : 'unknown'}
 Liquidity below: ${liquidity ? describeLevels(liquidity.below, 4) : 'unknown'}
 Draw on liquidity: ${liquidity?.draw ?? 'unclear'}${liquidity?.lrlr ? ` (low-resistance run ${liquidity.lrlr.side})` : ''}
-(PDH/PDL previous day high/low, DH/DL today, PWH/PWL previous week, EQH/EQL equal highs/lows, HTFH/HTFL higher-timeframe swings)
+(PDH/PDL previous day high/low, DH/DL today, PWH/PWL previous week, EQH/EQL equal highs/lows, HTFH/HTFL higher-timeframe swings, SWH/SWL 5m/15m swing highs/lows: the take profit sits on the nearest swing low for a short and swing high for a long)
 Open trade: ${openTrade ? `${openTrade.side || 'long'} from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none'}
 ${review ? `RISK REVIEW of the open ${review.side}: open ${review.minutesOpen} min, currently ${review.unrealizedR}R. Decide whether to keep it (HOLD) or close it now to protect capital (${review.side === 'long' ? 'SELL' : 'BUY'} = close).` : ''}
 
@@ -157,7 +157,7 @@ async function openRouterChat(prompt, model, apiKey, fetchImpl) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
       'HTTP-Referer': 'https://github.com/aliuppal/trading-bot',
-      'X-Title': 'BTC AI Paper Trader',
+      'X-Title': 'CryptoQuant Pro',
     },
     body: JSON.stringify({
       model,
@@ -326,7 +326,7 @@ export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
       'HTTP-Referer': 'https://github.com/aliuppal/trading-bot',
-      'X-Title': 'BTC AI Paper Trader',
+      'X-Title': 'CryptoQuant Pro',
     },
     body: JSON.stringify({ model, state: buildJevState(context), questions }),
   });

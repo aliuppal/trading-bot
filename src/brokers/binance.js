@@ -44,8 +44,11 @@ export class BinanceFuturesBroker {
     this.ready ??= (async () => {
       try {
         const info = await this.req('GET', '/fapi/v1/exchangeInfo', {}, false);
-        const lot = info.symbols?.find((s) => s.symbol === this.symbol)?.filters?.find((f) => f.filterType === 'MARKET_LOT_SIZE');
+        const filters = info.symbols?.find((s) => s.symbol === this.symbol)?.filters || [];
+        const lot = filters.find((f) => f.filterType === 'MARKET_LOT_SIZE');
         if (lot) this.step = Number(lot.stepSize);
+        const pf = filters.find((f) => f.filterType === 'PRICE_FILTER');
+        if (pf) this.tick = Number(pf.tickSize);
       } catch { /* keep the default step */ }
       await this.setLeverage(this.leverage).catch(() => {});
     })();
@@ -58,6 +61,13 @@ export class BinanceFuturesBroker {
     if (lev === this.currentLeverage) return;
     await this.req('POST', '/fapi/v1/leverage', { symbol: this.symbol, leverage: lev });
     this.currentLeverage = lev;
+  }
+
+  /** Price rounded to the symbol's tick size (e.g. 0.1 BTC, 0.0001 XRP), as a string. */
+  fmtPrice(p) {
+    const tick = this.tick || 0.1;
+    const decimals = Math.max(0, -Math.floor(Math.log10(tick) + 1e-9));
+    return (Math.round(Number(p) / tick) * tick).toFixed(decimals);
   }
 
   roundQty(q) {
@@ -160,8 +170,9 @@ export class BinanceFuturesBroker {
   get supportsBrackets() { return true; }
 
   async algo(type, side, trigger) {
+    await this.init();
     const a = await this.req('POST', '/fapi/v1/algoOrder', {
-      algoType: 'CONDITIONAL', symbol: this.symbol, side, type, triggerPrice: Number(trigger).toFixed(1),
+      algoType: 'CONDITIONAL', symbol: this.symbol, side, type, triggerPrice: this.fmtPrice(trigger),
       closePosition: 'true', workingType: 'CONTRACT_PRICE', priceProtect: 'true',
     });
     return String(a.algoId);

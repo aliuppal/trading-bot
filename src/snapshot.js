@@ -13,6 +13,7 @@ const MONO = "font-family=\"'JetBrains Mono',ui-monospace,Consolas,monospace\"";
 
 const f1 = (v) => Number(v.toFixed(1));
 const money = (v) => Number(v).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const fmtNum = (v) => { const a = Math.abs(v); return Number(v).toLocaleString('en-US', { maximumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 4, minimumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 4 }); };
 const label = (s) => String(s).replace(/[<>&"]/g, '');
 
 function candleIndexAt(candles, t) {
@@ -59,7 +60,7 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   for (let k = 0; k <= 4; k++) {
     const p = lo + ((hi - lo) * k) / 4;
     parts.push(`<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${f1(y(p))}" y2="${f1(y(p))}" stroke="${C.grid}"/>`);
-    parts.push(`<text x="${W - PAD.r + 8}" y="${f1(y(p) + 4)}" fill="${C.axis}" font-size="10" ${MONO}>${Math.round(p).toLocaleString('en-US')}</text>`);
+    parts.push(`<text x="${W - PAD.r + 8}" y="${f1(y(p) + 4)}" fill="${C.axis}" font-size="10" ${MONO}>${fmtNum(p)}</text>`);
   }
 
   // IFVG zone
@@ -104,7 +105,7 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
     const ly = f1(y(p));
     parts.push(`<line x1="${f1(ex)}" x2="${f1(exEnd)}" y1="${ly}" y2="${ly}" stroke="${col}" stroke-width="1.4"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
     parts.push(`<rect x="${W - PAD.r + 2}" y="${f1(ly - 8)}" width="${PAD.r - 4}" height="16" rx="2" fill="${col}" fill-opacity=".16" stroke="${col}" stroke-opacity=".5"/>`);
-    parts.push(`<text x="${W - PAD.r + 6}" y="${f1(ly + 4)}" fill="${col}" font-size="10" ${MONO}>${name} ${Math.round(p).toLocaleString('en-US')}</text>`);
+    parts.push(`<text x="${W - PAD.r + 6}" y="${f1(ly + 4)}" fill="${col}" font-size="10" ${MONO}>${name} ${fmtNum(p)}</text>`);
   };
   level(trade.target, C.up, 'TP');
   level(trade.entryPrice, C.entry, 'IN', '4 3');
@@ -132,7 +133,7 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
     right = `${res}  ${trade.pnl >= 0 ? '+' : '-'}$${money(Math.abs(trade.pnl || 0))}`;
   }
   const rightCol = phase === 'exit' ? (trade.pnl >= 0 ? C.up : C.down) : C.cyan;
-  parts.push(`<text x="${PAD.l}" y="22" fill="${C.text}" font-size="12" font-weight="600" ${MONO}>BTC-USD · ${tf} · ${short ? 'SHORT' : 'LONG'} · ${label(when)} UTC</text>`);
+  parts.push(`<text x="${PAD.l}" y="22" fill="${C.text}" font-size="12" font-weight="600" ${MONO}>${label(trade.symbol || 'BTCUSDC')} · ${tf} · ${short ? 'SHORT' : 'LONG'} · ${label(when)} UTC</text>`);
   parts.push(`<text x="${W - 12}" y="22" fill="${rightCol}" font-size="12" font-weight="600" text-anchor="end" ${MONO}>${label(right)}</text>`);
   parts.push(`<text x="${PAD.l}" y="${H - 8}" fill="${C.axis}" font-size="10" ${MONO}>R:R 1:${trade.rr ?? 1} · risk $${money(Math.abs(trade.entryPrice - sl))}/BTC${trade.breakeven ? ` · stop moved to breakeven at +${trade.breakevenAtR}R` : ''}</text>`);
 

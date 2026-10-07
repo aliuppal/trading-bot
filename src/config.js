@@ -21,7 +21,9 @@ export const config = {
     secret: process.env.BINANCE_API_SECRET || '',
     // Binance Demo Trading futures; the futures testnet (https://testnet.binancefuture.com) also works
     baseUrl: process.env.BINANCE_BASE_URL || 'https://demo-fapi.binance.com',
-    symbol: process.env.BINANCE_SYMBOL || 'BTCUSDT',
+    symbol: process.env.BINANCE_SYMBOL || 'BTCUSDC',
+    // Every symbol the bot scans and trades; the first is the primary one (it holds the shared settings)
+    symbols: [...new Set([process.env.BINANCE_SYMBOL || 'BTCUSDC', ...(process.env.BINANCE_SYMBOLS || 'ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT,LINKUSDT').split(',').map((x) => x.trim()).filter(Boolean)])],
     leverage: num(process.env.BINANCE_LEVERAGE, 1),
   },
   startingCash: num(process.env.STARTING_CASH, 100000),
@@ -35,6 +37,8 @@ export const config = {
     // Per-category daily limits (both also count toward maxTradesPerDay)
     maxSwingPerDay: Math.min(10, num(process.env.MAX_SWING_PER_DAY, 5)),
     maxScalpPerDay: Math.min(10, num(process.env.MAX_SCALP_PER_DAY, 5)),
+    // Trades open at the same time, over all symbols (max 1 per symbol)
+    maxOpenTrades: Math.min(6, Math.max(1, num(process.env.MAX_OPEN_TRADES, 2))),
     // IFVG formation: gap formed -> inverted within N candles (3-7)
     ifvgMaxAge: Math.min(7, Math.max(3, num(process.env.IFVG_MAX_AGE, 7))),
     // Entry needs a tap of a same-direction 1h/2h/4h FVG first
@@ -42,7 +46,9 @@ export const config = {
     // all = 3m + 5m + 15m entries; or 180 / 300 / 900 for one timeframe
     entryTimeframes: 'all', // every entry model is always scanned
     // 1m scalp entries off 5m / 15m / 30m FVG taps
-    scalpEnabled: true,
+    scalpEnabled: process.env.SCALP_ENABLED !== 'false',
+    // 5m / 15m swing entries off 30m-4h FVG taps
+    swingEnabled: process.env.SWING_ENABLED !== 'false',
     // Entry IFVG must be broken by a displacement candle (big body vs. recent candles)
     requireDisplacement: process.env.REQUIRE_DISPLACEMENT === 'true',
     // Target: rr = fixed risk:reward, liquidity = nearest liquidity level 1R-5R away (falls back to rr)

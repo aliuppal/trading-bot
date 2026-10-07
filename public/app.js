@@ -1,6 +1,12 @@
 const $ = (id) => document.getElementById(id);
 const usd = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? '—'
   : `${v < 0 ? '-' : ''}$${Math.abs(Number(v)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+// prices: decimals by size (BTC 2, XRP 4)
+const pxDec = (v) => { const a = Math.abs(Number(v)); return a >= 100 ? 2 : a >= 1 ? 4 : 5; };
+const px = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? '—'
+  : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: pxDec(v), maximumFractionDigits: pxDec(v) })}`);
+const pxPlain = (v) => { const d = pxDec(v) > 2 ? pxDec(v) : 0; return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }); };
+const symOf = (t) => t?.symbol || 'BTCUSDC';
 const signedUsd = (v) => `${v >= 0 ? '+' : ''}${usd(v)}`;
 const fmtTime = (t) => (t ? new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -32,6 +38,9 @@ let htfZones = [];
 let liquidity = [];
 let trades = [];
 let status = null;
+let chartSymbol = 'BTCUSDC';
+/** The open trade on the charted symbol (several symbols can have trades open). */
+const chartOpen = () => (status?.openTrades || (status?.openTrade ? [status.openTrade] : [])).find((t) => symOf(t) === chartSymbol) || null;
 
 /* ---------------- chart ---------------- */
 
@@ -53,7 +62,7 @@ function drawChart() {
   ctx.clearRect(0, 0, w, h);
   if (candles.length < 2) return;
 
-  const open = status?.openTrade;
+  const open = chartOpen();
   const pad = { l: 4, r: 72, t: 10, b: 22 };
   const t0 = candles[0].time;
   const idxAt = (t) => Math.max(0, Math.min(candles.length - 1, Math.floor((t - t0) / (granularity * 1000))));
@@ -93,7 +102,7 @@ function drawChart() {
   for (let i = 0; i <= 4; i++) {
     const p = lo + ((hi - lo) * i) / 4;
     ctx.beginPath(); ctx.moveTo(pad.l, y(p)); ctx.lineTo(w - pad.r, y(p)); ctx.stroke();
-    ctx.fillText(Math.round(p).toLocaleString(), w - pad.r + 8, y(p) + 4);
+    ctx.fillText(pxPlain(p), w - pad.r + 8, y(p) + 4);
   }
   const every = Math.max(1, Math.ceil(view.count / 6));
   for (let i = Math.ceil(Math.max(0, start) / every) * every; i <= Math.min(Math.floor(end), candles.length - 1); i += every) {
@@ -230,11 +239,11 @@ function drawChart() {
       ctx.strokeStyle = 'rgba(6, 182, 212, .5)'; ctx.strokeRect(tx, ty - 11, wd, 16);
       ctx.fillStyle = css('--text'); ctx.fillText(text, tx + 4, ty + 1);
     };
-    tag(Math.round(priceAt(pointer.y)).toLocaleString(), w - pad.r + 2, pointer.y, pad.r - 4);
+    tag(pxPlain(priceAt(pointer.y)), w - pad.r + 2, pointer.y, pad.r - 4);
     const c = candles[i];
     if (c) {
       tag(fmtT(c.time), Math.min(w - pad.r - 64, Math.max(pad.l, cx - 32)), h - 7, 64);
-      $('chartOhlc').textContent = `O ${Math.round(c.open).toLocaleString()}  H ${Math.round(c.high).toLocaleString()}  L ${Math.round(c.low).toLocaleString()}  C ${Math.round(c.close).toLocaleString()}`;
+      $('chartOhlc').textContent = `O ${pxPlain(c.open)}  H ${pxPlain(c.high)}  L ${pxPlain(c.low)}  C ${pxPlain(c.close)}`;
     }
   } else {
     $('chartOhlc').textContent = view.offset > 0 ? 'scrolled back · double-click or ⟲ for live' : '';
@@ -325,15 +334,15 @@ function resetChart() {
 function renderIndicators(ind) {
   const items = [
     ['RSI 14', ind.rsi_14],
-    ['SMA 20', usd(ind.sma_20)],
-    ['SMA 50', usd(ind.sma_50)],
+    ['SMA 20', px(ind.sma_20)],
+    ['SMA 50', px(ind.sma_50)],
     ['MACD hist', ind.macd?.histogram],
-    ['BB upper', usd(ind.bollinger?.upper)],
-    ['BB lower', usd(ind.bollinger?.lower)],
+    ['BB upper', px(ind.bollinger?.upper)],
+    ['BB lower', px(ind.bollinger?.lower)],
   ];
   $('indicators').innerHTML = items.map(([k, v]) => `<div><span>${k}</span>${esc(v ?? '—')}</div>`).join('');
-  $('price').textContent = usd(ind.price);
-  $('stripPrice').textContent = usd(ind.price);
+  $('price').textContent = px(ind.price);
+  $('stripPrice').textContent = `${chartSymbol} ${px(ind.price)}`;
   const ch = ind.change_24;
   $('change').innerHTML = ch === null ? '—' : `<span class="num ${ch >= 0 ? 'up' : 'down'}">${ch >= 0 ? '+' : ''}${ch}%</span> last 24 candles`;
 }
@@ -342,7 +351,7 @@ async function loadMarket() {
   const state = $('chartState');
   if (!candles.length) { state.className = 'chart-state'; state.textContent = 'Loading candles…'; }
   try {
-    const data = await api(`/api/market?granularity=${granularity}`);
+    const data = await api(`/api/market?granularity=${granularity}&symbol=${encodeURIComponent(chartSymbol)}`);
     const lastBefore = candles.at(-1)?.time;
     if (view.offset > 0 && lastBefore) view.offset += data.candles.filter((c) => c.time > lastBefore).length;
     candles = data.candles;
@@ -383,16 +392,16 @@ async function loadAccount() {
 
 function renderOpenTrade(t) {
   if (!t) return '';
-  const price = candles.at(-1)?.close ?? t.entryPrice;
+  const price = (symOf(t) === chartSymbol ? candles.at(-1)?.close : t.lastPrice) ?? t.entryPrice;
   const short = t.side === 'short';
   const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
   const upnl = (short ? t.entryPrice - price : price - t.entryPrice) * t.qty;
-  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> ${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> <span class="pill">1:${t.rr ?? 1}</span>${(t.leverage ?? 1) > 1 ? ` <span class="pill">${t.leverage}x</span>` : ''}${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
+  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <b>${esc(symOf(t))}</b> ${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> <span class="pill">1:${t.rr ?? 1}</span>${(t.leverage ?? 1) > 1 ? ` <span class="pill">${t.leverage}x</span>` : ''}${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
       <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
     <div class="ot-levels">
-      <div><span>${t.breakeven ? 'Stop · BE' : 'Stop'}</span><em class="${t.breakeven ? '' : 'down'}">${usd(t.stop)}</em></div>
-      <div><span>Entry</span>${usd(t.entryPrice)}</div>
-      <div><span>Target</span><em class="up">${usd(t.target)}</em></div>
+      <div><span>${t.breakeven ? 'Stop · BE' : 'Stop'}</span><em class="${t.breakeven ? '' : 'down'}">${px(t.stop)}</em></div>
+      <div><span>Entry</span>${px(t.entryPrice)}</div>
+      <div><span>Target</span><em class="up">${px(t.target)}</em></div>
     </div>
     <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
     <div class="ot-risk">Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
@@ -409,15 +418,15 @@ async function loadStatus() {
     $('ruleLev').textContent = s.broker === 'binance' ? `Jev decides, max ${s.settings.maxLeverage ?? 5}x` : '1x (simulator)';
     $('ruleInv').textContent = `gap → inversion within ${s.settings.ifvgMaxAge ?? 7} candles, close ≥20% through it, entry ≤2 candles after${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
     const lq = s.liquidity;
-    $('ruleLiq').textContent = lq ? `draw ${lq.draw ?? 'unclear'}${lq.lrlr ? ` · LRLR ${lq.lrlr.side}` : ''}${lq.above?.[0] ? ` · ↑ ${lq.above[0].type} ${Math.round(lq.above[0].price).toLocaleString()}` : ''}${lq.below?.[0] ? ` · ↓ ${lq.below[0].type} ${Math.round(lq.below[0].price).toLocaleString()}` : ''}` : 'scanning…';
-    $('ruleTarget').textContent = s.settings.targetMode === 'liquidity' ? 'liquidity (LRLR / equal highs-lows) 0.75R-5R, else fixed R:R' : `fixed 1 : ${s.settings.riskReward ?? 1}`;
+    $('ruleLiq').textContent = lq ? `draw ${lq.draw ?? 'unclear'}${lq.lrlr ? ` · LRLR ${lq.lrlr.side}` : ''}${lq.above?.[0] ? ` · ↑ ${lq.above[0].type} ${pxPlain(lq.above[0].price)}` : ''}${lq.below?.[0] ? ` · ↓ ${lq.below[0].type} ${pxPlain(lq.below[0].price)}` : ''}` : 'scanning…';
+    $('ruleTarget').textContent = s.settings.targetMode === 'liquidity' ? 'liquidity: nearest swing low (short) / swing high (long), LRLR, equal highs-lows 0.75R-5R, else fixed R:R' : `fixed 1 : ${s.settings.riskReward ?? 1}`;
     $('ruleRR').textContent = `1 : ${s.settings.riskReward ?? 1}`;
     $('ruleBE').textContent = s.settings.breakevenAtR ? `stop to entry at +${s.settings.breakevenAtR}R` : 'off';
     $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;
     $('botDot').className = `dot${s.running ? ' on' : ''}`;
     $('botState').textContent = s.busy ? 'Thinking…' : s.running ? 'Running' : 'Stopped';
     $('startBtn').textContent = s.running ? 'Auto-trading on' : 'Start bot';
-    const scan = s.lastScan?.note ? ` · ${s.lastScan.note}` : '';
+    const scan = s.symbols ? '' : s.lastScan?.note ? ` · ${s.lastScan.note}` : '';
     $('botTimes').textContent = `Last scan ${fmtTime(s.lastRun)}${s.nextRun ? ` · next ${fmtTime(s.nextRun)}` : ''}${scan}`;
 
     const maxSw = s.settings.maxSwingPerDay ?? 5, maxSc = s.settings.maxScalpPerDay ?? 5;
@@ -426,13 +435,22 @@ async function loadStatus() {
     $('stripTrades').textContent = `${s.tradesToday}/${max}`;
     // one bar per trade type
     const bar = (used, limit, cls) => `<div class="meter-row"><span class="pill ${cls}">${cls}</span><div class="meter-track ${cls.toLowerCase()}${used >= limit && limit ? ' full' : ''}" style="grid-template-columns:repeat(${Math.max(1, limit)},1fr)">${Array.from({ length: Math.max(1, limit) }, (_, i) => `<i class="${i < used ? 'used' : ''}"></i>`).join('')}</div><b>${used} / ${limit}</b></div>`;
-    $('meterTrack').innerHTML = bar(s.swingToday ?? 0, maxSw, 'SWING') + bar(s.scalpToday ?? 0, maxSc, 'SCALP');
+    const off = (cls) => `<div class="meter-row off"><span class="pill ${cls}">${cls}</span><span class="src">disabled</span><b></b></div>`;
+    $('meterTrack').innerHTML = (s.settings.swingEnabled === false ? off('SWING') : bar(s.swingToday ?? 0, maxSw, 'SWING'))
+      + (s.settings.scalpEnabled === false ? off('SCALP') : bar(s.scalpToday ?? 0, maxSc, 'SCALP'));
     const ss = s.scanStats;
     $('scanStats').innerHTML = ss
       ? `<b>Scans today ${ss.scans}</b> · no IFVG ${ss.noIfvg || 0} · IFVG but no FVG tap ${ss.noTap || 0} · waiting ${ss.waiting || 0} · in trade ${ss.inTrade || 0}${ss.limit ? ` · limit ${ss.limit}` : ''} · <b>sent to Jev ${ss.askedJev || 0}</b> · <b>taken ${ss.taken || 0}</b>`
       : 'Scans today: counting starts with the next scan';
-    $('meterSplit').innerHTML = '';
-    $('openTrade').innerHTML = renderOpenTrade(s.openTrade);
+    $('meterSplit').innerHTML = s.symbols ? s.symbols.map((x) => `<div class="sym-scan"><b>${esc(x.symbol)}</b> ${esc(x.lastScan || 'waiting for first scan')}</div>`).join('') : '';
+    const opens = s.openTrades || (s.openTrade ? [s.openTrade] : []);
+    $('openTrade').innerHTML = opens.map(renderOpenTrade).join('<hr class="ot-sep">');
+    // chart symbol choices (symbols with an open trade marked)
+    const syms = (s.symbols || [{ symbol: s.symbol || 'BTCUSDC' }]).map((x) => x.symbol);
+    const sel = $('chartSymbol');
+    const html = syms.map((x) => `<option value="${esc(x)}"${x === chartSymbol ? ' selected' : ''}>${esc(x)}${opens.some((t) => symOf(t) === x) ? ' ●' : ''}</option>`).join('');
+    if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
+    $('brandSub').textContent = `Binance futures demo · ${syms.length} symbols · max ${s.settings.maxOpenTrades ?? 2} open`;
 
     if (!settingsLoaded) {
       const f = $('settingsForm');
@@ -477,7 +495,7 @@ async function loadDecisions() {
     $('lastDecision').className = `decision ${esc(last?.action || '')}`;
     $('lastDecision').innerHTML = renderDecision(last);
     $('decisions').querySelector('tbody').innerHTML = decisions.map((d) => `<tr>
-      <td class="t">${fmtTime(d.time)}</td><td class="r">${usd(d.price)}</td>
+      <td class="t">${fmtTime(d.time)}</td><td class="r">${d.symbol ? `<span class="src">${esc(d.symbol)}</span> ` : ''}${px(d.price)}</td>
       <td><span class="pill ${esc(labelClass(decisionLabel(d)))}">${esc(decisionLabel(d))}</span></td>
       <td class="r">${d.confidence ?? '—'}</td>
       <td>${d.executed ? '<span class="ok">✓</span> ' : ''}${esc(d.note || '')}</td>
@@ -493,7 +511,7 @@ async function loadOrders() {
   try {
     const orders = await api('/api/orders');
     // Link orders to trades: the entry order of the open trade is ACTIVE; a closing order shows its trade's P&L.
-    const open = status?.openTrade;
+    const opens = status?.openTrades || (status?.openTrade ? [status.openTrade] : []);
     const entryOf = new Map(trades.filter((t) => t.orderId).map((t) => [String(t.orderId), t]));
     const exitOf = new Map(trades.filter((t) => t.exitOrderId).map((t) => [String(t.exitOrderId), t]));
     // older trades: match the closing order by time (within 90 s of the exit) and side
@@ -506,15 +524,16 @@ async function loadOrders() {
     const price = candles.at(-1)?.close;
     $('orders').querySelector('tbody').innerHTML = orders.map((o) => {
       const id = String(o.id);
-      const active = open && String(open.orderId) === id;
+      const open = opens.find((t) => String(t.orderId) === id && (!o.symbol || symOf(t) === o.symbol));
+      const active = Boolean(open);
       const closed = exitOf.get(id);
       const opened = entryOf.get(id);
       let pnl = o.pnl;
       let note = o.reason ? ` · ${esc(o.reason)}` : '';
-      if (active && price) {
+      if (active && price && symOf(open) === chartSymbol) {
         pnl = (open.side === 'short' ? open.entryPrice - price : price - open.entryPrice) * open.qty;
         const t = open;
-        note = ` · open ${esc(open.side)} · risking ${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))} · SL ${usd(open.stop)} · TP ${usd(open.target)}`;
+        note = ` · open ${esc(open.side)} · risking ${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))} · SL ${px(open.stop)} · TP ${px(open.target)}`;
       } else if (closed) {
         pnl = closed.pnl;
         const t = closed;
@@ -523,8 +542,8 @@ async function loadOrders() {
         note = ` · opened ${esc(opened.side)} → ${esc(String(opened.status).toUpperCase())}`;
       }
       return `<tr class="${active ? 'active-order' : ''}">
-      <td class="t">${fmtTime(o.time)}</td><td><span class="pill ${esc(o.side)}">${esc(o.side?.toUpperCase())}</span>${active ? ' <span class="pill OPEN">ACTIVE</span>' : ''}</td>
-      <td class="r">${o.qty ? Number(o.qty).toFixed(6) : '—'}</td><td class="r">${usd(o.price)}</td><td class="r">${usd(o.notional)}</td>
+      <td class="t">${fmtTime(o.time)}</td><td>${o.symbol ? `<span class="src">${esc(o.symbol)}</span> ` : ''}<span class="pill ${esc(o.side)}">${esc(o.side?.toUpperCase())}</span>${active ? ' <span class="pill OPEN">ACTIVE</span>' : ''}</td>
+      <td class="r">${o.qty ? Number(o.qty).toLocaleString(undefined, { maximumFractionDigits: 6 }) : '—'}</td><td class="r">${px(o.price)}</td><td class="r">${usd(o.notional)}</td>
       <td class="r">${pnl !== undefined && pnl !== null ? `<span class="${pnl > 0 ? 'up' : pnl < 0 ? 'down' : ''}">${signedUsd(pnl)}</span>${active ? ' <span class="src">live</span>' : ''}` : '—'}</td>
       <td>${esc(o.status)}${note}</td><td class="src">${esc(o.source)}</td></tr>`;
     }).join('')
@@ -553,7 +572,7 @@ async function loadTrades() {
     $('tradeCount').textContent = trades.length ? ` ${trades.length}${closed.length ? ` · ${Math.round((wins / closed.length) * 100)}% win` : ''}` : '';
     const body = $('trades').querySelector('tbody');
     if (!trades.length) {
-      body.innerHTML = '<tr><td colspan="14" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
+      body.innerHTML = '<tr><td colspan="15" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
       drawChart();
       renderPnl();
       return;
@@ -564,12 +583,13 @@ async function loadTrades() {
         <figure><figcaption>${t.status === 'open' ? 'Exit' : `Exit · ${esc(RESULT[t.status] || t.status)}`}</figcaption><button type="button" class="thumb" data-trade="${i}" data-phase="exit" aria-label="Exit chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">${t.status === 'open' ? 'open' : '…'}</span></button></figure>
       </div></td>
       <td class="t">${fmtTime(t.entryTime)}</td>
+      <td><b>${esc(symOf(t))}</b></td>
       <td>${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span>${t.granularity ? ` <span class="src">${t.granularity >= 3600 ? t.granularity / 3600 + 'h' : t.granularity / 60 + 'm'}${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</span>` : ''}</td>
       <td><span class="pill ${t.side === 'short' ? 'SELL' : 'BUY'}">${t.side === 'short' ? 'SHORT' : 'LONG'}</span></td>
       <td><span class="pill ${RESULT[t.status] || ''}">${RESULT[t.status] || esc(String(t.status).toUpperCase())}</span></td>
-      <td class="r">${usd(t.entryPrice)}</td><td class="r down">${usd(t.stop)}</td><td class="r up">${usd(t.target)}</td>
+      <td class="r">${px(t.entryPrice)}</td><td class="r down">${px(t.stop)}</td><td class="r up">${px(t.target)}</td>
       <td class="r">${(t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)) ? usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null))) : '—'}</td>
-      <td class="r">${t.exitPrice ? usd(t.exitPrice) : '—'}</td>
+      <td class="r">${t.exitPrice ? px(t.exitPrice) : '—'}</td>
       <td class="r">${t.r !== undefined ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
       <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>` : '—'}</td>
       <td class="src">${esc(t.source || '')}</td>
@@ -585,7 +605,7 @@ async function loadTrades() {
     drawChart();
     renderPnl();
   } catch (e) {
-    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="14" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
+    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="15" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -675,10 +695,10 @@ async function openShot(t, phase = 'exit') {
   $('shotTitle').textContent = `Trade · ${fmtTime(t.entryTime)} · ${RESULT[t.status] || t.status}`;
   $('shotBody').innerHTML = '<p class="sub">Loading chart…</p>';
   $('shotMeta').innerHTML = [
-    ['Entry', usd(t.entryPrice)], ['Stop', usd(t.stop)], ['Target', usd(t.target)],
+    ['Symbol', symOf(t)], ['Entry', px(t.entryPrice)], ['Stop', px(t.stop)], ['Target', px(t.target)],
     ['Type', t.category === 'scalp' ? 'Scalp' : 'Swing'], ['Side', t.side === 'short' ? 'Short' : 'Long'], ['Risk', (t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)) ? usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null))) : '—'], ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
     ['P&L', t.pnl !== undefined ? signedUsd(t.pnl) : '—'], ['Confidence', t.confidence ?? '—'],
-    ['IFVG zone', t.ifvg ? `${usd(t.ifvg.bottom)} – ${usd(t.ifvg.top)}` : '—'],
+    ['IFVG zone', t.ifvg ? `${px(t.ifvg.bottom)} – ${px(t.ifvg.top)}` : '—'],
   ].map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');
   $('shotNote').textContent = [t.setupReason, t.reasoning].filter(Boolean).join(' — ');
   $('shotModal').hidden = false;
@@ -788,4 +808,5 @@ async function checkChanges() {
 setInterval(checkChanges, 3000);
 checkChanges();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshAll(); loadMarket(); } });
-setInterval(loadMarket, 15000); // keep the chart live (new candles, open trade)
+setInterval(loadMarket, 15000);
+$('chartSymbol').onchange = (e) => { chartSymbol = e.target.value; candles = []; view.offset = 0; view.yZoom = 1; view.yPan = 0; loadMarket(); loadStatus(); }; // keep the chart live (new candles, open trade)

@@ -55,3 +55,22 @@ test('liquidity target sits on the LRLR swing low / EQL, even below 1R', () => {
   assert.equal(t.price, 83098); // at the liquidity level itself
   assert.ok(t.r >= 0.75 && t.r < 1);
 });
+
+test('liquidity target: short takes profit at the nearest swing low, long at the nearest swing high', () => {
+  const liq = {
+    below: [{ type: 'SWL', label: '5m swing low', price: 83102 }, { type: 'PDL', price: 82900 }],
+    above: [{ type: 'SWH', label: '15m swing high', price: 83480 }, { type: 'PDH', price: 83700 }],
+    lrlr: null,
+  };
+  const s = liquidityTarget(liq, 'short', 83291.4, 200);
+  assert.equal(s.price, 83102);
+  assert.equal(s.level.type, 'SWL');
+  const l = liquidityTarget(liq, 'long', 83291.4, 200);
+  assert.equal(l.price, 83480);
+  assert.equal(l.level.type, 'SWH');
+});
+
+test('liquidity target keeps small-price decimals (XRP)', () => {
+  const liq = { below: [{ type: 'SWL', price: 2.48731 }], above: [], lrlr: null };
+  assert.equal(liquidityTarget(liq, 'short', 2.5012, 0.01).price, 2.48731);
+});

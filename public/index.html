@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#090D14" />
-  <title>BTC AI Paper Trader</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23090D14%22/><path d=%22M6 22l6-7 5 4 9-11%22 fill=%22none%22 stroke=%22%2310B981%22 stroke-width=%223%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>" />
+  <title>CryptoQuant Pro</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%227%22 fill=%22%23090D14%22/><path d=%22M16 2.5l11.7 6.75v13.5L16 29.5 4.3 22.75V9.25z%22 fill=%22none%22 stroke=%22%2306B6D4%22 stroke-width=%222%22 stroke-linejoin=%22round%22/><path d=%22M12 9.5v13M20 8v12%22 stroke=%22%23CBD5E1%22 stroke-width=%221.5%22/><rect x=%2210%22 y=%2212.5%22 width=%224%22 height=%227%22 fill=%22%2310B981%22/><rect x=%2218%22 y=%2210.5%22 width=%224%22 height=%226.5%22 fill=%22%23F43F5E%22/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet" />
@@ -14,10 +14,10 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M6 22l6-7 5 4 9-11" /></svg>
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path class="hex" d="M16 2.5l11.7 6.75v13.5L16 29.5 4.3 22.75V9.25z"/><path class="wick" d="M12 9.5v13M20 8v12"/><rect class="up" x="10" y="12.5" width="4" height="7" rx=".6"/><rect class="dn" x="18" y="10.5" width="4" height="6.5" rx=".6"/></svg>
       <div>
-        <h1>BTC AI Paper Trader</h1>
-        <p class="brand-sub">BTC-USD · simulated execution</p>
+        <h1>CryptoQuant <span class="brand-pro">Pro</span></h1>
+        <p class="brand-sub" id="brandSub">Binance futures demo</p>
       </div>
     </div>
     <div class="badges">
@@ -56,6 +56,8 @@
       <div class="panel chart-panel">
         <div class="panel-head">
           <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M8 2v12M12 4v8" /></svg>Price · SMA 20</h2>
+          <label class="sr-only" for="chartSymbol">Chart symbol</label>
+          <select id="chartSymbol" class="symbol-select"><option>BTCUSDC</option></select>
           <div class="segmented" id="granularity" role="tablist" aria-label="Candle size">
             <button type="button" role="tab" data-g="60">1m</button>
             <button type="button" role="tab" data-g="120">2m</button>
@@ -103,7 +105,7 @@
   
         <div class="tab-pane" data-pane="trades">
           <div class="table-wrap"><table id="trades"><thead><tr>
-            <th>Entry · Exit chart</th><th>Opened</th><th>Type</th><th>Side</th><th>Result</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Risk $</th><th class="r">Exit</th><th class="r">R</th><th class="r">P&amp;L</th><th>Source</th><th>Reason</th>
+            <th>Entry · Exit chart</th><th>Opened</th><th>Symbol</th><th>Type</th><th>Side</th><th>Result</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Risk $</th><th class="r">Exit</th><th class="r">R</th><th class="r">P&amp;L</th><th>Source</th><th>Reason</th>
           </tr></thead><tbody><tr><td colspan="14" class="empty">Loading trades…</td></tr></tbody></table></div>
         </div>
   
@@ -115,7 +117,7 @@
   
         <div class="tab-pane" data-pane="orders" hidden>
           <div class="table-wrap"><table id="orders"><thead><tr>
-            <th>Time</th><th>Side</th><th class="r">Qty (BTC)</th><th class="r">Price</th><th class="r">Value</th><th class="r">P&amp;L</th><th>Status</th><th>By</th>
+            <th>Time</th><th>Side</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Value</th><th class="r">P&amp;L</th><th>Status</th><th>By</th>
           </tr></thead><tbody><tr><td colspan="8" class="empty">Loading orders…</td></tr></tbody></table></div>
         </div>
 
@@ -181,8 +183,11 @@
             <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
             <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
             <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
+            <label>Swing trades<select name="swingEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+            <label>Scalp trades<select name="scalpEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
             <label>Swing trades / day<input name="maxSwingPerDay" type="number" min="0" max="10" step="1" /></label>
             <label>Scalp trades / day<input name="maxScalpPerDay" type="number" min="0" max="10" step="1" /></label>
+            <label>Max open trades (all symbols)<input name="maxOpenTrades" type="number" min="1" max="6" step="1" /></label>
             <label>IFVG formation (3-7 candles)<input name="ifvgMaxAge" type="number" min="3" max="7" step="1" /></label>
             <label>Risk : reward<select name="riskReward"><option value="1">1 : 1</option><option value="1.5">1 : 1.5</option><option value="2">1 : 2</option><option value="2.5">1 : 2.5</option><option value="3">1 : 3</option><option value="4">1 : 4</option><option value="5">1 : 5</option></select></label>
             <label>Move stop to breakeven at<select name="breakevenAtR"><option value="0">Off</option><option value="0.5">+0.5R</option><option value="1">+1R (1:1)</option><option value="1.5">+1.5R</option><option value="2">+2R</option><option value="3">+3R</option></select></label>
@@ -190,7 +195,7 @@
             <label>Position sizing<select name="sizingMode"><option value="percent">% of balance (Max per trade %)</option><option value="risk">Risk $ per trade</option></select></label>
             <label>Risk per trade ($)<input name="riskPerTradeUsd" type="number" min="1" step="1" /></label>
             <label>Min stop distance (%)<input name="minStopPct" type="number" min="0.05" max="2" step="0.05" /></label>
-            <label>Target<select name="targetMode"><option value="rr">Fixed risk:reward</option><option value="liquidity">Liquidity: LRLR / EQ highs-lows (0.75R-5R)</option></select></label>
+            <label>Target<select name="targetMode"><option value="rr">Fixed risk:reward</option><option value="liquidity">Liquidity: swing high/low, LRLR, EQ highs-lows (0.75R-5R)</option></select></label>
             <label>Displacement candle<select name="requireDisplacement"><option value="false">Optional (off)</option><option value="true">Required</option></select></label>
             <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
             <button type="submit" class="btn btn-ghost">Save settings</button>
