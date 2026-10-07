@@ -529,7 +529,10 @@ async function loadTrades() {
       return;
     }
     body.innerHTML = trades.map((t, i) => `<tr>
-      <td><button type="button" class="thumb" data-trade="${i}" aria-label="Open chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">…</span></button></td>
+      <td><div class="thumbs">
+        <figure><figcaption>Entry</figcaption><button type="button" class="thumb" data-trade="${i}" data-phase="entry" aria-label="Entry chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">…</span></button></figure>
+        <figure><figcaption>${t.status === 'open' ? 'Exit' : `Exit · ${esc(RESULT[t.status] || t.status)}`}</figcaption><button type="button" class="thumb" data-trade="${i}" data-phase="exit" aria-label="Exit chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">${t.status === 'open' ? 'open' : '…'}</span></button></figure>
+      </div></td>
       <td class="t">${fmtTime(t.entryTime)}</td>
       <td>${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span>${t.granularity ? ` <span class="src">${t.granularity >= 3600 ? t.granularity / 3600 + 'h' : t.granularity / 60 + 'm'}${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</span>` : ''}</td>
       <td><span class="pill ${t.side === 'short' ? 'SELL' : 'BUY'}">${t.side === 'short' ? 'SHORT' : 'LONG'}</span></td>
@@ -543,9 +546,10 @@ async function loadTrades() {
     // thumbnails for the most recent trades
     trades.slice(0, 25).forEach(async (t, i) => {
       const shots = await getShots(t);
-      const btn = body.querySelector(`[data-trade="${i}"]`);
-      const svg = shots.exit || shots.entry;
-      if (btn) btn.innerHTML = shotHtml(svg, 'Trade chart') || '<span class="no-shot">no chart</span>';
+      const entryBtn = body.querySelector(`[data-trade="${i}"][data-phase="entry"]`);
+      const exitBtn = body.querySelector(`[data-trade="${i}"][data-phase="exit"]`);
+      if (entryBtn) entryBtn.innerHTML = shotHtml(shots.entry, 'Entry chart') || '<span class="no-shot">no chart</span>';
+      if (exitBtn) exitBtn.innerHTML = shotHtml(shots.exit, 'Exit chart') || `<span class="no-shot">${t.status === 'open' ? 'open' : 'no chart'}</span>`;
     });
     drawChart();
     renderPnl();
