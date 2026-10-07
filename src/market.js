@@ -62,3 +62,26 @@ async function built(granularity, limit) {
   }
   return out.slice(-limit);
 }
+
+const BINANCE_KLINE = { 60: '1m', 180: '3m', 300: '5m', 900: '15m', 1800: '30m', 3600: '1h', 7200: '2h', 14400: '4h', 21600: '6h', 86400: '1d' };
+
+/**
+ * Market data from the Binance futures venue the bot trades on (e.g. the demo BTCUSDC perpetual), so setups,
+ * charts and stop / target checks use the same prices the orders fill at. Every timeframe is native there.
+ */
+export function binanceMarket({ baseUrl = 'https://demo-fapi.binance.com', symbol = 'BTCUSDC' } = {}) {
+  const base = baseUrl.replace(/\/$/, '');
+  return {
+    source: `binance:${symbol}`,
+    async getCandles(granularity = 3600, limit = 200) {
+      const interval = BINANCE_KLINE[granularity];
+      if (!interval) return getCandles(granularity, limit); // unusual timeframe: fall back to Coinbase
+      const rows = await getJson(`${base}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${Math.min(1500, limit)}`);
+      return rows.map((r) => ({ time: r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));
+    },
+    async getPrice() {
+      const t = await getJson(`${base}/fapi/v1/ticker/price?symbol=${symbol}`);
+      return Number(t.price);
+    },
+  };
+}

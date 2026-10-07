@@ -326,11 +326,41 @@ export class TradingBot {
   async manageOpen(candles, price) {
     const open = (await this.trades()).find((t) => t.status === 'open');
     if (!open) return null;
+    if (open.exchangeBracket && open.broker === this.broker.name && this.broker.supportsBrackets) {
+      return this.manageExchangeBracket(open, candles, price);
+    }
     const hit = checkBracket(open, candles, price, this.now());
     if (!hit) return null;
     if (hit.breakevenAt) await this.moveToBreakeven(open, hit.breakevenAt);
     if (!hit.reason) return null;
     return this.closeTrade(open, hit.exitPrice, hit.reason, candles);
+  }
+
+  /**
+   * Trade protected by real stop / target orders on the exchange: they fill at the levels by themselves.
+   * Here we only move the stop to breakeven when due, and record the result once the position is gone.
+   */
+  async manageExchangeBracket(open, candles, price) {
+    const amt = await this.broker.positionAmt();
+    const stillOpen = open.side === 'short' ? amt < 0 : amt > 0;
+    if (stillOpen) {
+      const hit = checkBracket(open, candles, price, this.now());
+      if (hit?.breakevenAt && !open.breakeven) {
+        open.stopAlgoId = await this.broker.moveStop(open, open.entryPrice);
+        await this.moveToBreakeven(open, hit.breakevenAt);
+      }
+      return null;
+    }
+    // The position is gone: find which exchange order closed it, and its real fill.
+    const [sl, tp] = await Promise.all([this.broker.algoStatus(open.stopAlgoId), this.broker.algoStatus(open.targetAlgoId)]);
+    const fired = tp?.actualOrderId ? { s: tp, reason: 'target' } : sl?.actualOrderId ? { s: sl, reason: open.breakeven ? 'breakeven' : 'stop' } : null;
+    await Promise.all([this.broker.cancelAlgo(open.stopAlgoId), this.broker.cancelAlgo(open.targetAlgoId)]);
+    let order = null;
+    if (fired) {
+      const f = await this.broker.fills(fired.s.actualOrderId);
+      if (f) order = { id: fired.s.actualOrderId, price: f.price, qty: f.qty, fee: f.commission, realizedPnl: f.realizedPnl, actualFill: true };
+    }
+    return this.closeTrade(open, order?.price ?? price, fired ? fired.reason : 'manual', candles, { order });
   }
 
   /** The trade reached its breakeven level: from here on its stop sits at the entry. */
@@ -346,16 +376,23 @@ export class TradingBot {
     });
   }
 
-  async closeTrade(trade, exitPrice, reason, candles) {
+  async closeTrade(trade, exitPrice, reason, candles, external = null) {
     const nowIso = new Date(this.now()).toISOString();
     const short = trade.side === 'short';
     const broker = (trade.broker ?? 'local') !== this.broker.name && this.fallbackBroker?.name === (trade.broker ?? 'local')
       ? this.fallbackBroker : this.broker;
-    const account = await broker.getAccount(exitPrice);
-    const qty = Math.min(trade.qty, short ? account.shortBtc || 0 : account.btc);
-    let order = null;
+    let order = external?.order ?? null;
     let note = '';
-    if (qty * exitPrice >= 1) {
+    let qty = order?.qty ?? trade.qty;
+    if (!external) {
+      // closing ourselves (review / signal): remove the exchange stop and target first
+      if (trade.exchangeBracket && broker.cancelAlgo) await Promise.all([broker.cancelAlgo(trade.stopAlgoId), broker.cancelAlgo(trade.targetAlgoId)]);
+      const account = await broker.getAccount(exitPrice);
+      qty = Math.min(trade.qty, short ? account.shortBtc || 0 : account.btc);
+    }
+    if (external) {
+      if (!order) note = 'Closed outside the bot (no matching exchange order)';
+    } else if (qty * exitPrice >= 1) {
       order = short
         ? await broker.coverShort({ qty, price: exitPrice, source: 'ai', reason })
         : await broker.placeOrder({ side: 'sell', qty, price: exitPrice, source: 'ai', reason });
@@ -372,8 +409,10 @@ export class TradingBot {
         ? trade.notional * part - (trade.entryFee || 0) * part - exitPrice * qty - fee // proceeds - entry fee - buyback
         : exitPrice * qty - fee - trade.notional * part; // long notional already includes the entry fee
       if ((trade.broker ?? 'local') !== 'local') {
-        // real broker: price move x filled qty, minus entry and exit fees
-        pnl = (short ? trade.entryPrice - exitPrice : exitPrice - trade.entryPrice) * qty - (trade.entryFee || 0) * part - fee;
+        // real broker: price move x filled qty, minus entry and exit fees; exact from Binance's fills when available
+        pnl = order.actualFill
+          ? order.realizedPnl - (trade.entryFee || 0) * part - fee
+          : (short ? trade.entryPrice - exitPrice : exitPrice - trade.entryPrice) * qty - (trade.entryFee || 0) * part - fee;
       }
     } else {
       // No closing order went through (position already gone): still record the paper result from the prices.
@@ -484,6 +523,17 @@ export class TradingBot {
     await this.kv.set(`shot_${trade.id}`, {
       entry: renderTradeImage({ candles, trade, phase: 'entry', granularity: trade.granularity }),
     });
+    // Real stop-loss and take-profit orders on the exchange (fill at the levels without waiting for the bot).
+    if (this.broker.supportsBrackets) {
+      try {
+        Object.assign(trade, await this.broker.placeBracket({ side, stop: trade.stop, target: trade.target }), { exchangeBracket: true });
+        const list = await this.trades();
+        const k = list.findIndex((x) => x.id === trade.id);
+        if (k >= 0) { list[k] = trade; await this.kv.set('trades', list); }
+      } catch (e) {
+        trade.bracketError = e.message; // falls back to the bot watching stop / target every minute
+      }
+    }
     const be = trade.breakevenAtR ? ` · breakeven at +${trade.breakevenAtR}R` : '';
     return { trade, order, note: `${trade.setupReason} | ${plan.note} · risking $${trade.riskUsd} · SL ${b.stop} · TP ${b.target} (1:${b.rr})${be}` };
   }

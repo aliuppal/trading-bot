@@ -185,28 +185,37 @@ function drawChart() {
     });
   }
 
-  // trade markers: entries (triangles) and exits (rings)
+  // trade markers in their own colors (not candle red / green): long = cyan, short = orange
+  const LONG_C = "#22D3EE", SHORT_C = "#FB923C";
+  ctx.font = "bold 10px 'JetBrains Mono', ui-monospace, monospace";
   trades.forEach((t) => {
+    const col = t.side === "short" ? SHORT_C : LONG_C;
     const et = new Date(t.entryTime).getTime();
     if (et >= t0) {
       const px = x(idxAt(et));
+      ctx.fillStyle = col; ctx.strokeStyle = "#090D14"; ctx.lineWidth = 1;
       ctx.beginPath();
-      if (t.side === 'short') {
-        const py = y(t.entryPrice) - 12;
-        ctx.fillStyle = css('--red');
-        ctx.moveTo(px, py + 7); ctx.lineTo(px - 5, py - 2); ctx.lineTo(px + 5, py - 2);
-      } else {
-        const py = y(t.entryPrice) + 12;
-        ctx.fillStyle = css('--green');
-        ctx.moveTo(px, py - 7); ctx.lineTo(px - 5, py + 2); ctx.lineTo(px + 5, py + 2);
+      if (t.side === "short") { // orange down-arrow above the entry
+        const py = y(t.entryPrice) - 10;
+        ctx.moveTo(px, py + 8); ctx.lineTo(px - 6, py - 3); ctx.lineTo(px + 6, py - 3);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillText("S", px - 3, py - 6);
+      } else { // cyan up-arrow below the entry
+        const py = y(t.entryPrice) + 10;
+        ctx.moveTo(px, py - 8); ctx.lineTo(px - 6, py + 3); ctx.lineTo(px + 6, py + 3);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillText("L", px - 3, py + 14);
       }
-      ctx.closePath(); ctx.fill();
     }
     if (t.exitTime && new Date(t.exitTime).getTime() >= t0) {
-      ctx.strokeStyle = t.pnl >= 0 ? css('--green') : css('--red'); ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(x(idxAt(new Date(t.exitTime).getTime())), y(t.exitPrice), 4, 0, Math.PI * 2); ctx.stroke();
+      const ex = x(idxAt(new Date(t.exitTime).getTime())), ey = y(t.exitPrice);
+      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ex - 3, ey - 3); ctx.lineTo(ex + 3, ey + 3); ctx.moveTo(ex + 3, ey - 3); ctx.lineTo(ex - 3, ey + 3); ctx.lineWidth = 1.5; ctx.stroke();
+      if (t.r !== undefined) { ctx.fillStyle = col; ctx.fillText(`${t.r > 0 ? "+" : ""}${t.r}R`, ex + 8, ey + 4); }
     }
   });
+  ctx.font = mono;
   ctx.restore();
 
   // crosshair with price and time labels

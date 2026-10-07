@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './src/config.js';
-import * as market from './src/market.js';
+import * as coinbase from './src/market.js';
 import { LocalBroker } from './src/brokers/local.js';
 import { BinanceFuturesBroker } from './src/brokers/binance.js';
 import { TradingBot } from './src/bot.js';
@@ -13,6 +13,9 @@ import { loadHtfZones } from './src/strategy.js';
 import { liquidityLevels } from './src/liquidity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Prices come from the venue the bot trades on: Binance BTCUSDC for BROKER=binance, else Coinbase BTC-USD.
+const market = config.broker === 'binance' ? coinbase.binanceMarket(config.binance) : coinbase;
 
 const kv = createKV({ dataDir: config.dataDir, redis: config.redis, supabase: config.supabase });
 const local = new LocalBroker({ kv, startingCash: config.startingCash, getPrice: market.getPrice });

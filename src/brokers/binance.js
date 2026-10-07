@@ -109,9 +109,11 @@ export class BinanceFuturesBroker {
       newClientOrderId: `${source}-${action}-${Date.now()}`,
       newOrderRespType: 'RESULT',
     });
-    const filled = Number(o.executedQty) || quantity;
-    const notional = Number(o.cumQuote) || null;
-    const avg = Number(o.avgPrice) || (notional ? notional / filled : null); // demo may omit avgPrice
+    // The actual fills (price, fee, realized P&L) from Binance's own trade records.
+    const fills = await this.fills(o.orderId);
+    const filled = fills ? fills.qty : Number(o.executedQty) || quantity;
+    const notional = fills ? fills.quote : Number(o.cumQuote) || null;
+    const avg = fills ? fills.price : Number(o.avgPrice) || (notional ? notional / filled : null);
     return {
       id: String(o.orderId),
       time: new Date(o.updateTime || Date.now()).toISOString(),
@@ -119,12 +121,84 @@ export class BinanceFuturesBroker {
       qty: filled,
       price: avg,
       notional,
-      fee: notional ? notional * TAKER_FEE : 0,
+      fee: fills ? fills.commission : notional ? notional * TAKER_FEE : 0,
+      ...(fills && { realizedPnl: fills.realizedPnl, actualFill: true }),
       status: String(o.status || 'NEW').toLowerCase(),
       source,
       ...(reason && { reason }),
       ...(leverage && { leverage }),
     };
+  }
+
+  /**
+   * Fills of one order from GET /fapi/v1/userTrades: average price, qty, quote value, commission and Binance's
+   * realized P&L (non-zero on closing orders). Retries briefly because fills can take a moment to appear.
+   */
+  async fills(orderId) {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const rows = await this.req('GET', '/fapi/v1/userTrades', { symbol: this.symbol, orderId });
+        if (rows.length) {
+          const qty = rows.reduce((a, r) => a + Number(r.qty), 0);
+          const quote = rows.reduce((a, r) => a + Number(r.quoteQty), 0);
+          return {
+            qty: Number(qty.toFixed(8)),
+            quote: Number(quote.toFixed(4)),
+            price: Number((quote / qty).toFixed(2)),
+            commission: Number(rows.reduce((a, r) => a + Number(r.commission), 0).toFixed(6)),
+            realizedPnl: Number(rows.reduce((a, r) => a + Number(r.realizedPnl), 0).toFixed(6)),
+          };
+        }
+      } catch { /* retry */ }
+      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    }
+    return null;
+  }
+
+  // ---- exchange-side bracket (real stop-loss / take-profit orders via the Algo Order API) ----
+
+  get supportsBrackets() { return true; }
+
+  async algo(type, side, trigger) {
+    const a = await this.req('POST', '/fapi/v1/algoOrder', {
+      algoType: 'CONDITIONAL', symbol: this.symbol, side, type, triggerPrice: Number(trigger).toFixed(1),
+      closePosition: 'true', workingType: 'CONTRACT_PRICE', priceProtect: 'true',
+    });
+    return String(a.algoId);
+  }
+
+  /** Stop-loss and take-profit that close the whole position on Binance. Returns their algo ids. */
+  async placeBracket({ side, stop, target }) {
+    const close = side === 'long' ? 'SELL' : 'BUY';
+    const stopAlgoId = await this.algo('STOP_MARKET', close, stop);
+    const targetAlgoId = await this.algo('TAKE_PROFIT_MARKET', close, target);
+    return { stopAlgoId, targetAlgoId };
+  }
+
+  async cancelAlgo(algoId) {
+    if (!algoId) return;
+    try { await this.req('DELETE', '/fapi/v1/algoOrder', { algoId }); } catch { /* already triggered / gone */ }
+  }
+
+  /** Replace the stop-loss (e.g. move to breakeven). Returns the new algo id. */
+  async moveStop(trade, newStop) {
+    await this.cancelAlgo(trade.stopAlgoId);
+    return this.algo('STOP_MARKET', trade.side === 'long' ? 'SELL' : 'BUY', newStop);
+  }
+
+  /** { status, actualOrderId } of an algo order (actualOrderId is set once it triggered). */
+  async algoStatus(algoId) {
+    if (!algoId) return null;
+    try {
+      const a = await this.req('GET', '/fapi/v1/algoOrder', { algoId });
+      return { status: a.algoStatus, actualOrderId: a.actualOrderId ? String(a.actualOrderId) : null };
+    } catch { return null; }
+  }
+
+  /** Signed position size (+ long, - short). */
+  async positionAmt() {
+    const positions = await this.req('GET', '/fapi/v2/positionRisk', { symbol: this.symbol });
+    return Number((positions.find((x) => x.symbol === this.symbol) || {}).positionAmt || 0);
   }
 
   /** side: 'buy' (USD notional) | 'sell' (BTC qty, closes a long) */

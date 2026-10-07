@@ -4,7 +4,7 @@
 
 const C = {
   bg: '#0A0E17', grid: '#1A2333', axis: '#64748B', text: '#CBD5E1',
-  up: '#10B981', down: '#F43F5E', cyan: '#06B6D4', entry: '#CBD5E1',
+  up: '#10B981', down: '#F43F5E', cyan: '#06B6D4', entry: '#CBD5E1', long: '#22D3EE', short: '#FB923C',
 };
 const W = 800, H = 400;
 const RR_CANDLES = 8; // width of the risk/reward block, in candles
@@ -113,13 +113,13 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
 
   // entry marker
   parts.push(short
-    ? `<path d="M${f1(x(entryLocal))} ${f1(y(trade.entryPrice) - 4)} l-6 -10 h12 z" fill="${C.down}"/>`
-    : `<path d="M${f1(x(entryLocal))} ${f1(y(trade.entryPrice) + 4)} l-6 10 h12 z" fill="${C.up}"/>`);
+    ? `<path d="M${f1(x(entryLocal))} ${f1(y(trade.entryPrice) - 4)} l-6 -10 h12 z" fill="${C.short}"/>`
+    : `<path d="M${f1(x(entryLocal))} ${f1(y(trade.entryPrice) + 4)} l-6 10 h12 z" fill="${C.long}"/>`);
 
   // exit marker
   if (phase === 'exit' && Number.isFinite(trade.exitPrice) && exitT) {
     const xx = x(Math.min(n - 1, candleIndexAt(candles, exitT) - start));
-    const col = trade.pnl >= 0 ? C.up : C.down;
+    const col = short ? C.short : C.long;
     parts.push(`<circle cx="${f1(xx)}" cy="${f1(y(trade.exitPrice))}" r="5" fill="${C.bg}" stroke="${col}" stroke-width="2"/>`);
   }
 

@@ -501,3 +501,48 @@ test('risk sizing: $50 risk, leverage raised to fit the margin, trimmed only whe
   assert.equal(r.capped, false);
   assert.equal(r.leverage, 8);
 });
+
+test('exchange bracket: SL/TP placed on the exchange, breakeven moves the stop, result from the real fill', async () => {
+  const s = setup();
+  await s.bot.updateSettings({ riskReward: 2, breakevenAtR: 1 });
+  const ex = { pos: 0, algos: {}, nextId: 1, cancelled: [] };
+  s.bot.broker = {
+    name: 'binance', supportsBrackets: true,
+    getAccount: async (p) => ({ cash: 100000, btc: Math.max(0, ex.pos), shortBtc: Math.max(0, -ex.pos), price: p, equity: 100000 }),
+    placeOrder: async ({ notional, price }) => { const q = Math.floor((notional / price) * 1000) / 1000; ex.pos += q; ex.q = q; return { id: 'E1', qty: q, price, fee: 1 }; },
+    placeBracket: async ({ stop, target }) => {
+      const a = String(ex.nextId++), b = String(ex.nextId++);
+      ex.algos[a] = { trigger: stop }; ex.algos[b] = { trigger: target };
+      return { stopAlgoId: a, targetAlgoId: b };
+    },
+    moveStop: async (trade, newStop) => { ex.cancelled.push(trade.stopAlgoId); const id = String(ex.nextId++); ex.algos[id] = { trigger: newStop }; return id; },
+    cancelAlgo: async (id) => { ex.cancelled.push(id); },
+    algoStatus: async (id) => (ex.algos[id]?.fired ? { status: 'FINISHED', actualOrderId: `X${id}` } : { status: 'NEW', actualOrderId: null }),
+    positionAmt: async () => ex.pos,
+    fills: async () => ({ qty: ex.q, price: 70000, quote: 70000 * ex.q, commission: 2, realizedPnl: 123.45 }),
+  };
+  await s.bot.runOnce();
+  let [t] = await s.bot.trades();
+  assert.equal(t.exchangeBracket, true);
+  assert.equal(ex.algos[t.stopAlgoId].trigger, t.stop);
+  assert.equal(ex.algos[t.targetAlgoId].trigger, t.target);
+
+  // +1R reached: the exchange stop is replaced at the entry
+  const risk = t.entryPrice - t.stop;
+  s.candles.push({ time: NOW + 60000, open: t.entryPrice, high: t.entryPrice + risk + 1, low: t.entryPrice + 1, close: t.entryPrice + risk, volume: 1 });
+  s.bot.now = () => NOW + 120000;
+  assert.equal(await s.bot.manageOpen(s.candles, t.entryPrice + risk), null);
+  [t] = await s.bot.trades();
+  assert.equal(t.breakeven, true);
+  assert.equal(ex.algos[t.stopAlgoId].trigger, t.entryPrice);
+
+  // the exchange take-profit fires: position flat, result from the real fill (realized P&L - fees)
+  ex.algos[t.targetAlgoId].fired = true;
+  ex.pos = 0;
+  s.bot.now = () => NOW + 180000;
+  const closed = await s.bot.manageOpen(s.candles, t.target);
+  assert.equal(closed.exitReason, 'target');
+  assert.equal(closed.exitPrice, 70000);
+  assert.ok(Math.abs(closed.pnl - (123.45 - 1 - 2)) < 0.01, String(closed.pnl));
+  assert.ok(ex.cancelled.includes(t.stopAlgoId), 'leftover stop cancelled');
+});
