@@ -382,7 +382,7 @@ export class TradingBot {
     await this.kv.set(`shot_${trade.id}`, shots);
     await this.log({
       time: nowIso, price: exitPrice, action: EXIT_ACTION[trade.side || 'long'], source: 'bracket', executed: Boolean(order), tradeId: trade.id,
-      note: `${reason === 'target' ? `Target hit (+${trade.rr ?? 1}R)` : reason === 'stop' ? 'Stop hit (-1R)' : reason === 'breakeven' ? 'Stopped at breakeven (0R)' : reason === 'review' ? 'Closed by Jev risk review' : 'Closed on signal'} · P&L ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`,
+      note: `${reason === 'target' ? `Target hit (+${trade.rr ?? 1}R)` : reason === 'stop' ? 'Stop hit (-1R)' : reason === 'breakeven' ? 'Stopped at breakeven (0R)' : reason === 'review' ? 'Closed by Jev risk review' : 'Closed on signal'} · P&L ${trade.pnl >= 0 ? '+' : '-'}$${Math.abs(trade.pnl).toFixed(2)}`,
     });
     return trade;
   }
@@ -604,7 +604,7 @@ export class TradingBot {
             const t = await this.closeTrade(open, price, 'review', candles);
             entry.executed = true;
             entry.tradeId = t.id;
-            entry.note = `Jev review: closed ${open.side || 'long'} early · P&L ${t.pnl >= 0 ? '+' : ''}$${t.pnl}`;
+            entry.note = `Jev review: closed ${open.side || 'long'} early · P&L ${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}`;
           } else {
             entry.tradeId = open.id;
             entry.note = `Jev review: keep ${open.side || 'long'} open (${decision.action}${confident ? '' : ', low confidence'})`;
@@ -613,7 +613,7 @@ export class TradingBot {
           const t = await this.closeTrade(open, price, 'signal', candles);
           entry.executed = true;
           entry.tradeId = t.id;
-          entry.note = `Closed ${open.side || 'long'} on ${setup.direction} IFVG · P&L ${t.pnl >= 0 ? '+' : ''}$${t.pnl}`;
+          entry.note = `Closed ${open.side || 'long'} on ${setup.direction} IFVG · P&L ${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}`;
         } else if (!open && want && decision.action === ENTRY_ACTION[want]) {
           if (reason) entry.note = `${decision.action} not taken: ${reason}`;
           else if (!confident) entry.note = `Confidence ${decision.confidence} below minimum ${s.minConfidence}`;
