@@ -357,3 +357,7 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .jev-row { display: grid; grid-template-columns: 72px auto 36px 1fr; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line-soft); font-family: var(--font-mono); }
 .jev-row .num { color: var(--muted); text-align: right; }
 .jev-note { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* timeframe buttons stay on the right, also when the header wraps */
+#granularity { margin-left: auto; }
+.chart-panel .symbol-select { margin-left: 0; }
