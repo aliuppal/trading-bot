@@ -40,6 +40,10 @@ export const config = {
     entryTimeframes: process.env.ENTRY_TIMEFRAMES || 'all',
     // 1m scalp entries off 5m / 15m / 30m FVG taps
     scalpEnabled: process.env.SCALP_ENABLED !== 'false',
+    // Target = riskReward x stop distance (1 = 1:1, 3 = 1:3)
+    riskReward: num(process.env.RISK_REWARD, 1),
+    // Move the stop to the entry once price reaches +N R (0 = off)
+    breakevenAtR: num(process.env.BREAKEVEN_AT_R, 0),
     autoStart: process.env.AUTO_START !== 'false',
   },
   // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).

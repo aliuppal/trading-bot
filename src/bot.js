@@ -48,24 +48,43 @@ export function tradesToday(trades, now = Date.now(), category) {
   return trades.filter((t) => utcDay(t.entryTime) === day && (!category || (t.category || 'swing') === category)).length;
 }
 
+/** Price at which the stop moves to breakeven (entry + breakevenAtR x risk), or null when that is off / done. */
+export function breakevenLevel(trade) {
+  const beR = Number(trade.breakevenAtR) || 0;
+  if (!beR || trade.breakeven) return null;
+  const risk = Math.abs(trade.entryPrice - (trade.initialStop ?? trade.stop));
+  return trade.side === 'short' ? trade.entryPrice - beR * risk : trade.entryPrice + beR * risk;
+}
+
 /**
- * Has a bracket been hit? Looks at candles that opened after the entry, then the live price.
- * If one candle touches both levels the stop is assumed first (conservative).
- * Returns { exitPrice, reason: 'stop' | 'target' } or null.
+ * Walk the candles that opened after the entry, then the live price, in time order:
+ *   stop hit   -> { exitPrice, reason: 'stop' } ('breakeven' once the stop sits at the entry)
+ *   target hit -> { exitPrice, reason: 'target' }
+ *   price reached the breakeven level -> the stop moves to the entry for the following candles.
+ * If one candle touches stop and target the stop is assumed first (conservative).
+ * Returns { exitPrice, reason, breakevenAt? }, { breakevenAt } when only the stop moved, or null.
  */
-export function checkBracket(trade, candles, price) {
+export function checkBracket(trade, candles, price, now = Date.now()) {
   const short = trade.side === 'short';
-  const stopHit = (lo, hi) => (short ? hi >= trade.stop : lo <= trade.stop);
+  const initialStop = trade.initialStop ?? trade.stop;
+  let beAt = trade.breakeven ? new Date(trade.breakevenAt || trade.entryTime).getTime() : null;
+  let beLevel = breakevenLevel(trade);
+  const stopAt = (t) => (beAt !== null && t > beAt ? trade.entryPrice : initialStop);
+  const stopHit = (lo, hi, stop) => (short ? hi >= stop : lo <= stop);
   const targetHit = (lo, hi) => (short ? lo <= trade.target : hi >= trade.target);
+  const reached = (lo, hi) => beLevel !== null && (short ? lo <= beLevel : hi >= beLevel);
+  const moved = () => (trade.breakeven ? {} : beAt !== null ? { breakevenAt: beAt } : {});
+  const exit = (stop) => ({ exitPrice: stop, reason: stop === trade.entryPrice && beAt !== null ? 'breakeven' : 'stop', ...moved() });
   const entryT = new Date(trade.entryTime).getTime();
-  for (const c of candles) {
-    if (c.time <= entryT) continue;
-    if (stopHit(c.low, c.high)) return { exitPrice: trade.stop, reason: 'stop' };
-    if (targetHit(c.low, c.high)) return { exitPrice: trade.target, reason: 'target' };
+  const steps = candles.filter((c) => c.time > entryT).map((c) => ({ t: c.time, lo: c.low, hi: c.high }));
+  steps.push({ t: now, lo: price, hi: price });
+  for (const { t, lo, hi } of steps) {
+    const stop = stopAt(t);
+    if (stopHit(lo, hi, stop)) return exit(stop);
+    if (targetHit(lo, hi)) return { exitPrice: trade.target, reason: 'target', ...moved() };
+    if (reached(lo, hi)) { beAt = t; beLevel = null; }
   }
-  if (stopHit(price, price)) return { exitPrice: trade.stop, reason: 'stop' };
-  if (targetHit(price, price)) return { exitPrice: trade.target, reason: 'target' };
-  return null;
+  return beAt !== null && !trade.breakeven ? { breakevenAt: beAt } : null;
 }
 
 /** Minutes between Jev reviews of an open trade: 10 for 1m scalps, 20 for 3m / 5m entries, 60 for 15m entries. */
@@ -187,7 +206,7 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
-    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay'];
+    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR'];
     const s = this.state.settings;
     for (const k of allowed) {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
@@ -203,6 +222,10 @@ export class TradingBot {
     s.maxTradesPerDay = Math.min(10, Math.max(0, Math.round(s.maxTradesPerDay)));
     s.maxSwingPerDay = Math.min(10, Math.max(0, Math.round(s.maxSwingPerDay ?? 5)));
     s.maxScalpPerDay = Math.min(10, Math.max(0, Math.round(s.maxScalpPerDay ?? 5)));
+    s.riskReward = Math.min(10, Math.max(0.5, Number(s.riskReward ?? 1)));
+    // Breakeven trigger (in R) must sit before the target; 0 = off.
+    s.breakevenAtR = Math.max(0, Number(s.breakevenAtR ?? 0));
+    if (s.breakevenAtR >= s.riskReward) s.breakevenAtR = 0;
     await this.save();
     return s;
   }
@@ -234,9 +257,24 @@ export class TradingBot {
   async manageOpen(candles, price) {
     const open = (await this.trades()).find((t) => t.status === 'open');
     if (!open) return null;
-    const hit = checkBracket(open, candles, price);
+    const hit = checkBracket(open, candles, price, this.now());
     if (!hit) return null;
+    if (hit.breakevenAt) await this.moveToBreakeven(open, hit.breakevenAt);
+    if (!hit.reason) return null;
     return this.closeTrade(open, hit.exitPrice, hit.reason, candles);
+  }
+
+  /** The trade reached its breakeven level: from here on its stop sits at the entry. */
+  async moveToBreakeven(trade, at) {
+    Object.assign(trade, { breakeven: true, breakevenAt: new Date(at).toISOString(), stop: trade.entryPrice });
+    const trades = await this.trades();
+    const i = trades.findIndex((t) => t.id === trade.id);
+    if (i >= 0) { trades[i] = trade; await this.kv.set('trades', trades); }
+    await this.log({
+      time: new Date(this.now()).toISOString(), price: trade.entryPrice, action: 'HOLD', source: 'bracket', executed: false,
+      tradeId: trade.id,
+      note: `Stop moved to breakeven (${trade.entryPrice}) at +${trade.breakevenAtR}R · target 1:${trade.rr ?? 1} still running`,
+    });
   }
 
   async closeTrade(trade, exitPrice, reason, candles) {
@@ -263,12 +301,12 @@ export class TradingBot {
     }
     const dir = short ? -1 : 1;
     Object.assign(trade, {
-      status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : pnl >= 0 ? 'win' : 'loss',
+      status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : reason === 'breakeven' ? 'breakeven' : pnl >= 0 ? 'win' : 'loss',
       exitTime: nowIso,
       exitPrice,
       exitReason: reason,
       pnl: Number(pnl.toFixed(2)),
-      r: Number(((dir * (exitPrice - trade.entryPrice)) / Math.abs(trade.entryPrice - trade.stop)).toFixed(2)),
+      r: Number(((dir * (exitPrice - trade.entryPrice)) / Math.abs(trade.entryPrice - (trade.initialStop ?? trade.stop))).toFixed(2)),
       ...(note && { note }),
     });
     const trades = await this.trades();
@@ -280,7 +318,7 @@ export class TradingBot {
     await this.kv.set(`shot_${trade.id}`, shots);
     await this.log({
       time: nowIso, price: exitPrice, action: EXIT_ACTION[trade.side || 'long'], source: 'bracket', executed: Boolean(order), tradeId: trade.id,
-      note: `${reason === 'target' ? 'Target hit (+1R)' : reason === 'stop' ? 'Stop hit (-1R)' : reason === 'review' ? 'Closed by Jev risk review' : 'Closed on signal'} · P&L ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`,
+      note: `${reason === 'target' ? `Target hit (+${trade.rr ?? 1}R)` : reason === 'stop' ? 'Stop hit (-1R)' : reason === 'breakeven' ? 'Stopped at breakeven (0R)' : reason === 'review' ? 'Closed by Jev risk review' : 'Closed on signal'} · P&L ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`,
     });
     return trade;
   }
@@ -296,7 +334,8 @@ export class TradingBot {
     const entryPrice = Number(order.price ?? price);
     const notional = Number(order.notional ?? size);
     const qty = Number(order.qty) || (notional * 0.999) / entryPrice;
-    const b = bracketFor(side, entryPrice, setup) || bracketFor(side, price, setup);
+    const rr = this.state.settings.riskReward ?? 1;
+    const b = bracketFor(side, entryPrice, setup, { rr }) || bracketFor(side, price, setup, { rr });
     const plan = { note: `${label} $${notional.toFixed(2)}` };
     const trade = {
       id: `T${this.now()}`,
@@ -310,6 +349,9 @@ export class TradingBot {
       granularity: setup.granularity || this.state.settings.granularity,
       category: setup.category || 'swing',
       stop: b.stop,
+      initialStop: b.stop,
+      rr: b.rr,
+      breakevenAtR: this.state.settings.breakevenAtR || 0,
       target: b.target,
       risk: b.risk,
       ifvg: zoneSummary(setup),
@@ -327,7 +369,8 @@ export class TradingBot {
     await this.kv.set(`shot_${trade.id}`, {
       entry: renderTradeImage({ candles, trade, phase: 'entry', granularity: trade.granularity }),
     });
-    return { trade, order, note: `${plan.note} · SL ${b.stop} · TP ${b.target} (1:1)` };
+    const be = trade.breakevenAtR ? ` · breakeven at +${trade.breakevenAtR}R` : '';
+    return { trade, order, note: `${plan.note} · SL ${b.stop} · TP ${b.target} (1:${b.rr})${be}` };
   }
 
   async log(entry) {
@@ -418,6 +461,8 @@ export class TradingBot {
             recentDecisions: await this.decisions(5),
             ifvg: entry.setup,
             tradesToday: count,
+            riskReward: s.riskReward ?? 1,
+            breakevenAtR: s.breakevenAtR ?? 0,
             maxTradesPerDay: s.maxTradesPerDay,
             openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
           },

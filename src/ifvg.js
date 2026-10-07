@@ -77,19 +77,20 @@ const clampRisk = (risk, entry, { minRiskPct = 0.15, maxRiskPct = 3 }) =>
   Math.min(Math.max(risk, (entry * minRiskPct) / 100), (entry * maxRiskPct) / 100);
 const round2 = (v) => Number(v.toFixed(2));
 
-export function bracketLong(entry, zone, { bufferPct = 0.05, ...lim } = {}) {
+// rr: reward / risk multiple for the target (1 = 1:1, 3 = 1:3).
+export function bracketLong(entry, zone, { bufferPct = 0.05, rr = 1, ...lim } = {}) {
   const rawStop = zone.bottom * (1 - bufferPct / 100);
   if (!(rawStop < entry)) return null;
   const risk = clampRisk(entry - rawStop, entry, lim);
-  return { stop: round2(entry - risk), target: round2(entry + risk), risk: round2(risk), rr: 1 };
+  return { stop: round2(entry - risk), target: round2(entry + risk * rr), risk: round2(risk), rr };
 }
 
-/** 1:1 bracket for a short entry off a bearish IFVG: stop just above the zone top, target the same distance below. */
-export function bracketShort(entry, zone, { bufferPct = 0.05, ...lim } = {}) {
+/** Bracket for a short entry off a bearish IFVG: stop just above the zone top, target rr x that distance below. */
+export function bracketShort(entry, zone, { bufferPct = 0.05, rr = 1, ...lim } = {}) {
   const rawStop = zone.top * (1 + bufferPct / 100);
   if (!(rawStop > entry)) return null;
   const risk = clampRisk(rawStop - entry, entry, lim);
-  return { stop: round2(entry + risk), target: round2(entry - risk), risk: round2(risk), rr: 1 };
+  return { stop: round2(entry + risk), target: round2(entry - risk * rr), risk: round2(risk), rr };
 }
 
 /** side: 'long' | 'short' */

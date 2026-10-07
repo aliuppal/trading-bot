@@ -37,7 +37,7 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   const view = candles.slice(start, endIdx + 1);
   const n = view.length;
 
-  const levels = [trade.stop, trade.target, trade.entryPrice, trade.exitPrice, trade.ifvg?.top, trade.ifvg?.bottom].filter(Number.isFinite);
+  const levels = [trade.stop, trade.initialStop, trade.target, trade.entryPrice, trade.exitPrice, trade.ifvg?.top, trade.ifvg?.bottom].filter(Number.isFinite);
   let lo = Math.min(...view.map((c) => c.low), ...levels);
   let hi = Math.max(...view.map((c) => c.high), ...levels);
   const padY = (hi - lo) * 0.06 || hi * 0.001;
@@ -98,7 +98,8 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
     parts.push(`<rect x="${f1(ex)}" y="${f1(top)}" width="${span}" height="${f1(Math.abs(y(a) - y(b)))}" fill="${col}" fill-opacity=".16"/>`);
   };
   box(trade.entryPrice, trade.target, C.up);
-  box(trade.entryPrice, trade.stop, C.down);
+  const sl = trade.initialStop ?? trade.stop; // original stop distance
+  box(trade.entryPrice, sl, C.down);
   const level = (p, col, name, dash = '') => {
     const ly = f1(y(p));
     parts.push(`<line x1="${f1(ex)}" x2="${f1(exEnd)}" y1="${ly}" y2="${ly}" stroke="${col}" stroke-width="1.4"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
@@ -107,7 +108,8 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   };
   level(trade.target, C.up, 'TP');
   level(trade.entryPrice, C.entry, 'IN', '4 3');
-  level(trade.stop, C.down, 'SL');
+  level(sl, C.down, 'SL');
+  if (trade.breakeven) level(trade.entryPrice, C.entry, 'BE', '2 2');
 
   // entry marker
   parts.push(short
@@ -126,13 +128,13 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   const when = new Date(phase === 'exit' && exitT ? exitT : entryT).toISOString().replace('T', ' ').slice(0, 16);
   let right = 'ENTRY';
   if (phase === 'exit') {
-    const res = trade.status === 'win' ? 'TARGET HIT' : trade.status === 'loss' ? 'STOPPED OUT' : 'CLOSED';
+    const res = trade.status === 'win' ? 'TARGET HIT' : trade.status === 'loss' ? 'STOPPED OUT' : trade.status === 'breakeven' ? 'BREAKEVEN' : 'CLOSED';
     right = `${res}  ${trade.pnl >= 0 ? '+' : '-'}$${money(Math.abs(trade.pnl || 0))}`;
   }
   const rightCol = phase === 'exit' ? (trade.pnl >= 0 ? C.up : C.down) : C.cyan;
   parts.push(`<text x="${PAD.l}" y="22" fill="${C.text}" font-size="12" font-weight="600" ${MONO}>BTC-USD · ${tf} · ${short ? 'SHORT' : 'LONG'} · ${label(when)} UTC</text>`);
   parts.push(`<text x="${W - 12}" y="22" fill="${rightCol}" font-size="12" font-weight="600" text-anchor="end" ${MONO}>${label(right)}</text>`);
-  parts.push(`<text x="${PAD.l}" y="${H - 8}" fill="${C.axis}" font-size="10" ${MONO}>R:R 1:1 · risk $${money(Math.abs(trade.entryPrice - trade.stop))}/BTC</text>`);
+  parts.push(`<text x="${PAD.l}" y="${H - 8}" fill="${C.axis}" font-size="10" ${MONO}>R:R 1:${trade.rr ?? 1} · risk $${money(Math.abs(trade.entryPrice - sl))}/BTC${trade.breakeven ? ` · stop moved to breakeven at +${trade.breakevenAtR}R` : ''}</text>`);
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Trade chart (${label(phase)})">${parts.join('')}</svg>`;
 }

@@ -122,8 +122,9 @@ function drawChart() {
     ctx.fillStyle = 'rgba(16, 185, 129, .18)'; // reward
     ctx.fillRect(x0, Math.min(yIn, y(open.target)), x1 - x0, Math.abs(y(open.target) - yIn));
     ctx.fillStyle = 'rgba(244, 63, 94, .18)'; // risk
-    ctx.fillRect(x0, Math.min(yIn, y(open.stop)), x1 - x0, Math.abs(y(open.stop) - yIn));
-    [[open.target, css('--green'), 'TP'], [open.entryPrice, css('--text-2'), 'IN'], [open.stop, css('--red'), 'SL']].forEach(([p, col, name]) => {
+    const sl = open.initialStop ?? open.stop; // risk box keeps the original stop distance
+    ctx.fillRect(x0, Math.min(yIn, y(sl)), x1 - x0, Math.abs(y(sl) - yIn));
+    [[open.target, css('--green'), 'TP'], [open.entryPrice, css('--text-2'), 'IN'], [open.stop, css('--red'), open.breakeven ? 'BE' : 'SL']].forEach(([p, col, name]) => {
       ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.setLineDash(name === 'IN' ? [4, 3] : []);
       ctx.beginPath(); ctx.moveTo(x0, y(p)); ctx.lineTo(x1, y(p)); ctx.stroke();
       ctx.setLineDash([]);
@@ -216,10 +217,10 @@ function renderOpenTrade(t) {
   const short = t.side === 'short';
   const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
   const upnl = (short ? t.entryPrice - price : price - t.entryPrice) * t.qty;
-  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> ${fmtTime(t.entryTime)}</span>
+  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> <span class="pill">1:${t.rr ?? 1}</span>${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
       <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
     <div class="ot-levels">
-      <div><span>Stop</span><em class="down">${usd(t.stop)}</em></div>
+      <div><span>${t.breakeven ? 'Stop · BE' : 'Stop'}</span><em class="${t.breakeven ? '' : 'down'}">${usd(t.stop)}</em></div>
       <div><span>Entry</span>${usd(t.entryPrice)}</div>
       <div><span>Target</span><em class="up">${usd(t.target)}</em></div>
     </div>
@@ -233,6 +234,8 @@ async function loadStatus() {
     status = s;
     $('aiBadge').textContent = `AI: ${s.ai}`;
     $('brokerBadge').textContent = `Broker: ${s.broker}`;
+    $('ruleRR').textContent = `1 : ${s.settings.riskReward ?? 1}`;
+    $('ruleBE').textContent = s.settings.breakevenAtR ? `stop to entry at +${s.settings.breakevenAtR}R` : 'off';
     $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;
     $('botDot').className = `dot${s.running ? ' on' : ''}`;
     $('botState').textContent = s.busy ? 'Thinking…' : s.running ? 'Running' : 'Stopped';
@@ -315,7 +318,7 @@ function getShots(t) {
 // Snapshots are base64 data URIs (older ones may be raw SVG markup from our own server).
 const shotHtml = (s, alt) => (!s ? '' : s.startsWith('data:image/') ? `<img src="${esc(s)}" alt="${esc(alt)}" loading="lazy">` : s);
 
-const RESULT = { open: 'OPEN', win: 'WIN', loss: 'LOSS' };
+const RESULT = { open: 'OPEN', win: 'WIN', loss: 'LOSS', breakeven: 'BE' };
 async function loadTrades() {
   try {
     trades = await api('/api/trades');

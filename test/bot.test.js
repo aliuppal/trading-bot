@@ -292,3 +292,62 @@ test('swing limit reached: swing setups are skipped, scalps still allowed', asyn
   assert.equal(calls, 0);
   assert.equal((await bot.status()).swingToday, 5);
 });
+
+const longTrade = (o = {}) => ({
+  side: 'long', entryTime: new Date(0).toISOString(), entryPrice: 100, stop: 90, initialStop: 90, target: 130,
+  rr: 3, breakevenAtR: 1, ...o,
+});
+
+test('breakeven: stop moves to entry at +1R, trade keeps running toward 1:3', () => {
+  const t = longTrade();
+  // candle 1 reaches +1R (110) without touching the stop
+  const r = checkBracket(t, [{ time: 1000, low: 99, high: 111 }], 105, 2000);
+  assert.deepEqual(r, { breakevenAt: 1000 });
+});
+
+test('breakeven: after the move, a return to entry closes at breakeven (0R)', () => {
+  const t = longTrade({ breakeven: true, breakevenAt: new Date(1000).toISOString(), stop: 100 });
+  const r = checkBracket(t, [{ time: 1000, low: 99, high: 111 }, { time: 2000, low: 99.5, high: 104 }], 101, 3000);
+  assert.equal(r.reason, 'breakeven');
+  assert.equal(r.exitPrice, 100);
+});
+
+test('breakeven: price running on to the 1:3 target closes as a win', () => {
+  const t = longTrade();
+  const r = checkBracket(t, [{ time: 1000, low: 99, high: 111 }, { time: 2000, low: 108, high: 131 }], 129, 3000);
+  assert.equal(r.reason, 'target');
+  assert.equal(r.exitPrice, 130);
+  assert.equal(r.breakevenAt, 1000);
+});
+
+test('breakeven: a dip below entry BEFORE the trigger is not judged against the moved stop', () => {
+  const t = longTrade();
+  // candle 1 dips to 95 (below entry, above stop) and only later candle 2 reaches +1R
+  const r = checkBracket(t, [{ time: 1000, low: 95, high: 104 }, { time: 2000, low: 101, high: 111 }], 106, 3000);
+  assert.deepEqual(r, { breakevenAt: 2000 });
+});
+
+test('1:3 bracket with breakeven at +1R end to end: open, move to BE, stop out at entry', async () => {
+  const s = setup();
+  await s.bot.updateSettings({ riskReward: 3, breakevenAtR: 1 });
+  await s.bot.runOnce();
+  const [t] = await s.bot.trades();
+  const risk = t.entryPrice - t.stop;
+  assert.equal(t.rr, 3);
+  assert.ok(Math.abs((t.target - t.entryPrice) - 3 * risk) < 0.05);
+
+  // +1R candle -> breakeven
+  s.candles.push({ time: NOW + 60000, open: t.entryPrice, high: t.entryPrice + risk + 1, low: t.entryPrice + 1, close: t.entryPrice + risk, volume: 1 });
+  s.bot.now = () => NOW + 120000;
+  assert.equal(await s.bot.manageOpen(s.candles, t.entryPrice + risk), null);
+  const [moved] = await s.bot.trades();
+  assert.equal(moved.breakeven, true);
+  assert.equal(moved.stop, t.entryPrice);
+
+  // back to entry -> closed at breakeven
+  s.candles.push({ time: NOW + 180000, open: t.entryPrice + risk, high: t.entryPrice + risk, low: t.entryPrice - 1, close: t.entryPrice, volume: 1 });
+  s.bot.now = () => NOW + 240000;
+  const closed = await s.bot.manageOpen(s.candles, t.entryPrice);
+  assert.equal(closed.status, 'breakeven');
+  assert.equal(closed.r, 0);
+});

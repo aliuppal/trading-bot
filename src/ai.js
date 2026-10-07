@@ -16,7 +16,7 @@ const RESPONSE_SCHEMA = {
 };
 
 export function buildPrompt({
-  indicators, account, recentCandles, granularity, recentDecisions = [], ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review,
+  indicators, account, recentCandles, granularity, recentDecisions = [], ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0,
 }) {
   const candleLines = recentCandles
     .map((c) => `${new Date(c.time).toISOString()} O:${c.open} H:${c.high} L:${c.low} C:${c.close} V:${Math.round(c.volume)}`)
@@ -35,7 +35,7 @@ Candle size: ${granularity / 60} minutes.
 Strategy: Inverse Fair Value Gap (IFVG).
 - Bullish IFVG (a bearish fair value gap price closed back above, now support) = LONG setup -> answer BUY.
 - Bearish IFVG (a bullish fair value gap price closed back below, now resistance) = SHORT setup -> answer SELL.
-Every trade is a 1:1 bracket: stop just beyond the IFVG zone, target the same distance on the other side of entry.
+Every trade has a stop just beyond the IFVG zone and a target ${riskReward}x that distance on the other side (risk:reward 1:${riskReward})${breakevenAtR ? `; the stop moves to breakeven at +${breakevenAtR}R` : ''}.
 Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
 Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
 Higher-timeframe confirmation: ${ifvg?.htf ? `price tapped a ${ifvg.htf.tf} ${ifvg.htf.type} FVG (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none'}
@@ -197,11 +197,12 @@ const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
 
 /** Flat state object for Jev: indicators, account and recent closes. */
-export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0 }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
     setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
-    risk_reward: '1:1',
+    risk_reward: `1:${riskReward}`,
+    breakeven_at_r: breakevenAtR || null,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
@@ -234,12 +235,12 @@ const JEV_QUESTIONS = {
   action: {
     type: 'choice',
     instructions: 'Decide the trade for a disciplined Bitcoin intraday trader using the Inverse Fair Value Gap (IFVG) model '
-      + 'on a paper account. Bullish IFVG = long setup, bearish IFVG = short setup. Every trade uses a 1:1 bracket: '
-      + 'stop just beyond the IFVG zone, target the same distance on the other side of entry. '
+      + 'on a paper account. Bullish IFVG = long setup, bearish IFVG = short setup. Every trade uses a fixed bracket: '
+      + 'stop just beyond the IFVG zone, target at the risk_reward multiple on the other side of entry. '
       + 'At most max_trades_per_day trades per day. Only take the setup when the IFVG and momentum agree; otherwise HOLD.',
     criteria: {
-      BUY: 'A bullish IFVG is holding as support and price should reach a 1:1 target above before the stop (go long, or close an open short)',
-      SELL: 'A bearish IFVG is holding as resistance and price should reach a 1:1 target below before the stop (go short, or close an open long)',
+      BUY: 'A bullish IFVG is holding as support and price should reach the target above before the stop (go long, or close an open short)',
+      SELL: 'A bearish IFVG is holding as resistance and price should reach the target below before the stop (go short, or close an open long)',
       HOLD: 'Signals are mixed or weak; do nothing',
     },
   },
