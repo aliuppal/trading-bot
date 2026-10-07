@@ -31,7 +31,7 @@ The bot trades the **Inverse Fair Value Gap (IFVG)** model with **Jev** making t
 | Tap | Bullish setups need price to tap a **bullish** HTF FVG, bearish setups a **bearish** one (within the last 3 hours) |
 | Entry | A fresh IFVG in the same direction on **15m, 5m or 3m**, confirmed on a closed candle, inverted within the last **3-7** candles (`IFVG_MAX_AGE`, default 5). 3m entries need a **1h** FVG tap |
 | Priority | 15m first. A 5m (or 3m) IFVG waits if a 15m (or 5m) IFVG in the same direction is still forming; otherwise it is taken directly |
-| Review | While a trade is open, Jev reviews it every **20 min** (3m / 5m entries) or **60 min** (15m entries) and may close it early (HOLD or CLOSE) |
+| Review | While a trade is open, Jev reviews it every **30 min** (3m / 5m entries) or **60 min** (15m entries) and may close it early (HOLD or CLOSE) |
 
 The risk/reward box on the chart and in the snapshots grows with the trade until the stop or target is hit.
 

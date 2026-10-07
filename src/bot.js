@@ -88,10 +88,10 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
   return beAt !== null && !trade.breakeven ? { breakevenAt: beAt } : null;
 }
 
-/** Minutes between Jev reviews of an open trade: 10 for 1m scalps, 20 for 3m / 5m entries, 60 for 15m entries. */
+/** Minutes between Jev reviews of an open trade: 10 for 1m scalps, 30 for 3m / 5m entries, 60 for 15m entries. */
 export function reviewMinutes(trade) {
   const g = trade.granularity || 900;
-  return g <= 60 ? 10 : g <= 300 ? 20 : 60;
+  return g <= 60 ? 10 : g <= 300 ? 30 : 60;
 }
 
 /** Is the open trade due for a Jev review (period counted from the last review, or from the entry)? */
