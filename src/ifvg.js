@@ -42,10 +42,11 @@ function invertsStrictly(fvg, candles, j, { marginPct, displacement }) {
  * Find every FVG in the candles and whether/when it was inverted.
  * candles: oldest-first { time, open, high, low, close }.
  * minGapPct: ignore gaps smaller than this % of price (noise filter).
- * strict: entry rule (see invertsStrictly) and the inversion must come within maxGapAge candles of the gap;
+ * strict: entry rule (see invertsStrictly) and the inversion must come within maxGapAge candles of the gap
+ *         (counted from the gap's middle candle);
  *         otherwise any close beyond the far edge counts (used for higher-timeframe zones).
  */
-export function findFvgs(candles, { minGapPct = 0.03, strict = false, marginPct = 20, maxGapAge = 30, displacement = false } = {}) {
+export function findFvgs(candles, { minGapPct = 0.03, strict = false, marginPct = 20, maxGapAge = 7, displacement = false } = {}) {
   const out = [];
   for (let i = 2; i < candles.length; i++) {
     const a = candles[i - 2], c = candles[i];
@@ -88,6 +89,7 @@ export function findIfvgs(candles, opts) {
       invertedAt: f.invertedAt,
       formedIndex: f.index,
       invertedIndex: f.invertedIndex,
+      formationCandles: f.invertedIndex - f.index,
       displacement: f.displacement,
     }))
     .sort((x, y) => x.invertedIndex - y.invertedIndex);
@@ -97,11 +99,15 @@ export function findIfvgs(candles, opts) {
  * The freshest tradeable IFVG: inverted within the last `maxAge` candles and price still respecting it
  * (above the zone bottom for bullish, below the zone top for bearish). Returns null when there is none.
  */
-export function latestSetup(candles, { maxAge = 3, minGapPct = 0.03, displacement = false } = {}) {
+/**
+ * maxAge: enter only within this many candles of the inversion.
+ * maxGapAge: the whole formation (gap formed -> inverted) must take at most this many candles.
+ */
+export function latestSetup(candles, { maxAge = 2, maxGapAge = 7, minGapPct = 0.03, displacement = false } = {}) {
   if (candles.length < 5) return null;
   const last = candles.length - 1;
   const price = candles[last].close;
-  const fresh = findIfvgs(candles, { minGapPct, strict: true, displacement })
+  const fresh = findIfvgs(candles, { minGapPct, strict: true, displacement, maxGapAge })
     .filter((z) => last - z.invertedIndex <= maxAge)
     .filter((z) => (z.direction === 'bullish' ? price > z.bottom : price < z.top));
   const z = fresh.at(-1);
@@ -215,7 +221,7 @@ export function closedCandles(candles, seconds, now = Date.now()) {
  * beyond a recent active FVG (above a bearish FVG's top for bullish, below a bullish FVG's bottom for bearish),
  * so the inversion will be confirmed if the candle closes there. Returns the zone or null.
  */
-export function formingIfvg(candles, seconds, direction, now = Date.now(), { minGapPct = 0.03, lookback = 30, marginPct = 20 } = {}) {
+export function formingIfvg(candles, seconds, direction, now = Date.now(), { minGapPct = 0.03, lookback = 7, marginPct = 20 } = {}) {
   const last = candles.at(-1);
   if (!last || now >= last.time + seconds * 1000) return null; // nothing forming
   const closed = candles.slice(0, -1);

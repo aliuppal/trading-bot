@@ -35,8 +35,8 @@ export const config = {
     // Per-category daily limits (both also count toward maxTradesPerDay)
     maxSwingPerDay: Math.min(10, num(process.env.MAX_SWING_PER_DAY, 5)),
     maxScalpPerDay: Math.min(10, num(process.env.MAX_SCALP_PER_DAY, 5)),
-    // IFVG must have inverted within the last N entry candles (3-7)
-    ifvgMaxAge: Math.min(7, Math.max(3, num(process.env.IFVG_MAX_AGE, 5))),
+    // IFVG formation: gap formed -> inverted within N candles (3-7)
+    ifvgMaxAge: Math.min(7, Math.max(3, num(process.env.IFVG_MAX_AGE, 7))),
     // Entry needs a tap of a same-direction 1h/2h/4h FVG first
     requireHtfTap: process.env.REQUIRE_HTF_TAP !== 'false',
     // all = 3m + 5m + 15m entries; or 180 / 300 / 900 for one timeframe

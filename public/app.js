@@ -245,7 +245,7 @@ async function loadStatus() {
     $('aiBadge').textContent = `AI: ${s.ai}`;
     $('brokerBadge').textContent = `Broker: ${s.broker}`;
     $('ruleLev').textContent = s.broker === 'binance' ? `Jev decides, max ${s.settings.maxLeverage ?? 5}x` : '1x (simulator)';
-    $('ruleInv').textContent = `close ≥20% through the gap, body across it, gap ≤30 candles old${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
+    $('ruleInv').textContent = `gap → inversion within ${s.settings.ifvgMaxAge ?? 7} candles, close ≥20% through it, entry ≤2 candles after${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
     $('ruleRR').textContent = `1 : ${s.settings.riskReward ?? 1}`;
     $('ruleBE').textContent = s.settings.breakevenAtR ? `stop to entry at +${s.settings.breakevenAtR}R` : 'off';
     $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;

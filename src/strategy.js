@@ -6,7 +6,8 @@
 //   SCALP  zone: active FVG on 5m / 15m / 30m           entry: IFVG on 1m
 //
 // In both, bullish setups need a tap of a bullish FVG (demand) and bearish setups a bearish one (supply),
-// and the entry IFVG must be confirmed on a closed candle, inverted within the last `ifvgMaxAge` candles (3-7).
+// and the entry IFVG must be confirmed on a closed candle: gap formed -> inverted within `ifvgMaxAge` candles (3-7),
+// entry within 2 candles of the inversion.
 import { activeFvgs, closedCandles, findHtfTap, formingIfvg, latestSetup } from './ifvg.js';
 
 export const ENTRY_TIMEFRAMES = { all: [180, 300, 900], both: [300, 900], 180: [180], 300: [300], 900: [900] };
@@ -41,9 +42,11 @@ export async function loadHtfZones(market, tfs = Object.keys(ZONE_TFS)) {
 async function evaluate(market, g, category, zones, settings, now) {
   const candles = await market.getCandles(g, 200);
   const r = { candles, note: null, setup: null };
-  r.forming = { bullish: formingIfvg(candles, g, 'bullish', now), bearish: formingIfvg(candles, g, 'bearish', now) };
+  const lookback = settings.ifvgMaxAge ?? 7;
+  r.forming = { bullish: formingIfvg(candles, g, 'bullish', now, { lookback }), bearish: formingIfvg(candles, g, 'bearish', now, { lookback }) };
   const closed = closedCandles(candles, g, now);
-  const s = latestSetup(closed, { maxAge: settings.ifvgMaxAge ?? 5, displacement: settings.requireDisplacement === true });
+  const formation = settings.ifvgMaxAge ?? 7; // gap formed -> inverted within 3-7 candles
+  const s = latestSetup(closed, { maxAge: 2, maxGapAge: formation, displacement: settings.requireDisplacement === true });
   const tag = `${category} ${tfLabel(g)}`;
   if (!s) { r.note = `${tag}: no fresh IFVG`; return r; }
   let htf = null;

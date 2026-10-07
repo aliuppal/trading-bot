@@ -75,3 +75,18 @@ test('displacement (optional): required only when switched on', async () => {
   assert.equal(latestSetup(weak, { displacement: true }), null);
   assert.ok(latestSetup(weak, { displacement: false }));
 });
+
+test('IFVG formation must take at most 3-7 candles (gap -> inversion)', async () => {
+  const { ifvgCandles } = await import('./helpers.js');
+  const build = (quiet) => {
+    const c = ifvgCandles(Date.UTC(2026, 9, 7, 12));
+    const inv = c.pop();
+    for (let i = 0; i < quiet; i++) c.push({ time: c.at(-1).time + 900000, open: 59100, high: 59200, low: 59000, close: 59100, volume: 1 });
+    c.push({ ...inv, time: c.at(-1).time + 900000 });
+    return c;
+  };
+  // middle candle -> inversion: 2 + quiet candles
+  assert.equal(latestSetup(build(4), { maxGapAge: 7 })?.formationCandles, 6);
+  assert.equal(latestSetup(build(6), { maxGapAge: 7 }), null); // 8 candles: too slow
+  assert.equal(latestSetup(build(4), { maxGapAge: 5 }), null); // 6 candles with a 5-candle limit
+});
