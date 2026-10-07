@@ -108,9 +108,26 @@ const SIDE_FOR = { bullish: 'long', bearish: 'short' };
 const ENTRY_ACTION = { long: 'BUY', short: 'SELL' };
 const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 
+const tfName = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
+const hhmm = (t) => new Date(t).toISOString().slice(11, 16);
+const px = (v) => Math.round(v).toLocaleString('en-US');
+
+/**
+ * Plain-language reason a trade was taken, e.g.
+ * "SCALP short · tapped 15m bearish FVG 84,190-84,265 at 07:58 UTC -> 1m bearish IFVG 84,150-84,180 (inverted 2 candles ago)".
+ */
+export function describeSetup(setup, side) {
+  if (!setup) return '';
+  const parts = [`${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
+  if (setup.htf) parts.push(`tapped ${setup.htf.tf} ${setup.htf.type} FVG ${px(setup.htf.bottom)}-${px(setup.htf.top)}${setup.htf.tappedAt ? ` at ${hhmm(setup.htf.tappedAt)} UTC` : ''}`);
+  const age = setup.ageCandles === 0 ? 'on the last closed candle' : `${setup.ageCandles} candle${setup.ageCandles === 1 ? '' : 's'} ago`;
+  parts.push(`${setup.htf ? '-> ' : ''}${setup.granularity ? tfName(setup.granularity) : ''} ${setup.direction} IFVG ${px(setup.bottom)}-${px(setup.top)} (inverted ${age}${setup.displacement ? ', displacement candle' : ''})`);
+  return parts.join(' · ').replace(' · -> ', ' -> ');
+}
+
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: Number(z.top.toFixed(2)), bottom: Number(z.bottom.toFixed(2)),
-  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, granularity: z.granularity, category: z.category,
+  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, granularity: z.granularity, category: z.category, displacement: z.displacement,
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
   }),
@@ -214,6 +231,7 @@ export class TradingBot {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
     }
     if (patch.requireHtfTap !== undefined) s.requireHtfTap = patch.requireHtfTap === true || patch.requireHtfTap === 'true';
+    if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
     if (patch.scalpEnabled !== undefined) s.scalpEnabled = patch.scalpEnabled === true || patch.scalpEnabled === 'true';
     if (['all', 'both', '180', '300', '900'].includes(String(patch.entryTimeframes))) s.entryTimeframes = String(patch.entryTimeframes);
     s.ifvgMaxAge = Math.min(7, Math.max(3, Math.round(s.ifvgMaxAge ?? 5)));
@@ -372,6 +390,7 @@ export class TradingBot {
       confidence: decision.confidence,
       source: decision.source,
       reasoning: decision.reasoning,
+      setupReason: `${describeSetup(setup, side)} · Jev ${decision.action} ${Math.round((decision.confidence || 0) * 100)}%${leverage > 1 ? ` · ${leverage}x` : ''}`,
       orderId: order.id,
     };
     let trades = await this.trades();
@@ -384,7 +403,7 @@ export class TradingBot {
       entry: renderTradeImage({ candles, trade, phase: 'entry', granularity: trade.granularity }),
     });
     const be = trade.breakevenAtR ? ` · breakeven at +${trade.breakevenAtR}R` : '';
-    return { trade, order, note: `${plan.note} · SL ${b.stop} · TP ${b.target} (1:${b.rr})${be}` };
+    return { trade, order, note: `${trade.setupReason} | ${plan.note} · SL ${b.stop} · TP ${b.target} (1:${b.rr})${be}` };
   }
 
   async log(entry) {

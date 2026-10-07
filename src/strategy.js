@@ -43,7 +43,7 @@ async function evaluate(market, g, category, zones, settings, now) {
   const r = { candles, note: null, setup: null };
   r.forming = { bullish: formingIfvg(candles, g, 'bullish', now), bearish: formingIfvg(candles, g, 'bearish', now) };
   const closed = closedCandles(candles, g, now);
-  const s = latestSetup(closed, { maxAge: settings.ifvgMaxAge ?? 5 });
+  const s = latestSetup(closed, { maxAge: settings.ifvgMaxAge ?? 5, displacement: settings.requireDisplacement === true });
   const tag = `${category} ${tfLabel(g)}`;
   if (!s) { r.note = `${tag}: no fresh IFVG`; return r; }
   let htf = null;

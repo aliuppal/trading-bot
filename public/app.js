@@ -72,15 +72,23 @@ function drawChart() {
   }
 
   // 1h / 2h / 4h FVG zones (full width, behind everything)
+  const labelled = [];
   htfZones.forEach((z) => {
     if (z.top < lo || z.bottom > hi) return;
     const bull = z.type === 'bullish';
     const x0 = z.readyAt > t0 ? x(idxAt(z.readyAt)) - step / 2 : pad.l;
-    ctx.fillStyle = bull ? 'rgba(16, 185, 129, .07)' : 'rgba(244, 63, 94, .07)';
-    ctx.fillRect(x0, y(z.top), w - pad.r - x0, Math.max(1, y(z.bottom) - y(z.top)));
-    ctx.fillStyle = bull ? 'rgba(52, 211, 153, .75)' : 'rgba(251, 113, 133, .75)';
-    ctx.fillText(`${z.tf} FVG`, x0 + 4, y(z.top) + 11);
+    const top = y(Math.min(z.top, hi)), bot = y(Math.max(z.bottom, lo));
+    ctx.fillStyle = bull ? 'rgba(16, 185, 129, .05)' : 'rgba(244, 63, 94, .05)';
+    ctx.fillRect(x0, top, w - pad.r - x0, Math.max(1, bot - top));
+    ctx.strokeStyle = bull ? 'rgba(52, 211, 153, .35)' : 'rgba(251, 113, 133, .35)';
+    ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(w - pad.r, top); ctx.moveTo(x0, bot); ctx.lineTo(w - pad.r, bot); ctx.stroke();
+    const ly = top + 11;
+    const near = labelled.find((l) => Math.abs(l.y - ly) < 12 && Math.abs(l.x - x0) < 70);
+    const text = `${z.tf} ${bull ? 'bull' : 'bear'} FVG`;
+    if (near) { near.text += ` · ${z.tf}`; return; }
+    labelled.push({ x: x0 + 4, y: ly, text, color: bull ? 'rgba(52, 211, 153, .85)' : 'rgba(251, 113, 133, .85)' });
   });
+  labelled.forEach((l) => { ctx.fillStyle = l.color; ctx.fillText(l.text, l.x, l.y); });
 
   // IFVG zones
   ifvgs.forEach((z) => {
@@ -181,6 +189,7 @@ async function loadMarket() {
     ifvgs = data.ifvgs || [];
     htfZones = data.htfZones || [];
     renderIndicators(data.indicators);
+    $('chartUpdated').textContent = `updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     state.textContent = candles.length ? '' : 'No candle data returned for this timeframe.';
     drawChart();
   } catch (e) {
@@ -224,7 +233,8 @@ function renderOpenTrade(t) {
       <div><span>Entry</span>${usd(t.entryPrice)}</div>
       <div><span>Target</span><em class="up">${usd(t.target)}</em></div>
     </div>
-    <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>`;
+    <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
+    ${t.setupReason ? `<div class="ot-reason">${esc(t.setupReason)}</div>` : ''}`;
 }
 
 let settingsLoaded = false;
@@ -235,6 +245,7 @@ async function loadStatus() {
     $('aiBadge').textContent = `AI: ${s.ai}`;
     $('brokerBadge').textContent = `Broker: ${s.broker}`;
     $('ruleLev').textContent = s.broker === 'binance' ? `Jev decides, max ${s.settings.maxLeverage ?? 5}x` : '1x (simulator)';
+    $('ruleInv').textContent = `close ≥20% through the gap, body across it, gap ≤30 candles old${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
     $('ruleRR').textContent = `1 : ${s.settings.riskReward ?? 1}`;
     $('ruleBE').textContent = s.settings.breakevenAtR ? `stop to entry at +${s.settings.breakevenAtR}R` : 'off';
     $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;
@@ -328,7 +339,7 @@ async function loadTrades() {
     $('tradeCount').textContent = trades.length ? ` ${trades.length}${closed.length ? ` · ${Math.round((wins / closed.length) * 100)}% win` : ''}` : '';
     const body = $('trades').querySelector('tbody');
     if (!trades.length) {
-      body.innerHTML = '<tr><td colspan="12" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
+      body.innerHTML = '<tr><td colspan="13" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
       drawChart();
       renderPnl();
       return;
@@ -343,7 +354,8 @@ async function loadTrades() {
       <td class="r">${t.exitPrice ? usd(t.exitPrice) : '—'}</td>
       <td class="r">${t.r !== undefined ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
       <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>` : '—'}</td>
-      <td class="src">${esc(t.source || '')}</td></tr>`).join('');
+      <td class="src">${esc(t.source || '')}</td>
+      <td class="reason">${esc(t.setupReason || '')}</td></tr>`).join('');
     // thumbnails for the most recent trades
     trades.slice(0, 25).forEach(async (t, i) => {
       const shots = await getShots(t);
@@ -354,7 +366,7 @@ async function loadTrades() {
     drawChart();
     renderPnl();
   } catch (e) {
-    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="12" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
+    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="13" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -447,7 +459,7 @@ async function openShot(t) {
     ['P&L', t.pnl !== undefined ? signedUsd(t.pnl) : '—'], ['Confidence', t.confidence ?? '—'],
     ['IFVG zone', t.ifvg ? `${usd(t.ifvg.bottom)} – ${usd(t.ifvg.top)}` : '—'],
   ].map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');
-  $('shotNote').textContent = t.reasoning || '';
+  $('shotNote').textContent = [t.setupReason, t.reasoning].filter(Boolean).join(' — ');
   $('shotModal').hidden = false;
   $('shotClose').focus();
   const shots = await getShots(t);
@@ -532,4 +544,4 @@ window.addEventListener('resize', drawChart);
 
 refreshAll();
 setInterval(refreshAll, 15000);
-setInterval(loadMarket, 60000);
+setInterval(loadMarket, 15000); // keep the chart live (new candles, open trade)

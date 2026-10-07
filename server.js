@@ -51,7 +51,7 @@ app.get('/api/market', wrap(async (req, res) => {
   const htfZones = (await loadHtfZones(market, ['30m', '1h', '2h', '4h']).catch(() => []))
     .filter((z) => ['30m', '1h', '2h', '4h'].includes(z.tf) && Math.abs((z.top + z.bottom) / 2 - price) / price < 0.03)
     .slice(-12);
-  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles).slice(-6), htfZones });
+  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles, { strict: true }).slice(-6), htfZones });
 }));
 app.get('/api/account', wrap(async (req, res) => res.json(await broker.getAccount())));
 app.get('/api/orders', wrap(async (req, res) => res.json(await broker.getOrders(100))));

@@ -45,3 +45,33 @@ test('bearish IFVG is a short setup with a 1:1 bracket above the zone', async ()
   assert.ok(Math.abs((b.stop - 59900) - (59900 - b.target)) < 0.02);
   assert.equal(bracketShort(61000, z), null);
 });
+
+test('strict inversion: a weak close just through the gap does not count', async () => {
+  const { ifvgCandles } = await import('./helpers.js');
+  const c = ifvgCandles(Date.UTC(2026, 9, 7, 12));
+  // gap 59,500-59,950 (height 450): a close of 59,960 is beyond the top by only 10 (< 20% = 90)
+  c[c.length - 1] = { ...c.at(-1), close: 59960, high: 59990 };
+  assert.equal(latestSetup(c), null);
+});
+
+test('strict inversion: a gap older than 30 candles is ignored', async () => {
+  const { ifvgCandles } = await import('./helpers.js');
+  const c = ifvgCandles(Date.UTC(2026, 9, 7, 12));
+  const inv = c.pop();
+  const H = 900000;
+  // 35 quiet candles below the gap before the inversion
+  for (let i = 0; i < 35; i++) c.push({ time: c.at(-1).time + H, open: 59100, high: 59200, low: 59000, close: 59100, volume: 1 });
+  c.push({ ...inv, time: c.at(-1).time + H });
+  assert.equal(latestSetup(c, { maxAge: 5 }), null);
+});
+
+test('displacement (optional): required only when switched on', async () => {
+  const { ifvgCandles } = await import('./helpers.js');
+  const c = ifvgCandles(Date.UTC(2026, 9, 7, 12));
+  assert.equal(latestSetup(c, { displacement: true })?.displacement, true); // 1,000 body vs ~10 average
+  const weak = c.map((x) => ({ ...x }));
+  // make recent candles as big as the inversion candle: no longer a displacement
+  for (let i = weak.length - 21; i < weak.length - 4; i++) weak[i] = { ...weak[i], open: 59000, close: 60000, high: 60010, low: 58990 };
+  assert.equal(latestSetup(weak, { displacement: true }), null);
+  assert.ok(latestSetup(weak, { displacement: false }));
+});

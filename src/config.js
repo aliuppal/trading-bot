@@ -43,6 +43,8 @@ export const config = {
     entryTimeframes: process.env.ENTRY_TIMEFRAMES || 'all',
     // 1m scalp entries off 5m / 15m / 30m FVG taps
     scalpEnabled: process.env.SCALP_ENABLED !== 'false',
+    // Entry IFVG must be broken by a displacement candle (big body vs. recent candles)
+    requireDisplacement: process.env.REQUIRE_DISPLACEMENT === 'true',
     // Target = riskReward x stop distance (1 = 1:1, 3 = 1:3)
     riskReward: num(process.env.RISK_REWARD, 1),
     // Move the stop to the entry once price reaches +N R (0 = off)
