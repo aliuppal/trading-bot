@@ -207,6 +207,23 @@ td.empty { padding: 32px 16px; text-align: center; color: var(--dim); }
 td.empty b { display: block; margin-bottom: 4px; font: 600 14px/20px var(--font-display); color: var(--text-2); }
 #trades td { vertical-align: middle; }
 
+/* P&L by period */
+.pnl-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--line-soft); }
+.pnl-summary > div { padding: 14px 16px; border-right: 1px solid var(--line-soft); min-width: 0; }
+.pnl-summary > div:last-child { border-right: 0; }
+.pnl-summary span { display: block; font: 600 10px/14px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.pnl-summary b { display: block; margin-top: 4px; font: 500 18px/24px var(--font-mono); font-feature-settings: "tnum"; }
+.pnl-summary small { display: block; margin-top: 2px; font: 400 11px/16px var(--font-mono); color: var(--muted); }
+.pnl-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 16px; }
+.pnl-cell { display: flex; align-items: center; gap: 10px; min-width: 200px; }
+.pnl-cell .bar { flex: 1; height: 8px; border-radius: 2px; background: var(--l2); position: relative; overflow: hidden; }
+.pnl-cell .bar i { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.pnl-cell .bar i.pos { left: 50%; background: var(--emerald); box-shadow: 0 0 8px rgba(16, 185, 129, .35); }
+.pnl-cell .bar i.neg { right: 50%; background: var(--rose); box-shadow: 0 0 8px rgba(244, 63, 94, .35); }
+.pnl-cell .bar::after { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line); }
+.pnl-cell b { min-width: 92px; text-align: right; font: 500 13px/18px var(--font-mono); font-feature-settings: "tnum"; }
+@media (max-width: 767px) { .pnl-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pnl-summary > div:nth-child(2) { border-right: 0; } .pnl-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--line-soft); } }
+
 /* trade snapshots */
 .thumb { display: block; width: 168px; height: 84px; padding: 0; overflow: hidden; cursor: zoom-in;
   background: var(--field); border: 1px solid var(--line-soft); border-radius: var(--r); transition: border-color .15s; }

@@ -84,6 +84,7 @@
             <button type="button" role="tab" data-tab="trades" class="active" aria-selected="true">Trade history<span class="count num" id="tradeCount"></span></button>
             <button type="button" role="tab" data-tab="decisions">AI decisions</button>
             <button type="button" role="tab" data-tab="orders">Orders</button>
+          <button type="button" role="tab" data-tab="pnl">P&amp;L</button>
           </div>
         </div>
   
@@ -103,6 +104,22 @@
           <div class="table-wrap"><table id="orders"><thead><tr>
             <th>Time</th><th>Side</th><th class="r">Qty (BTC)</th><th class="r">Price</th><th class="r">Value</th><th class="r">P&amp;L</th><th>Status</th><th>By</th>
           </tr></thead><tbody><tr><td colspan="8" class="empty">Loading orders…</td></tr></tbody></table></div>
+        </div>
+
+        <div class="tab-pane" data-pane="pnl" hidden>
+          <div class="pnl-summary" id="pnlSummary"></div>
+          <div class="pnl-toolbar">
+            <div class="segmented" id="pnlPeriod" role="tablist" aria-label="P&amp;L period">
+              <button type="button" role="tab" data-p="day" class="active" aria-selected="true">Day</button>
+              <button type="button" role="tab" data-p="week">Week</button>
+              <button type="button" role="tab" data-p="month">Month</button>
+            </div>
+            <span class="sub">Closed trades · grouped by exit time (UTC) · weeks start Monday</span>
+          </div>
+          <div class="table-wrap"><table id="pnlTable"><thead><tr>
+            <th>Period</th><th class="r">Trades</th><th class="r">Long P&amp;L</th><th class="r">Short P&amp;L</th>
+            <th class="r">W / L</th><th class="r">Win rate</th><th class="r">Net R</th><th>Total P&amp;L</th>
+          </tr></thead><tbody><tr><td colspan="8" class="empty">Loading P&amp;L…</td></tr></tbody></table></div>
         </div>
       </section>
       </div>

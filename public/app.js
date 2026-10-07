@@ -309,6 +309,7 @@ async function loadTrades() {
     if (!trades.length) {
       body.innerHTML = '<tr><td colspan="11" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
       drawChart();
+      renderPnl();
       return;
     }
     body.innerHTML = trades.map((t, i) => `<tr>
@@ -329,10 +330,91 @@ async function loadTrades() {
       if (btn) btn.innerHTML = shotHtml(svg, 'Trade chart') || '<span class="no-shot">no chart</span>';
     });
     drawChart();
+    renderPnl();
   } catch (e) {
     $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="11" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
   }
 }
+
+/* ---------------- P&L by day / week / month ---------------- */
+
+let pnlPeriod = 'day';
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** UTC period key for a timestamp: 2026-10-07 (day), Monday 2026-10-05 (week) or 2026-10 (month). */
+function periodKey(t, p) {
+  const d = new Date(t);
+  if (p === 'month') return d.toISOString().slice(0, 7);
+  if (p === 'week') {
+    const back = (d.getUTCDay() + 6) % 7; // days since Monday
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - back)).toISOString().slice(0, 10);
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+function periodLabel(key, p) {
+  const [y, m, d] = key.split('-').map(Number);
+  if (p === 'month') return `${MONTHS[m - 1]} ${y}`;
+  if (p === 'week') return `Week of ${MONTHS[m - 1]} ${d}, ${y}`;
+  return `${MONTHS[m - 1]} ${d}, ${y}`;
+}
+
+/** Closed trades grouped by period, newest first, with long / short / total P&L. */
+function pnlGroups(list, p) {
+  const groups = new Map();
+  for (const t of list) {
+    if (!t.exitTime || t.pnl === undefined || t.pnl === null) continue;
+    const k = periodKey(t.exitTime, p);
+    const g = groups.get(k) || { key: k, trades: 0, wins: 0, losses: 0, long: 0, short: 0, total: 0, r: 0 };
+    g.trades++;
+    if (t.pnl >= 0) g.wins++; else g.losses++;
+    g[t.side === 'short' ? 'short' : 'long'] += t.pnl;
+    g.total += t.pnl;
+    g.r += Number(t.r) || 0;
+    groups.set(k, g);
+  }
+  return [...groups.values()].sort((a, b) => (a.key < b.key ? 1 : -1));
+}
+
+const pnlSpan = (v) => `<span class="${v >= 0 ? 'up' : 'down'}">${signedUsd(v)}</span>`;
+
+function renderPnl() {
+  const now = Date.now();
+  const sum = (p) => pnlGroups(trades, p).find((g) => g.key === periodKey(now, p));
+  const all = pnlGroups(trades, 'month').reduce((a, g) => ({
+    total: a.total + g.total, trades: a.trades + g.trades, wins: a.wins + g.wins,
+  }), { total: 0, trades: 0, wins: 0 });
+  const tile = (label, g) => `<div><span>${label}</span><b class="${(g?.total ?? 0) >= 0 ? 'up' : 'down'}">${signedUsd(g?.total ?? 0)}</b>
+    <small>${g ? `${g.trades} trade${g.trades === 1 ? '' : 's'} · L ${signedUsd(g.long ?? 0)} · S ${signedUsd(g.short ?? 0)}` : 'No closed trades'}</small></div>`;
+  $('pnlSummary').innerHTML = tile('Today', sum('day')) + tile('This week', sum('week')) + tile('This month', sum('month'))
+    + `<div><span>All time</span><b class="${all.total >= 0 ? 'up' : 'down'}">${signedUsd(all.total)}</b>
+       <small>${all.trades ? `${all.trades} trades · ${Math.round((all.wins / all.trades) * 100)}% win` : 'No closed trades'}</small></div>`;
+
+  const rows = pnlGroups(trades, pnlPeriod);
+  const max = Math.max(1, ...rows.map((g) => Math.abs(g.total)));
+  $('pnlTable').querySelector('tbody').innerHTML = rows.map((g) => `<tr>
+      <td class="t">${periodLabel(g.key, pnlPeriod)}</td>
+      <td class="r">${g.trades}</td>
+      <td class="r">${pnlSpan(g.long)}</td>
+      <td class="r">${pnlSpan(g.short)}</td>
+      <td class="r">${g.wins} / ${g.losses}</td>
+      <td class="r">${Math.round((g.wins / g.trades) * 100)}%</td>
+      <td class="r">${g.r >= 0 ? '+' : ''}${g.r.toFixed(1)}R</td>
+      <td><div class="pnl-cell"><div class="bar"><i class="${g.total >= 0 ? 'pos' : 'neg'}" style="width:${(Math.abs(g.total) / max) * 50}%"></i></div>${pnlSpan(g.total)}</div></td>
+    </tr>`).join('')
+    || '<tr><td colspan="8" class="empty"><b>No closed trades yet</b>P&amp;L appears here once a trade hits its target or stop.</td></tr>';
+}
+
+$('pnlPeriod').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  pnlPeriod = b.dataset.p;
+  document.querySelectorAll('#pnlPeriod button').forEach((x) => {
+    x.classList.toggle('active', x === b);
+    x.setAttribute('aria-selected', String(x === b));
+  });
+  renderPnl();
+};
 
 async function openShot(t) {
   $('shotTitle').textContent = `Trade · ${fmtTime(t.entryTime)} · ${RESULT[t.status] || t.status}`;
