@@ -72,6 +72,11 @@ function drawChart() {
   const x = (i) => pad.l + step * (i - start + 0.5);
   const visible = candles.filter((_, i) => i >= start && i <= end);
   const extra = open && rrEnd >= start && entryIdx <= end ? [open.stop, open.target, open.initialStop ?? open.stop] : [];
+  trades.forEach((t) => {
+    if (!t.exitTime || !t.target || new Date(t.exitTime).getTime() < t0) return;
+    const i0 = idxAt(new Date(t.entryTime).getTime()), i1 = idxAt(new Date(t.exitTime).getTime());
+    if (i1 >= start && i0 <= end) extra.push(t.target, t.initialStop ?? t.stop);
+  });
   let lo = Math.min(...visible.map((c) => c.low), ...extra);
   let hi = Math.max(...visible.map((c) => c.high), ...extra);
   const padY = (hi - lo) * 0.05 || hi * 0.001;
@@ -177,6 +182,29 @@ function drawChart() {
       ctx.fillStyle = col; ctx.fillText(name, x1 + 4, y(p) + 4);
     });
   }
+
+  // closed trades: their risk/reward boxes from entry to exit, with the result
+  trades.forEach((t) => {
+    if (!t.exitTime || t.status === 'open' || !t.target) return;
+    const et = new Date(t.entryTime).getTime(), xt = new Date(t.exitTime).getTime();
+    if (xt < t0) return;
+    const i0 = idxAt(et), i1 = Math.max(idxAt(xt), i0 + 2);
+    if (i1 < start || i0 > end) return;
+    const x0 = x(i0) - step / 2, x1 = x(i1) + step / 2;
+    const yIn = y(t.entryPrice), sl = t.initialStop ?? t.stop;
+    ctx.fillStyle = 'rgba(16, 185, 129, .10)';
+    ctx.fillRect(x0, Math.min(yIn, y(t.target)), x1 - x0, Math.abs(y(t.target) - yIn));
+    ctx.fillStyle = 'rgba(244, 63, 94, .10)';
+    ctx.fillRect(x0, Math.min(yIn, y(sl)), x1 - x0, Math.abs(y(sl) - yIn));
+    ctx.strokeStyle = 'rgba(203, 213, 225, .35)'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, yIn); ctx.lineTo(x1, yIn); ctx.stroke();
+    ctx.setLineDash([]);
+    const res = t.status === 'win' ? 'WIN' : t.status === 'loss' ? 'LOSS' : 'BE';
+    const lbl = `${res} ${t.r > 0 ? '+' : ''}${t.r ?? 0}R`;
+    ctx.fillStyle = t.status === 'win' ? css('--green') : t.status === 'loss' ? css('--red') : css('--text-2');
+    const top = Math.min(y(t.target), y(sl));
+    ctx.fillText(lbl, x0 + 2, top - 4);
+  });
 
   // trade markers: entries (triangles) and exits (rings)
   trades.forEach((t) => {
