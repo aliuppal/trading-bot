@@ -158,6 +158,7 @@
             <li>Decision <b id="ruleAi">Jev, auto-execute</b></li>
             <li>Risk : reward <b id="ruleRR">1 : 1</b></li>
             <li>Breakeven <b id="ruleBE">off</b></li>
+            <li>Leverage <b id="ruleLev">Jev decides</b></li>
             <li>Stop <b>just beyond the IFVG zone</b></li>
             <li>Jev review <b>10 min (1m) · 20 min (3m/5m) · 60 min (15m)</b></li>
           </ul>
@@ -178,6 +179,7 @@
             <label>Scalp trades (1m)<select name="scalpEnabled"><option value="true">On</option><option value="false">Off</option></select></label>
             <label>Risk : reward<select name="riskReward"><option value="1">1 : 1</option><option value="1.5">1 : 1.5</option><option value="2">1 : 2</option><option value="2.5">1 : 2.5</option><option value="3">1 : 3</option><option value="4">1 : 4</option><option value="5">1 : 5</option></select></label>
             <label>Move stop to breakeven at<select name="breakevenAtR"><option value="0">Off</option><option value="0.5">+0.5R</option><option value="1">+1R (1:1)</option><option value="1.5">+1.5R</option><option value="2">+2R</option><option value="3">+3R</option></select></label>
+            <label>Max leverage (Jev picks)<select name="maxLeverage"><option value="1">1x (off)</option><option value="2">2x</option><option value="3">3x</option><option value="5">5x</option><option value="10">10x</option><option value="20">20x</option></select></label>
             <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
             <button type="submit" class="btn btn-ghost">Save settings</button>
           </form>

@@ -398,3 +398,23 @@ test('BinanceFuturesBroker signs requests, opens/covers shorts reduce-only, read
   assert.equal((await b.getAccount(50000)).shortBtc, 0);
   assert.throws(() => new BinanceFuturesBroker({ key: 'K', secret: 'S', baseUrl: 'https://fapi.binance.com' }), /non-demo/);
 });
+
+test('leverage: Jev picks it, capped by Max leverage; position = margin x leverage', async () => {
+  const s = setup({ fetchImpl: geminiResponse({ action: 'BUY', confidence: 0.8, size_pct: 5, leverage: 10, reasoning: 'clean setup' }) });
+  s.broker.supportsLeverage = true; // pretend the simulator is a leveraged futures broker
+  await s.bot.updateSettings({ maxLeverage: 2 });
+  const entry = await s.bot.runOnce();
+  assert.equal(entry.executed, true, entry.note);
+  const [t] = await s.bot.trades();
+  assert.equal(t.leverage, 2);
+  assert.equal(t.margin, 5000);
+  assert.ok(Math.abs(t.notional - 10000) < 1);
+  assert.match(entry.note, /\(2x, margin \$5000\.00\)/);
+});
+
+test('leverage: brokers without leverage (simulator) always use 1x', async () => {
+  const s = setup({ fetchImpl: geminiResponse({ action: 'BUY', confidence: 0.8, size_pct: 5, leverage: 10, reasoning: 'x' }) });
+  await s.bot.runOnce();
+  const [t] = await s.bot.trades();
+  assert.equal(t.leverage, 1);
+});

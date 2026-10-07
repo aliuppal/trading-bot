@@ -14,7 +14,7 @@ const ctx = {
 
 test('parseDecision handles fenced JSON and 0-100 confidence', () => {
   const d = parseDecision('```json\n{"action":"buy","confidence":80,"size_pct":5,"reasoning":"x"}\n```');
-  assert.deepEqual(d, { action: 'BUY', confidence: 0.8, sizePct: 5, reasoning: 'x' });
+  assert.deepEqual(d, { action: 'BUY', confidence: 0.8, sizePct: 5, leverage: 1, reasoning: 'x' });
 });
 
 test('parseDecision rejects bad action', () => {

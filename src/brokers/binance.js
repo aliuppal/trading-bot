@@ -20,6 +20,8 @@ export class BinanceFuturesBroker {
     this.fetch = fetchImpl;
     this.step = 0.0001;
     this.ready = null;
+    this.supportsLeverage = true;
+    this.currentLeverage = null;
   }
 
   async req(method, path, params = {}, signed = true) {
@@ -45,9 +47,17 @@ export class BinanceFuturesBroker {
         const lot = info.symbols?.find((s) => s.symbol === this.symbol)?.filters?.find((f) => f.filterType === 'MARKET_LOT_SIZE');
         if (lot) this.step = Number(lot.stepSize);
       } catch { /* keep the default step */ }
-      await this.req('POST', '/fapi/v1/leverage', { symbol: this.symbol, leverage: this.leverage }).catch(() => {});
+      await this.setLeverage(this.leverage).catch(() => {});
     })();
     return this.ready;
+  }
+
+  /** Set the symbol's leverage (only calls Binance when it changes). */
+  async setLeverage(leverage) {
+    const lev = Math.max(1, Math.round(leverage || 1));
+    if (lev === this.currentLeverage) return;
+    await this.req('POST', '/fapi/v1/leverage', { symbol: this.symbol, leverage: lev });
+    this.currentLeverage = lev;
   }
 
   roundQty(q) {
@@ -85,8 +95,9 @@ export class BinanceFuturesBroker {
   }
 
   /** action: buy | sell | short | cover. Closing orders (sell a long, cover a short) are reduce-only. */
-  async order(action, qty, source = 'manual', reason) {
+  async order(action, qty, source = 'manual', reason, leverage) {
     await this.init();
+    if (leverage) await this.setLeverage(leverage);
     const quantity = this.roundQty(qty);
     if (!(quantity > 0)) throw new Error(`Order too small (min ${this.step} BTC, $50)`);
     const o = await this.req('POST', '/fapi/v1/order', {
@@ -112,22 +123,23 @@ export class BinanceFuturesBroker {
       status: String(o.status || 'NEW').toLowerCase(),
       source,
       ...(reason && { reason }),
+      ...(leverage && { leverage }),
     };
   }
 
   /** side: 'buy' (USD notional) | 'sell' (BTC qty, closes a long) */
-  async placeOrder({ side, notional, qty, price, source = 'manual', reason }) {
+  async placeOrder({ side, notional, qty, price, source = 'manual', reason, leverage }) {
     if (side === 'buy') {
       const p = price ?? (await this.getPrice());
-      return this.order('buy', Number(notional) / p, source, reason);
+      return this.order('buy', Number(notional) / p, source, reason, leverage);
     }
     if (side === 'sell') return this.order('sell', Number(qty), source, reason);
     throw new Error(`Unknown side ${side}`);
   }
 
-  async openShort({ notional, price, source = 'ai' }) {
+  async openShort({ notional, price, source = 'ai', leverage }) {
     const p = price ?? (await this.getPrice());
-    return this.order('short', Number(notional) / p, source);
+    return this.order('short', Number(notional) / p, source, undefined, leverage);
   }
 
   coverShort({ qty, source = 'ai', reason }) {

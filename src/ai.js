@@ -62,6 +62,7 @@ Respond with JSON only:
 - action: "BUY", "SELL" or "HOLD"
 - confidence: number 0..1
 - size_pct: percent of total equity to buy (for BUY) or percent of the BTC position to sell (for SELL), 0..100
+- leverage: futures leverage for this trade, 1..10 (1 for weak or volatile setups)
 - reasoning: 1-3 short sentences`;
 }
 
@@ -81,6 +82,7 @@ export function parseDecision(raw) {
     action,
     confidence: Number(confidence.toFixed(2)),
     sizePct: clamp(obj.size_pct ?? obj.sizePct, 0, 100),
+    leverage: Math.round(clamp(obj.leverage ?? 1, 1, 10)) || 1,
     reasoning: String(obj.reasoning || '').slice(0, 1000),
   };
 }
@@ -195,14 +197,22 @@ export async function askOpenRouter(prompt, { apiKey, model }, fetchImpl = fetch
 
 const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
+export const LEVERAGE_LEVELS = [1, 2, 3, 5, 10];
+
+/** Map a fractional score index onto LEVERAGE_LEVELS (rounded to the nearest level). */
+export function scoreToLeverage(score) {
+  const i = Math.round(Math.min(LEVERAGE_LEVELS.length - 1, Math.max(0, Number(score) || 0)));
+  return LEVERAGE_LEVELS[i];
+}
 
 /** Flat state object for Jev: indicators, account and recent closes. */
-export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0 }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1 }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
     setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
     risk_reward: `1:${riskReward}`,
     breakeven_at_r: breakevenAtR || null,
+    max_leverage: maxLeverage,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
@@ -248,6 +258,12 @@ const JEV_QUESTIONS = {
     type: 'score',
     instructions: 'If trading, what percent of equity (for BUY) or of the BTC position (for SELL) should be traded?',
     criteria: SIZE_LEVELS.map((v) => `${v}%`),
+  },
+  leverage: {
+    type: 'score',
+    instructions: 'If trading, how much futures leverage fits this setup? Use more only for clean, high-conviction '
+      + 'setups in calm conditions; use 1x for weak, choppy or very volatile conditions.',
+    criteria: LEVERAGE_LEVELS.map((v) => `${v}x`),
   },
 };
 
@@ -303,12 +319,14 @@ export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
   // A review's CLOSE becomes the exit action for the open trade (SELL closes a long, BUY closes a short).
   const action = choice === 'CLOSE' ? (review.side === 'short' ? 'BUY' : 'SELL') : choice;
   const sizePct = action === 'HOLD' ? 0 : scoreToPct(data.answers?.size?.score);
+  const leverage = review || action === 'HOLD' ? 1 : scoreToLeverage(data.answers?.leverage?.score);
   const odds = choices.map((k) => `${k} ${Math.round((probs[k] ?? 0) * 100)}%`).join(' · ');
   return {
     action,
     confidence: Number(confidence.toFixed(2)),
     sizePct,
-    reasoning: `Jev: ${odds} (model confidence ${a.confidence ?? 'n/a'}); suggested size ${sizePct}%.`,
+    leverage,
+    reasoning: `Jev: ${odds} (model confidence ${a.confidence ?? 'n/a'}); suggested size ${sizePct}%${review ? '' : `, leverage ${leverage}x`}.`,
     model: data.model || model,
     cost: data.usage?.cost,
   };
@@ -335,6 +353,7 @@ export function ruleBasedDecision(ind) {
     action,
     confidence: Number(Math.min(1, 0.5 + Math.abs(score) * 0.1).toFixed(2)),
     sizePct: action === 'HOLD' ? 0 : 10 + Math.abs(score) * 5,
+    leverage: 1,
     reasoning: `Rule-based: ${why.join(', ') || 'no clear signal'}.`,
   };
 }

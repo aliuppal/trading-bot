@@ -208,7 +208,7 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
-    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR'];
+    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR', 'maxLeverage'];
     const s = this.state.settings;
     for (const k of allowed) {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
@@ -228,6 +228,7 @@ export class TradingBot {
     // Breakeven trigger (in R) must sit before the target; 0 = off.
     s.breakevenAtR = Math.max(0, Number(s.breakevenAtR ?? 0));
     if (s.breakevenAtR >= s.riskReward) s.breakevenAtR = 0;
+    s.maxLeverage = Math.min(20, Math.max(1, Math.round(s.maxLeverage ?? 5)));
     await this.save();
     return s;
   }
@@ -332,17 +333,21 @@ export class TradingBot {
   async openTrade({ side, setup, decision, account, price, candles }) {
     const label = side === 'short' ? 'SHORT' : 'BUY';
     if (!bracketFor(side, price, setup)) return { note: `${label} skipped: price is on the wrong side of the IFVG, no valid stop` };
-    const size = entryNotional(decision.sizePct, account, this.state.settings);
-    if (!size) return { note: `${label} skipped: position limit reached or not enough cash` };
+    const margin = entryNotional(decision.sizePct, account, this.state.settings);
+    if (!margin) return { note: `${label} skipped: position limit reached or not enough cash` };
+    // Leverage: Jev's pick, capped by the Max leverage setting; brokers without leverage (simulator) use 1x.
+    const leverage = this.broker.supportsLeverage
+      ? Math.max(1, Math.min(Math.round(decision.leverage || 1), this.state.settings.maxLeverage ?? 5)) : 1;
+    const size = Number((margin * leverage).toFixed(2));
     const order = side === 'short'
-      ? await this.broker.openShort({ notional: size, price, source: 'ai' })
-      : await this.broker.placeOrder({ side: 'buy', notional: size, price, source: 'ai' });
+      ? await this.broker.openShort({ notional: size, price, source: 'ai', leverage })
+      : await this.broker.placeOrder({ side: 'buy', notional: size, price, source: 'ai', leverage });
     const entryPrice = Number(order.price ?? price);
     const notional = Number(order.notional ?? size);
     const qty = Number(order.qty) || (notional * 0.999) / entryPrice;
     const rr = this.state.settings.riskReward ?? 1;
     const b = bracketFor(side, entryPrice, setup, { rr }) || bracketFor(side, price, setup, { rr });
-    const plan = { note: `${label} $${notional.toFixed(2)}` };
+    const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}` };
     const trade = {
       id: `T${this.now()}`,
       status: 'open',
@@ -355,6 +360,8 @@ export class TradingBot {
       granularity: setup.granularity || this.state.settings.granularity,
       category: setup.category || 'swing',
       broker: this.broker.name,
+      leverage,
+      margin,
       stop: b.stop,
       initialStop: b.stop,
       rr: b.rr,
@@ -469,6 +476,7 @@ export class TradingBot {
             ifvg: entry.setup,
             tradesToday: count,
             riskReward: s.riskReward ?? 1,
+            maxLeverage: this.broker.supportsLeverage ? s.maxLeverage ?? 5 : 1,
             breakevenAtR: s.breakevenAtR ?? 0,
             maxTradesPerDay: s.maxTradesPerDay,
             openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
