@@ -356,11 +356,8 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .chart-tools { display: flex; align-items: center; gap: 8px; }
 .chart-panel .chart-tools .symbol-select { width: auto; margin: 0; padding: 6px 10px; }
 .btn-jev { padding: 6px 12px; border-radius: var(--r); background: rgba(6, 182, 212, .14); border: 1px solid rgba(6, 182, 212, .45); color: #22D3EE; font: 700 11px/16px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
-.btn-jev:hover, .btn-jev[aria-expanded="true"] { background: rgba(6, 182, 212, .24); }
+.btn-jev:hover { background: rgba(6, 182, 212, .24); }
 .btn-jev:disabled { opacity: .6; cursor: wait; }
-.jev-overview { margin: 0 16px 8px; padding: 10px 12px; border-radius: var(--r-lg); background: var(--l2); border: 1px solid rgba(6, 182, 212, .3); }
-.jev-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font: 500 12px/16px var(--font-mono); color: var(--muted); }
-.jev-head b { color: #22D3EE; }
 .jev-table td, .jev-table th { padding: 6px 8px; font-size: 12px; }
 .jev-sym { cursor: pointer; }
 .jev-sym:hover, .jev-sym:focus { background: rgba(6, 182, 212, .06); outline: none; }
@@ -374,3 +371,12 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .odds.buy.top { color: #10B981; }
 .odds.sell.top { color: #F43F5E; }
 .odds.hold.top { color: #CBD5E1; }
+
+/* JEV pop-up */
+.jev-card { width: min(1100px, 100%); }
+.jev-when { margin-left: 6px; font: 500 12px/16px var(--font-mono); color: var(--muted); text-transform: none; letter-spacing: 0; }
+.btn-row-inline { display: flex; gap: 8px; }
+.jev-body { padding: 4px 16px 12px; }
+.jev-loading { padding: 32px 0; text-align: center; font: 500 13px/18px var(--font-mono); color: var(--muted); }
+.jev-table .jev-symcell { white-space: nowrap; }
+.jev-table .jev-setup { color: var(--muted); font-size: 12px; min-width: 220px; white-space: normal; }

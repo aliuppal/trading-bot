@@ -58,7 +58,7 @@
           <label class="sr-only" for="chartSymbol">Chart symbol</label>
           <div class="chart-tools">
             <select id="chartSymbol" class="symbol-select"><option>BTCUSDC</option></select>
-            <button type="button" id="jevBtn" class="btn-jev" title="Jev buy / sell / hold odds and model confidence for every symbol" aria-expanded="false" aria-controls="jevOverview">JEV · all symbols</button>
+            <button type="button" id="jevBtn" class="btn-jev" title="Jev buy / sell / hold odds and model confidence for every symbol" aria-haspopup="dialog">JEV · all symbols</button>
           </div>
           <div class="segmented" id="granularity" role="tablist" aria-label="Candle size">
             <button type="button" role="tab" data-g="60">1m</button>
@@ -73,7 +73,6 @@
             <button type="button" role="tab" data-g="86400">1d</button>
           </div>
         </div>
-        <div id="jevOverview" class="jev-overview" hidden></div>
         <div class="legend">
           <span><i style="background:rgba(6,182,212,.35);border:1px dashed #06B6D4"></i>IFVG zone</span>
           <span><i style="background:rgba(16,185,129,.25)"></i>HTF bullish FVG</span>
@@ -218,6 +217,20 @@
     </section>
 
   </main>
+
+  <div class="modal" id="jevModal" hidden role="dialog" aria-modal="true" aria-labelledby="jevTitle">
+    <div class="modal-card jev-card">
+      <div class="panel-head">
+        <h2 class="card-title" id="jevTitle">Jev · all symbols <span class="num jev-when" id="jevWhen"></span></h2>
+        <div class="btn-row-inline">
+          <button type="button" class="btn-jev" id="jevRefresh">Refresh</button>
+          <button type="button" class="btn btn-ghost" id="jevClose">Close</button>
+        </div>
+      </div>
+      <div class="jev-body" id="jevOverview"></div>
+      <p class="modal-note">Jev's view only, nothing is traded. Click a symbol to show it on the chart.</p>
+    </div>
+  </div>
 
   <div class="modal" id="shotModal" hidden role="dialog" aria-modal="true" aria-labelledby="shotTitle">
     <div class="modal-card">
