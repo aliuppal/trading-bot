@@ -5,7 +5,7 @@ const BINANCE = 'https://api.binance.com';
 
 const BINANCE_INTERVALS = { 60: '1m', 300: '5m', 900: '15m', 3600: '1h', 21600: '6h', 86400: '1d' };
 // Timeframes Coinbase doesn't offer, built from a smaller one: seconds -> [base seconds, candles per bucket].
-const BUILT = { 180: [60, 3], 1800: [900, 2], 7200: [3600, 2], 14400: [3600, 4] };
+const BUILT = { 120: [60, 2], 180: [60, 3], 1800: [900, 2], 7200: [3600, 2], 14400: [3600, 4] };
 
 async function getJson(url) {
   const res = await fetch(url, { headers: { 'User-Agent': 'trading-bot/1.0' } });
@@ -75,6 +75,17 @@ export function binanceMarket({ baseUrl = 'https://demo-fapi.binance.com', symbo
     source: `binance:${symbol}`,
     async getCandles(granularity = 3600, limit = 200) {
       const interval = BINANCE_KLINE[granularity];
+      if (!interval && granularity % 60 === 0 && granularity < 3600) {
+        // e.g. 2m: not offered by Binance, built from its 1m candles (UTC-aligned buckets)
+        const ones = await this.getCandles(60, Math.min(1500, limit * (granularity / 60) + granularity / 60));
+        const size = granularity * 1000, out = [];
+        for (const c of ones) {
+          const t = Math.floor(c.time / size) * size, last = out.at(-1);
+          if (last && last.time === t) { last.high = Math.max(last.high, c.high); last.low = Math.min(last.low, c.low); last.close = c.close; last.volume += c.volume; }
+          else out.push({ ...c, time: t });
+        }
+        return out.slice(-limit);
+      }
       if (!interval) return getCandles(granularity, limit); // unusual timeframe: fall back to Coinbase
       const rows = await getJson(`${base}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${Math.min(1500, limit)}`);
       return rows.map((r) => ({ time: r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));

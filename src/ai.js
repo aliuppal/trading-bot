@@ -208,9 +208,9 @@ const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
 export const LEVERAGE_LEVELS = [1, 2, 3, 5, 10];
 
 /** The entry models the bot scans, described for Jev. */
-export const ENTRY_MODELS = 'SWING: tap of a 30m/1h/2h/4h FVG, then an IFVG on 15m (preferred) > 5m > 3m '
-  + '(a lower timeframe waits if a higher one is forming; 3m needs a 30m/1h tap). '
-  + 'SCALP: tap of a 5m/15m/30m FVG, then a 1m IFVG. '
+export const ENTRY_MODELS = 'SWING: tap of a 30m/1h/2h/4h FVG, then an IFVG on 15m (preferred) > 5m. '
+  + 'SCALP: tap of a 5m/15m/30m FVG, then an IFVG on 3m (preferred) > 2m > 1m. '
+  + '(Within each, a lower timeframe waits if a higher one is forming.) '
   + 'IFVG = gap inverted within 3-7 candles by a decisive close (>= 20% through, body across). '
   + 'A+: perfect IFVG (<= 5 candles) + displacement + draw on liquidity / LRLR in the trade direction, valid without a tap.';
 

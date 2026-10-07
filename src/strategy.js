@@ -41,11 +41,15 @@ export function gradeSetup(s, liquidity) {
   return { grade: perfect && s.displacement && draw ? 'A+' : 'A', qualityReasons: reasons };
 }
 
-export const ENTRY_TIMEFRAMES = { all: [180, 300, 900], both: [300, 900], 180: [180], 300: [300], 900: [900] };
+// Swing entries (15m preferred over 5m). Scalp entries are SCALP_TIMEFRAMES.
+export const ENTRY_TIMEFRAMES = { all: [300, 900], both: [300, 900], 300: [300], 900: [900] };
+/** Scalp entries, higher timeframe preferred: 3m > 2m > 1m. */
+export const SCALP_TIMEFRAMES = [180, 120, 60];
 /** Which zone timeframes may trigger each entry timeframe. */
 export const ZONES_FOR_ENTRY = {
-  60: ['5m', '15m', '30m'], // scalp
-  180: ['30m', '1h'],
+  60: ['5m', '15m', '30m'], // scalp entries
+  120: ['5m', '15m', '30m'],
+  180: ['5m', '15m', '30m'],
   300: ['30m', '1h', '2h', '4h'],
   900: ['1h', '2h', '4h'],
 };
@@ -132,11 +136,18 @@ async function scanCore(market, settings, now, liquidity) {
   if (waiting) return { setup: null, waiting: true, zones, ...waiting };
   notes.push(...tfs.map((g) => res[g].note).filter(Boolean));
 
-  // Scalp: 1m IFVG after a 5m / 15m / 30m FVG tap.
+  // Scalp: 3m > 2m > 1m IFVG after a 5m / 15m / 30m FVG tap; a lower timeframe waits while a higher one is forming.
   if (scalpOn) {
-    const r = await evaluate(market, 60, 'scalp', zones, settings, now, liquidity);
-    if (r.setup) return { setup: r.setup, candles: r.candles, granularity: 60, zones, note: null, waiting: false };
-    if (r.note) notes.push(r.note);
+    const sres = {};
+    for (const g of SCALP_TIMEFRAMES) sres[g] = await evaluate(market, g, 'scalp', zones, settings, now, liquidity);
+    for (const [i, g] of SCALP_TIMEFRAMES.entries()) {
+      const { setup, candles } = sres[g];
+      if (!setup) continue;
+      const higher = SCALP_TIMEFRAMES.slice(0, i).find((h) => sres[h].forming[setup.direction]);
+      if (higher) return { setup: null, waiting: true, zones, candles, granularity: g, note: `scalp ${tfLabel(g)} ${setup.direction} IFVG ready, waiting for the ${tfLabel(higher)} IFVG forming now` };
+      return { setup, candles, granularity: g, zones, note: null, waiting: false };
+    }
+    notes.push(...SCALP_TIMEFRAMES.map((g) => sres[g].note).filter(Boolean));
   }
 
   const top = tfs[0] ?? 60;

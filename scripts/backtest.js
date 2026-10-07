@@ -76,6 +76,7 @@ async function main() {
     3600: await fetchRange(3600, start - 320 * 60 * MIN, end + MIN),
     86400: await fetchRange(86400, start - 35 * 86400000, end + MIN),
   };
+  series[120] = aggregate(series[60], 120);
   series[180] = aggregate(series[60], 180);
   series[1800] = aggregate(series[900], 1800);
   series[7200] = aggregate(series[3600], 7200);
