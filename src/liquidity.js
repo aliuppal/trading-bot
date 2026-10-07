@@ -161,15 +161,24 @@ export function describeLevels(list, n = 3) {
 }
 
 /**
- * Liquidity-based target: the nearest level in the trade direction that is at least minR x risk away
- * (and at most maxR x risk). Returns { price, level, r } or null.
+ * Liquidity-based target: the nearest liquidity in the trade direction (LRLR swing points, equal highs / lows,
+ * PDH/PDL, today, previous week, HTF swings), placed frontPct % in front of the level so it fills as price
+ * reaches it. Accepted between minR and maxR x risk. Returns { price, level, r } or null.
  */
-export function liquidityTarget(liq, side, entry, risk, { minR = 1, maxR = 5 } = {}) {
+export function liquidityTarget(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0.02 } = {}) {
   if (!liq || !risk) return null;
-  const list = side === 'long' ? liq.above : liq.below;
-  for (const l of list) {
-    const r = Math.abs(l.price - entry) / risk;
-    if (r >= minR && r <= maxR) return { price: l.price, level: l, r: Number(r.toFixed(2)) };
+  const toward = side === 'long' ? 'above' : 'below';
+  const cands = [...(side === 'long' ? liq.above : liq.below)];
+  if (liq.lrlr?.side === toward) {
+    for (const p of liq.lrlr.prices) cands.push({ type: 'LRLR', label: 'LRLR swing', price: p });
+  }
+  const ahead = cands
+    .filter((l) => (side === 'long' ? l.price > entry : l.price < entry))
+    .sort((x, y) => Math.abs(x.price - entry) - Math.abs(y.price - entry));
+  for (const l of ahead) {
+    const price = side === 'long' ? l.price * (1 - frontPct / 100) : l.price * (1 + frontPct / 100);
+    const r = Math.abs(price - entry) / risk;
+    if (r >= minR && r <= maxR) return { price: Number(price.toFixed(2)), level: l, r: Number(r.toFixed(2)) };
   }
   return null;
 }

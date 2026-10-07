@@ -232,7 +232,7 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     liquidity_below: liquidity ? describeLevels(liquidity.below, 4) : 'unknown',
     draw_on_liquidity: liquidity?.draw ?? null,
     lrlr: liquidity?.lrlr ? `${liquidity.lrlr.side}: ${liquidity.lrlr.prices.map((p) => Math.round(p)).join(', ')}` : 'none',
-    target_mode: targetMode === 'liquidity' ? 'nearest liquidity level 1R-5R away' : `fixed 1:${riskReward}`,
+    target_mode: targetMode === 'liquidity' ? 'nearest liquidity (LRLR / equal highs-lows first) 0.75R-5R away' : `fixed 1:${riskReward}`,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing

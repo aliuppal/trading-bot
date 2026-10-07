@@ -494,10 +494,10 @@ export class TradingBot {
     const rr = this.state.settings.riskReward ?? 1;
     const minRiskPct = this.state.settings.minStopPct ?? 0.15;
     const b = bracketFor(side, entryPrice, setup, { rr, minRiskPct }) || bracketFor(side, price, setup, { rr, minRiskPct });
-    // Target at liquidity: the nearest level in the trade direction that is 1R-5R away (else the fixed R:R target).
+    // Target at liquidity: the nearest level (LRLR / equal highs-lows / PDH-PDL ...) 0.75R-5R away (else the fixed R:R target).
     let targetLevel = null;
     if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
-      const lt = liquidityTarget(liquidity, side, entryPrice, b.risk, { minR: 1, maxR: 5 });
+      const lt = liquidityTarget(liquidity, side, entryPrice, b.risk); // 0.75R-5R, just in front of the level
       if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.type} ${Math.round(lt.price).toLocaleString('en-US')}`; }
     }
     const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}` };

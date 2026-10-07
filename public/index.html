@@ -189,7 +189,7 @@
             <label>Position sizing<select name="sizingMode"><option value="percent">% of balance (Max per trade %)</option><option value="risk">Risk $ per trade</option></select></label>
             <label>Risk per trade ($)<input name="riskPerTradeUsd" type="number" min="1" step="1" /></label>
             <label>Min stop distance (%)<input name="minStopPct" type="number" min="0.05" max="2" step="0.05" /></label>
-            <label>Target<select name="targetMode"><option value="rr">Fixed risk:reward</option><option value="liquidity">Nearest liquidity (1R-5R)</option></select></label>
+            <label>Target<select name="targetMode"><option value="rr">Fixed risk:reward</option><option value="liquidity">Liquidity: LRLR / EQ highs-lows (0.75R-5R)</option></select></label>
             <label>Displacement candle<select name="requireDisplacement"><option value="false">Optional (off)</option><option value="true">Required</option></select></label>
             <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
             <button type="submit" class="btn btn-ghost">Save settings</button>

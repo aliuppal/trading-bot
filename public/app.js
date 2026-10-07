@@ -410,7 +410,7 @@ async function loadStatus() {
     $('ruleInv').textContent = `gap → inversion within ${s.settings.ifvgMaxAge ?? 7} candles, close ≥20% through it, entry ≤2 candles after${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
     const lq = s.liquidity;
     $('ruleLiq').textContent = lq ? `draw ${lq.draw ?? 'unclear'}${lq.lrlr ? ` · LRLR ${lq.lrlr.side}` : ''}${lq.above?.[0] ? ` · ↑ ${lq.above[0].type} ${Math.round(lq.above[0].price).toLocaleString()}` : ''}${lq.below?.[0] ? ` · ↓ ${lq.below[0].type} ${Math.round(lq.below[0].price).toLocaleString()}` : ''}` : 'scanning…';
-    $('ruleTarget').textContent = s.settings.targetMode === 'liquidity' ? 'nearest liquidity 1R-5R (else fixed R:R)' : `fixed 1 : ${s.settings.riskReward ?? 1}`;
+    $('ruleTarget').textContent = s.settings.targetMode === 'liquidity' ? 'liquidity (LRLR / equal highs-lows) 0.75R-5R, else fixed R:R' : `fixed 1 : ${s.settings.riskReward ?? 1}`;
     $('ruleRR').textContent = `1 : ${s.settings.riskReward ?? 1}`;
     $('ruleBE').textContent = s.settings.breakevenAtR ? `stop to entry at +${s.settings.breakevenAtR}R` : 'off';
     $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;
