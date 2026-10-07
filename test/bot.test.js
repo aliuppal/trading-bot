@@ -482,3 +482,22 @@ test('change signature moves when a trade, decision or order is written', async 
   assert.notEqual(before, after);
   assert.equal(await s.bot.changeSignature(), after); // stable when nothing changes
 });
+
+test('risk sizing: $50 risk, leverage raised to fit the margin, trimmed only when it cannot fit', async () => {
+  const { riskSize } = await import('../src/bot.js');
+  // 0.5% stop at 84,000 = 420 $/BTC -> 0.119 BTC = $10,000 position; margin at 3x = $3,333 fits in $5,000
+  let r = riskSize({ riskUsd: 50, stopDist: 420, price: 84000, cash: 5000, levPick: 3, maxLev: 5, canLever: true });
+  assert.equal(r.leverage, 3);
+  assert.ok(Math.abs(r.riskUsd - 50) < 0.01);
+  assert.equal(r.capped, false);
+  // 0.15% stop = 126 $/BTC -> $33,333 position: needs 7x on $4,750 usable; max 5x -> trimmed to $23,750 (~$35.6 risk)
+  r = riskSize({ riskUsd: 50, stopDist: 126, price: 84000, cash: 5000, levPick: 2, maxLev: 5, canLever: true });
+  assert.equal(r.leverage, 5);
+  assert.equal(r.capped, true);
+  assert.ok(Math.abs(r.notional - 23750) < 0.01);
+  assert.ok(r.riskUsd > 35 && r.riskUsd < 36);
+  // with 10x allowed it fits in full
+  r = riskSize({ riskUsd: 50, stopDist: 126, price: 84000, cash: 5000, levPick: 2, maxLev: 10, canLever: true });
+  assert.equal(r.capped, false);
+  assert.equal(r.leverage, 8);
+});

@@ -41,6 +41,22 @@ export function entryNotional(sizePct, account, settings) {
   return notional < MIN_ORDER_USD ? 0 : Number(notional.toFixed(2));
 }
 
+/**
+ * Risk-based size: the position whose stop loses about riskUsd. Leverage starts at Jev's pick, is raised up to
+ * maxLev if the margin does not fit in 95% of the available cash, and only then is the risk trimmed (capped: true).
+ */
+export function riskSize({ riskUsd, stopDist, price, cash, levPick = 1, maxLev = 1, canLever = false }) {
+  let qty = riskUsd / stopDist;
+  let notional = qty * price;
+  const maxL = canLever ? Math.max(1, maxLev) : 1;
+  let lev = canLever ? Math.max(1, Math.min(Math.round(levPick || 1), maxL)) : 1;
+  const usable = cash * 0.95;
+  if (notional / lev > usable) lev = Math.min(maxL, Math.ceil(notional / usable));
+  let capped = false;
+  if (notional / lev > usable) { notional = usable * lev; qty = notional / price; capped = true; }
+  return { notional: Number(notional.toFixed(2)), margin: Number((notional / lev).toFixed(2)), leverage: lev, riskUsd: Number((qty * stopDist).toFixed(2)), capped };
+}
+
 const utcDay = (t) => new Date(t).toISOString().slice(0, 10);
 
 /** Number of trades opened on the same UTC day as `now` (optionally only one category: 'swing' / 'scalp'). */
@@ -241,13 +257,15 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
-    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR', 'maxLeverage', 'minStopPct'];
+    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'riskReward', 'breakevenAtR', 'maxLeverage', 'minStopPct', 'riskPerTradeUsd'];
     const s = this.state.settings;
     for (const k of allowed) {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
     }
     if (patch.requireHtfTap !== undefined) s.requireHtfTap = patch.requireHtfTap === true || patch.requireHtfTap === 'true';
     if (['rr', 'liquidity'].includes(patch.targetMode)) s.targetMode = patch.targetMode;
+    if (['percent', 'risk'].includes(patch.sizingMode)) s.sizingMode = patch.sizingMode;
+    s.riskPerTradeUsd = Math.min(100000, Math.max(1, Number(s.riskPerTradeUsd ?? 50)));
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
     s.scalpEnabled = true; // use Scalp trades / day = 0 to stop scalps
     s.entryTimeframes = 'all'; // all entry models, always
@@ -391,12 +409,26 @@ export class TradingBot {
   async openTrade({ side, setup, decision, account, price, candles, liquidity }) {
     const label = side === 'short' ? 'SHORT' : 'BUY';
     if (!bracketFor(side, price, setup)) return { note: `${label} skipped: price is on the wrong side of the IFVG, no valid stop` };
-    const margin = entryNotional(decision.sizePct, account, this.state.settings);
-    if (!margin) return { note: `${label} skipped: position limit reached or not enough cash` };
-    // Leverage: Jev's pick, capped by the Max leverage setting; brokers without leverage (simulator) use 1x.
-    const leverage = this.broker.supportsLeverage
-      ? Math.max(1, Math.min(Math.round(decision.leverage || 1), this.state.settings.maxLeverage ?? 5)) : 1;
-    const size = Number((margin * leverage).toFixed(2));
+    const st = this.state.settings;
+    let margin, leverage, size, sizing = '';
+    if ((st.sizingMode ?? 'percent') === 'risk') {
+      // Risk-based: lose about riskPerTradeUsd if the stop is hit.
+      const b0 = bracketFor(side, price, setup, { rr: st.riskReward ?? 1, minRiskPct: st.minStopPct ?? 0.15 });
+      const rs = riskSize({
+        riskUsd: st.riskPerTradeUsd ?? 50, stopDist: b0.risk, price, cash: account.cash,
+        levPick: decision.leverage, maxLev: st.maxLeverage ?? 5, canLever: Boolean(this.broker.supportsLeverage),
+      });
+      if (rs.notional < MIN_ORDER_USD) return { note: `${label} skipped: not enough cash for the risk size` };
+      ({ margin, leverage } = rs);
+      size = rs.notional;
+      sizing = ` · risk-sized $${rs.riskUsd}${rs.capped ? ` (trimmed from $${st.riskPerTradeUsd ?? 50}: not enough margin at ${leverage}x)` : ''}`;
+    } else {
+      margin = entryNotional(decision.sizePct, account, st);
+      if (!margin) return { note: `${label} skipped: position limit reached or not enough cash` };
+      // Leverage: Jev's pick, capped by the Max leverage setting; brokers without leverage (simulator) use 1x.
+      leverage = this.broker.supportsLeverage ? Math.max(1, Math.min(Math.round(decision.leverage || 1), st.maxLeverage ?? 5)) : 1;
+      size = Number((margin * leverage).toFixed(2));
+    }
     const order = side === 'short'
       ? await this.broker.openShort({ notional: size, price, source: 'ai', leverage })
       : await this.broker.placeOrder({ side: 'buy', notional: size, price, source: 'ai', leverage });
@@ -413,7 +445,7 @@ export class TradingBot {
       const lt = liquidityTarget(liquidity, side, entryPrice, b.risk, { minR: 1, maxR: 5 });
       if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.type} ${Math.round(lt.price).toLocaleString('en-US')}`; }
     }
-    const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}` };
+    const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}` };
     const trade = {
       id: `T${this.now()}`,
       status: 'open',

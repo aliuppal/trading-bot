@@ -47,6 +47,10 @@ export const config = {
     requireDisplacement: process.env.REQUIRE_DISPLACEMENT === 'true',
     // Target: rr = fixed risk:reward, liquidity = nearest liquidity level 1R-5R away (falls back to rr)
     targetMode: process.env.TARGET_MODE || 'rr',
+    // Position sizing: percent = Max per trade % of equity (x leverage); risk = lose riskPerTradeUsd at the stop
+    sizingMode: process.env.SIZING_MODE || 'percent',
+    riskPerTradeUsd: num(process.env.RISK_PER_TRADE_USD, 50),
+    minStopPct: num(process.env.MIN_STOP_PCT, 0.15),
     // Target = riskReward x stop distance (1 = 1:1, 3 = 1:3)
     riskReward: num(process.env.RISK_REWARD, 1),
     // Move the stop to the entry once price reaches +N R (0 = off)
