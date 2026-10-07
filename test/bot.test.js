@@ -119,3 +119,50 @@ test('runOnce logs market errors', async () => {
   assert.equal(entry.action, 'ERROR');
   assert.equal((await bot.status()).lastError, 'offline');
 });
+
+test('bearish IFVG + AI SELL opens a 1:1 short that wins at the target', async () => {
+  const { bearishIfvgCandles } = await import('./helpers.js');
+  const s = setup({
+    candles: bearishIfvgCandles(NOW),
+    fetchImpl: geminiResponse({ action: 'SELL', confidence: 0.8, size_pct: 5, reasoning: 'IFVG rejecting' }),
+  });
+  const entry = await s.bot.runOnce();
+  assert.equal(entry.executed, true, entry.note);
+  const [t] = await s.bot.trades();
+  assert.equal(t.side, 'short');
+  assert.ok(t.stop > t.entryPrice && t.target < t.entryPrice);
+  assert.ok(Math.abs((t.stop - t.entryPrice) - (t.entryPrice - t.target)) < 0.02);
+  assert.equal((await s.broker.getAccount(t.entryPrice)).shortBtc > 0, true);
+
+  s.candles.push({ time: NOW + 60000, open: t.entryPrice, high: t.entryPrice + 1, low: t.target - 10, close: t.target, volume: 1 });
+  s.bot.now = () => NOW + 120000;
+  const closed = await s.bot.manageOpen(s.candles, t.target);
+  assert.equal(closed.status, 'win');
+  assert.equal(closed.r, 1);
+  assert.ok(closed.pnl > 0);
+  const a = await s.broker.getAccount(t.target);
+  assert.equal(a.shortBtc, 0);
+  assert.ok(a.equity > 100000);
+});
+
+test('short stop: price rising through the stop is a -1R loss', async () => {
+  const { bearishIfvgCandles } = await import('./helpers.js');
+  const s = setup({
+    candles: bearishIfvgCandles(NOW),
+    fetchImpl: geminiResponse({ action: 'SELL', confidence: 0.8, size_pct: 5, reasoning: 'x' }),
+  });
+  await s.bot.runOnce();
+  const [t] = await s.bot.trades();
+  s.bot.now = () => NOW + 120000;
+  const closed = await s.bot.manageOpen(s.candles, t.stop + 5);
+  assert.equal(closed.status, 'loss');
+  assert.equal(closed.r, -1);
+  assert.ok(closed.pnl < 0);
+});
+
+test('bullish IFVG ignores an AI SELL (direction must match the setup)', async () => {
+  const s = setup({ fetchImpl: geminiResponse({ action: 'SELL', confidence: 0.9, size_pct: 5, reasoning: 'x' }) });
+  const entry = await s.bot.runOnce();
+  assert.equal(entry.executed, false);
+  assert.match(entry.note, /does not match the bullish IFVG/);
+});

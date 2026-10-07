@@ -39,3 +39,9 @@ export function ifvgCandles(end = Date.UTC(2026, 9, 7, 12)) {
   const start = end - 1000 - (rows.length - 1) * H;
   return rows.map((r, i) => ({ ...r, time: start + i * H, volume: 10 }));
 }
+
+/** Mirror image of ifvgCandles: ends in a bearish IFVG (a bullish FVG, zone 60500-60050 mirrored, closed back below). */
+export function bearishIfvgCandles(end) {
+  const K = 120000;
+  return ifvgCandles(end).map((c) => ({ ...c, open: K - c.open, close: K - c.close, high: K - c.low, low: K - c.high }));
+}

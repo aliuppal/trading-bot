@@ -1,6 +1,6 @@
 import { decide } from './ai.js';
 import { summarize } from './indicators.js';
-import { latestSetup, bracketLong } from './ifvg.js';
+import { latestSetup, bracketFor } from './ifvg.js';
 import { renderTradeSvg } from './snapshot.js';
 
 const MIN_ORDER_USD = 10;
@@ -18,18 +18,24 @@ export function planTrade(decision, account, settings) {
     return { order: null, note: `Confidence ${confidence} below minimum ${settings.minConfidence}` };
   }
   if (action === 'BUY') {
-    const pct = Math.min(sizePct || settings.maxTradePct, settings.maxTradePct);
-    const positionValue = account.btc * account.price;
-    const room = (settings.maxPositionPct / 100) * account.equity - positionValue;
-    const notional = Math.min((pct / 100) * account.equity, room, account.cash * 0.995);
-    if (notional < MIN_ORDER_USD) return { order: null, note: 'BUY skipped: position limit reached or not enough cash' };
-    return { order: { side: 'buy', notional: Number(notional.toFixed(2)) }, note: `BUY $${notional.toFixed(2)}` };
+    const notional = entryNotional(sizePct, account, settings);
+    if (!notional) return { order: null, note: 'BUY skipped: position limit reached or not enough cash' };
+    return { order: { side: 'buy', notional }, note: `BUY $${notional.toFixed(2)}` };
   }
   // SELL
   const pct = sizePct > 0 ? sizePct : 100;
   const qty = account.btc * (pct / 100);
   if (qty * account.price < MIN_ORDER_USD) return { order: null, note: 'SELL skipped: no meaningful BTC position' };
   return { order: { side: 'sell', qty: Number(qty.toFixed(8)) }, note: `SELL ${qty.toFixed(8)} BTC (${pct}%)` };
+}
+
+/** USD size for a new long or short: AI size capped by max trade %, max position % (longs + shorts) and cash. 0 = too small. */
+export function entryNotional(sizePct, account, settings) {
+  const pct = Math.min(sizePct || settings.maxTradePct, settings.maxTradePct);
+  const exposure = (account.btc + (account.shortBtc || 0)) * account.price;
+  const room = (settings.maxPositionPct / 100) * account.equity - exposure;
+  const notional = Math.min((pct / 100) * account.equity, room, account.cash * 0.995);
+  return notional < MIN_ORDER_USD ? 0 : Number(notional.toFixed(2));
 }
 
 const utcDay = (t) => new Date(t).toISOString().slice(0, 10);
@@ -41,21 +47,28 @@ export function tradesToday(trades, now = Date.now()) {
 }
 
 /**
- * Has a long bracket been hit? Looks at candles that opened after the entry, then the live price.
+ * Has a bracket been hit? Looks at candles that opened after the entry, then the live price.
  * If one candle touches both levels the stop is assumed first (conservative).
  * Returns { exitPrice, reason: 'stop' | 'target' } or null.
  */
 export function checkBracket(trade, candles, price) {
+  const short = trade.side === 'short';
+  const stopHit = (lo, hi) => (short ? hi >= trade.stop : lo <= trade.stop);
+  const targetHit = (lo, hi) => (short ? lo <= trade.target : hi >= trade.target);
   const entryT = new Date(trade.entryTime).getTime();
   for (const c of candles) {
     if (c.time <= entryT) continue;
-    if (c.low <= trade.stop) return { exitPrice: trade.stop, reason: 'stop' };
-    if (c.high >= trade.target) return { exitPrice: trade.target, reason: 'target' };
+    if (stopHit(c.low, c.high)) return { exitPrice: trade.stop, reason: 'stop' };
+    if (targetHit(c.low, c.high)) return { exitPrice: trade.target, reason: 'target' };
   }
-  if (price <= trade.stop) return { exitPrice: trade.stop, reason: 'stop' };
-  if (price >= trade.target) return { exitPrice: trade.target, reason: 'target' };
+  if (stopHit(price, price)) return { exitPrice: trade.stop, reason: 'stop' };
+  if (targetHit(price, price)) return { exitPrice: trade.target, reason: 'target' };
   return null;
 }
+
+const SIDE_FOR = { bullish: 'long', bearish: 'short' };
+const ENTRY_ACTION = { long: 'BUY', short: 'SELL' };
+const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: Number(z.top.toFixed(2)), bottom: Number(z.bottom.toFixed(2)),
@@ -174,24 +187,34 @@ export class TradingBot {
 
   async closeTrade(trade, exitPrice, reason, candles) {
     const nowIso = new Date(this.now()).toISOString();
+    const short = trade.side === 'short';
     const account = await this.broker.getAccount(exitPrice);
-    const qty = Math.min(trade.qty, account.btc);
+    const qty = Math.min(trade.qty, short ? account.shortBtc || 0 : account.btc);
     let order = null;
     let note = '';
     if (qty * exitPrice >= 1) {
-      order = await this.broker.placeOrder({ side: 'sell', qty, price: exitPrice, source: 'ai', reason });
+      order = short
+        ? await this.broker.coverShort({ qty, price: exitPrice, source: 'ai', reason })
+        : await this.broker.placeOrder({ side: 'sell', qty, price: exitPrice, source: 'ai', reason });
     } else {
-      note = 'Position was already sold manually';
+      note = 'Position was already closed manually';
     }
+    const part = qty / trade.qty;
     const fee = order?.fee ?? 0;
-    const pnl = order ? exitPrice * qty - fee - trade.notional * (qty / trade.qty) : 0;
+    let pnl = 0;
+    if (order) {
+      pnl = short
+        ? trade.notional * part - (trade.entryFee || 0) * part - exitPrice * qty - fee // proceeds - entry fee - buyback
+        : exitPrice * qty - fee - trade.notional * part; // long notional already includes the entry fee
+    }
+    const dir = short ? -1 : 1;
     Object.assign(trade, {
       status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : pnl >= 0 ? 'win' : 'loss',
       exitTime: nowIso,
       exitPrice,
       exitReason: reason,
       pnl: Number(pnl.toFixed(2)),
-      r: Number(((exitPrice - trade.entryPrice) / (trade.entryPrice - trade.stop)).toFixed(2)),
+      r: Number(((dir * (exitPrice - trade.entryPrice)) / Math.abs(trade.entryPrice - trade.stop)).toFixed(2)),
       ...(note && { note }),
     });
     const trades = await this.trades();
@@ -202,29 +225,34 @@ export class TradingBot {
     shots.exit = renderTradeSvg({ candles, trade, phase: 'exit', granularity: this.state.settings.granularity });
     await this.kv.set(`shot_${trade.id}`, shots);
     await this.log({
-      time: nowIso, price: exitPrice, action: 'SELL', source: 'bracket', executed: Boolean(order), tradeId: trade.id,
+      time: nowIso, price: exitPrice, action: EXIT_ACTION[trade.side || 'long'], source: 'bracket', executed: Boolean(order), tradeId: trade.id,
       note: `${reason === 'target' ? 'Target hit (+1R)' : reason === 'stop' ? 'Stop hit (-1R)' : 'Closed on signal'} · P&L ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`,
     });
     return trade;
   }
 
-  async openTrade({ setup, decision, account, price, candles }) {
-    if (!bracketLong(price, setup)) return { note: 'BUY skipped: price is below the IFVG, no valid stop' };
-    const plan = planTrade(decision, account, this.state.settings);
-    if (!plan.order) return { note: plan.note };
-    const order = await this.broker.placeOrder({ ...plan.order, price, source: 'ai' });
+  async openTrade({ side, setup, decision, account, price, candles }) {
+    const label = side === 'short' ? 'SHORT' : 'BUY';
+    if (!bracketFor(side, price, setup)) return { note: `${label} skipped: price is on the wrong side of the IFVG, no valid stop` };
+    const size = entryNotional(decision.sizePct, account, this.state.settings);
+    if (!size) return { note: `${label} skipped: position limit reached or not enough cash` };
+    const order = side === 'short'
+      ? await this.broker.openShort({ notional: size, price, source: 'ai' })
+      : await this.broker.placeOrder({ side: 'buy', notional: size, price, source: 'ai' });
     const entryPrice = Number(order.price ?? price);
-    const notional = Number(order.notional ?? plan.order.notional);
+    const notional = Number(order.notional ?? size);
     const qty = Number(order.qty) || (notional * 0.999) / entryPrice;
-    const b = bracketLong(entryPrice, setup) || bracketLong(price, setup);
+    const b = bracketFor(side, entryPrice, setup) || bracketFor(side, price, setup);
+    const plan = { note: `${label} $${notional.toFixed(2)}` };
     const trade = {
       id: `T${this.now()}`,
       status: 'open',
-      side: 'long',
+      side,
       entryTime: new Date(this.now()).toISOString(),
       entryPrice,
       qty,
       notional,
+      entryFee: order.fee || 0,
       stop: b.stop,
       target: b.target,
       risk: b.risk,
@@ -281,11 +309,16 @@ export class TradingBot {
       const count = tradesToday(trades, this.now());
       const asked = setup && ((this.state.askedIfvgs || []).includes(setup.id) || trades.some((t) => t.ifvg?.id === setup.id));
 
-      let reason = null; // why the AI is not consulted / a BUY can't be taken
-      if (open && setup?.direction !== 'bearish') reason = 'Managing open trade (bracket active)';
+      const want = setup ? SIDE_FOR[setup.direction] : null; // trade direction the setup offers
+      const canShort = typeof this.broker.openShort === 'function';
+      // An opposite IFVG while a trade is open is a chance to close it early.
+      const opposite = Boolean(open && want && want !== (open.side || 'long'));
+
+      let reason = null; // why the AI is not consulted / an entry can't be taken
+      if (open && !opposite) reason = 'Managing open trade (bracket active)';
       else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
       else if (!setup) reason = 'No fresh IFVG setup';
-      else if (!open && setup.direction !== 'bullish') reason = 'Bearish IFVG: no long setup (spot is long-only)';
+      else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';
       else if (asked) reason = 'Already evaluated this IFVG';
 
       this.state.lastScan = { time: entry.time, setup: entry.setup, note: reason || 'Asked AI' };
@@ -304,7 +337,7 @@ export class TradingBot {
             ifvg: entry.setup,
             tradesToday: count,
             maxTradesPerDay: s.maxTradesPerDay,
-            openTrade: open && { entryPrice: open.entryPrice, stop: open.stop, target: open.target },
+            openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
           },
           this.ai,
           this.fetch,
@@ -324,21 +357,25 @@ export class TradingBot {
         this.state.lastError = decision.error || null;
         const confident = decision.confidence >= s.minConfidence;
 
-        if (decision.action === 'BUY') {
-          if (reason) entry.note = `BUY not taken: ${reason}`;
-          else if (!confident) entry.note = `Confidence ${decision.confidence} below minimum ${s.minConfidence}`;
-          else {
-            const res = await this.openTrade({ setup, decision, account, price, candles });
-            entry.note = res.note;
-            if (res.trade) { entry.executed = true; entry.tradeId = res.trade.id; entry.order = res.order; }
-          }
-        } else if (decision.action === 'SELL' && open && setup?.direction === 'bearish' && confident) {
+        if (opposite && !reason && confident && decision.action === EXIT_ACTION[open.side || 'long']) {
           const t = await this.closeTrade(open, price, 'signal', candles);
           entry.executed = true;
           entry.tradeId = t.id;
-          entry.note = `Closed open trade on bearish IFVG · P&L ${t.pnl >= 0 ? '+' : ''}$${t.pnl}`;
+          entry.note = `Closed ${open.side || 'long'} on ${setup.direction} IFVG · P&L ${t.pnl >= 0 ? '+' : ''}$${t.pnl}`;
+        } else if (!open && want && decision.action === ENTRY_ACTION[want]) {
+          if (reason) entry.note = `${decision.action} not taken: ${reason}`;
+          else if (!confident) entry.note = `Confidence ${decision.confidence} below minimum ${s.minConfidence}`;
+          else {
+            const res = await this.openTrade({ side: want, setup, decision, account, price, candles });
+            entry.note = res.note;
+            if (res.trade) { entry.executed = true; entry.tradeId = res.trade.id; entry.order = res.order; }
+          }
+        } else if (decision.action === 'HOLD') {
+          entry.note = reason ? `HOLD · ${reason}` : 'HOLD';
         } else {
-          entry.note = reason || (decision.action === 'HOLD' ? 'HOLD' : `${decision.action} not actionable`);
+          entry.note = reason
+            ? `${decision.action} not taken: ${reason}`
+            : `${decision.action} does not match the ${setup?.direction || 'missing'} IFVG setup`;
         }
       }
     } catch (err) {

@@ -5,8 +5,7 @@
 //   bearish FVG: candle[i-2].low  > candle[i].high  -> gap zone [c[i].high, c[i-2].low]
 // The FVG is "inverted" when a later candle CLOSES through the whole gap on the opposite side:
 //   bearish FVG closed above its top    -> bullish IFVG (old resistance becomes support) -> long setup
-//   bullish FVG closed below its bottom -> bearish IFVG (old support becomes resistance) -> exit signal
-// Spot BTC is long-only here, so bullish IFVGs open trades and bearish IFVGs can close them.
+//   bullish FVG closed below its bottom -> bearish IFVG (old support becomes resistance) -> short setup
 
 /**
  * Find every FVG in the candles and whether/when it was inverted.
@@ -74,10 +73,26 @@ export function latestSetup(candles, { maxAge = 3, minGapPct = 0.03 } = {}) {
  * Stop sits just under the zone bottom; target is the same distance above entry.
  * Stop distance is clamped to [minRiskPct, maxRiskPct] of entry; returns null if the stop would be above entry.
  */
-export function bracketLong(entry, zone, { bufferPct = 0.05, minRiskPct = 0.15, maxRiskPct = 3 } = {}) {
+const clampRisk = (risk, entry, { minRiskPct = 0.15, maxRiskPct = 3 }) =>
+  Math.min(Math.max(risk, (entry * minRiskPct) / 100), (entry * maxRiskPct) / 100);
+const round2 = (v) => Number(v.toFixed(2));
+
+export function bracketLong(entry, zone, { bufferPct = 0.05, ...lim } = {}) {
   const rawStop = zone.bottom * (1 - bufferPct / 100);
   if (!(rawStop < entry)) return null;
-  const risk = Math.min(Math.max(entry - rawStop, (entry * minRiskPct) / 100), (entry * maxRiskPct) / 100);
-  const round = (v) => Number(v.toFixed(2));
-  return { stop: round(entry - risk), target: round(entry + risk), risk: round(risk), rr: 1 };
+  const risk = clampRisk(entry - rawStop, entry, lim);
+  return { stop: round2(entry - risk), target: round2(entry + risk), risk: round2(risk), rr: 1 };
+}
+
+/** 1:1 bracket for a short entry off a bearish IFVG: stop just above the zone top, target the same distance below. */
+export function bracketShort(entry, zone, { bufferPct = 0.05, ...lim } = {}) {
+  const rawStop = zone.top * (1 + bufferPct / 100);
+  if (!(rawStop > entry)) return null;
+  const risk = clampRisk(rawStop - entry, entry, lim);
+  return { stop: round2(entry + risk), target: round2(entry - risk), risk: round2(risk), rr: 1 };
+}
+
+/** side: 'long' | 'short' */
+export function bracketFor(side, entry, zone, opts) {
+  return side === 'short' ? bracketShort(entry, zone, opts) : bracketLong(entry, zone, opts);
 }

@@ -34,3 +34,14 @@ test('bracketLong is 1:1 with the stop under the zone', () => {
   assert.ok(Math.abs((60100 - b.stop) - (b.target - 60100)) < 0.02);
   assert.equal(bracketLong(59000, { bottom: 59500, top: 59950 }), null);
 });
+
+test('bearish IFVG is a short setup with a 1:1 bracket above the zone', async () => {
+  const { bearishIfvgCandles } = await import('./helpers.js');
+  const { bracketShort } = await import('../src/ifvg.js');
+  const z = latestSetup(bearishIfvgCandles(Date.UTC(2026, 9, 7, 12)));
+  assert.equal(z.direction, 'bearish');
+  const b = bracketShort(59900, z);
+  assert.ok(b.stop > z.top);
+  assert.ok(Math.abs((b.stop - 59900) - (59900 - b.target)) < 0.02);
+  assert.equal(bracketShort(61000, z), null);
+});

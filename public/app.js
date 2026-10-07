@@ -110,9 +110,18 @@ function drawChart() {
   trades.forEach((t) => {
     const et = new Date(t.entryTime).getTime();
     if (et >= t0) {
-      const px = x(idxAt(et)), py = y(t.entryPrice) + 12;
-      ctx.fillStyle = css('--green');
-      ctx.beginPath(); ctx.moveTo(px, py - 7); ctx.lineTo(px - 5, py + 2); ctx.lineTo(px + 5, py + 2); ctx.closePath(); ctx.fill();
+      const px = x(idxAt(et));
+      ctx.beginPath();
+      if (t.side === 'short') { // red down-triangle above the entry
+        const py = y(t.entryPrice) - 12;
+        ctx.fillStyle = css('--red');
+        ctx.moveTo(px, py + 7); ctx.lineTo(px - 5, py - 2); ctx.lineTo(px + 5, py - 2);
+      } else { // green up-triangle below the entry
+        const py = y(t.entryPrice) + 12;
+        ctx.fillStyle = css('--green');
+        ctx.moveTo(px, py - 7); ctx.lineTo(px - 5, py + 2); ctx.lineTo(px + 5, py + 2);
+      }
+      ctx.closePath(); ctx.fill();
     }
     if (t.exitTime && new Date(t.exitTime).getTime() >= t0) {
       ctx.strokeStyle = t.pnl >= 0 ? css('--green') : css('--red'); ctx.lineWidth = 2;
@@ -160,8 +169,8 @@ async function loadAccount() {
     const a = await api('/api/account');
     $('equity').textContent = usd(a.equity);
     $('cash').textContent = usd(a.cash);
-    $('btc').textContent = `${Number(a.btc).toFixed(6)}`;
-    $('avgEntry').textContent = a.avgEntry ? `avg ${usd(a.avgEntry)} · worth ${usd(a.btc * a.price)}` : 'No open position';
+    $('btc').textContent = a.shortBtc > 0 ? `-${Number(a.shortBtc).toFixed(6)}` : `${Number(a.btc).toFixed(6)}`;
+    $('avgEntry').textContent = a.shortBtc > 0 ? `short from ${usd(a.shortEntry)}` : a.avgEntry ? `avg ${usd(a.avgEntry)} · worth ${usd(a.btc * a.price)}` : 'No open position';
     if (a.startingCash) {
       const pnl = a.equity - a.startingCash;
       const pct = (pnl / a.startingCash) * 100;
@@ -178,9 +187,10 @@ async function loadAccount() {
 function renderOpenTrade(t) {
   if (!t) return '';
   const price = candles.at(-1)?.close ?? t.entryPrice;
+  const short = t.side === 'short';
   const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
-  const upnl = (price - t.entryPrice) * t.qty;
-  return `<div class="ot-head"><span><span class="pill OPEN">OPEN LONG</span> ${fmtTime(t.entryTime)}</span>
+  const upnl = (short ? t.entryPrice - price : price - t.entryPrice) * t.qty;
+  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> ${fmtTime(t.entryTime)}</span>
       <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
     <div class="ot-levels">
       <div><span>Stop</span><em class="down">${usd(t.stop)}</em></div>
@@ -283,13 +293,14 @@ async function loadTrades() {
     $('tradeCount').textContent = trades.length ? ` ${trades.length}${closed.length ? ` · ${Math.round((wins / closed.length) * 100)}% win` : ''}` : '';
     const body = $('trades').querySelector('tbody');
     if (!trades.length) {
-      body.innerHTML = '<tr><td colspan="10" class="empty"><b>No trades yet</b>When a bullish IFVG forms and Jev says BUY, the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
+      body.innerHTML = '<tr><td colspan="11" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
       drawChart();
       return;
     }
     body.innerHTML = trades.map((t, i) => `<tr>
       <td><button type="button" class="thumb" data-trade="${i}" aria-label="Open chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">…</span></button></td>
       <td class="t">${fmtTime(t.entryTime)}</td>
+      <td><span class="pill ${t.side === 'short' ? 'SELL' : 'BUY'}">${t.side === 'short' ? 'SHORT' : 'LONG'}</span></td>
       <td><span class="pill ${RESULT[t.status] || ''}">${RESULT[t.status] || esc(String(t.status).toUpperCase())}</span></td>
       <td class="r">${usd(t.entryPrice)}</td><td class="r down">${usd(t.stop)}</td><td class="r up">${usd(t.target)}</td>
       <td class="r">${t.exitPrice ? usd(t.exitPrice) : '—'}</td>
@@ -305,7 +316,7 @@ async function loadTrades() {
     });
     drawChart();
   } catch (e) {
-    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="10" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
+    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="11" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -314,7 +325,7 @@ async function openShot(t) {
   $('shotBody').innerHTML = '<p class="sub">Loading chart…</p>';
   $('shotMeta').innerHTML = [
     ['Entry', usd(t.entryPrice)], ['Stop', usd(t.stop)], ['Target', usd(t.target)],
-    ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
+    ['Side', t.side === 'short' ? 'Short' : 'Long'], ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
     ['P&L', t.pnl !== undefined ? signedUsd(t.pnl) : '—'], ['Confidence', t.confidence ?? '—'],
     ['IFVG zone', t.ifvg ? `${usd(t.ifvg.bottom)} – ${usd(t.ifvg.top)}` : '—'],
   ].map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');

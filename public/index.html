@@ -89,8 +89,8 @@
   
         <div class="tab-pane" data-pane="trades">
           <div class="table-wrap"><table id="trades"><thead><tr>
-            <th>Chart</th><th>Opened</th><th>Result</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Exit</th><th class="r">R</th><th class="r">P&amp;L</th><th>Source</th>
-          </tr></thead><tbody><tr><td colspan="10" class="empty">Loading trades…</td></tr></tbody></table></div>
+            <th>Chart</th><th>Opened</th><th>Side</th><th>Result</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Exit</th><th class="r">R</th><th class="r">P&amp;L</th><th>Source</th>
+          </tr></thead><tbody><tr><td colspan="11" class="empty">Loading trades…</td></tr></tbody></table></div>
         </div>
   
         <div class="tab-pane" data-pane="decisions" hidden>
@@ -128,10 +128,10 @@
 
           <h3 class="section-label">Strategy</h3>
           <ul class="rules">
-            <li>Setup <b>Bullish IFVG</b></li>
+            <li>Setup <b>Bullish IFVG → long · Bearish IFVG → short</b></li>
             <li>Decision <b id="ruleAi">Jev, auto-execute</b></li>
             <li>Risk : reward <b>1 : 1</b></li>
-            <li>Stop <b>below IFVG zone</b></li>
+            <li>Stop <b>just beyond the IFVG zone</b></li>
           </ul>
 
           <h3 class="section-label">Risk settings</h3>

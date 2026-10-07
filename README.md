@@ -10,19 +10,22 @@ The bot trades the **Inverse Fair Value Gap (IFVG)** model with **Jev** making t
 
 1. Pulls BTC-USD candles from Coinbase's public API (Binance as fallback). No key needed.
 2. Finds fair value gaps (3-candle imbalances) and watches for an **inversion**: a bearish FVG that
-   price closes back above becomes a **bullish IFVG** (old resistance turned support). That is the long setup.
-3. When a fresh bullish IFVG appears, it asks **Jev** (OpenRouter's decisions endpoint) whether to take it.
+   price closes back above is a **bullish IFVG** (support) = **long setup**; a bullish FVG that price closes
+   back below is a **bearish IFVG** (resistance) = **short setup**.
+3. When a fresh IFVG appears (either direction), it asks **Jev** (OpenRouter's decisions endpoint) whether to take it.
    Jev's state includes `setup`, `risk_reward: "1:1"`, `trades_today`, the IFVG zone and the usual indicators.
-4. If Jev says **BUY** with enough confidence, the order is **executed automatically** with a **1:1 bracket**:
-   stop just below the IFVG zone, target the same distance above the entry.
+4. If Jev agrees (**BUY** on a bullish IFVG, **SELL** on a bearish one) with enough confidence, the trade is
+   **executed automatically** with a **1:1 bracket**:
+   stop just beyond the IFVG zone, target the same distance on the other side of the entry.
 5. Every minute the open trade is checked: target hit = **+1R win**, stop hit = **-1R loss**
-   (if one candle touches both, the stop is assumed first). A fresh bearish IFVG + Jev SELL closes it early.
+   (if one candle touches both, the stop is assumed first). An opposite IFVG + matching Jev call closes it early.
 6. At most **10 trades per UTC day** (configurable lower, never above 10) and one open trade at a time.
 7. Each trade gets a **chart snapshot** (SVG rendered on the server) at entry and at exit, shown in the
    **Trade history** tab. Click a thumbnail to see both charts with the IFVG zone, entry, stop and target.
 
 If no AI key is set (or the AI errors), a simple rule-based strategy answers instead so the site keeps working.
-Spot BTC is long-only, so bearish IFVGs never open shorts.
+Shorts are simulated on the built-in local paper account. Alpaca crypto paper accounts cannot short, so with
+`BROKER=alpaca` bearish setups are skipped.
 
 The UI follows the **Obsidian Terminal** design system in [DESIGN.md](DESIGN.md).
 

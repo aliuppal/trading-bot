@@ -32,11 +32,13 @@ prefer HOLD when signals are mixed. Never risk more than necessary.
 
 Candle size: ${granularity / 60} minutes.
 
-Strategy: Inverse Fair Value Gap (IFVG). Longs are only taken off a bullish IFVG (a bearish fair value gap
-that price closed back above, now acting as support). Every trade is a 1:1 bracket: stop just below the
-IFVG zone, target the same distance above entry. Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
+Strategy: Inverse Fair Value Gap (IFVG).
+- Bullish IFVG (a bearish fair value gap price closed back above, now support) = LONG setup -> answer BUY.
+- Bearish IFVG (a bullish fair value gap price closed back below, now resistance) = SHORT setup -> answer SELL.
+Every trade is a 1:1 bracket: stop just beyond the IFVG zone, target the same distance on the other side of entry.
+Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
 Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
-Open trade: ${openTrade ? `long from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none'}
+Open trade: ${openTrade ? `${openTrade.side || 'long'} from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none'}
 
 Technical indicators (latest):
 ${JSON.stringify(indicators, null, 2)}
@@ -202,7 +204,8 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     ifvg_top: ifvg?.top ?? null,
     ifvg_bottom: ifvg?.bottom ?? null,
     ifvg_age_candles: ifvg?.ageCandles ?? null,
-    open_trade: openTrade ? `long from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none',
+    trade_direction: ifvg ? (ifvg.direction === 'bullish' ? 'long' : 'short') : null,
+    open_trade: openTrade ? `${openTrade.side || 'long'} from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none',
     symbol: 'BTC/USD',
     candle_minutes: granularity / 60,
     ...rest,
@@ -224,11 +227,12 @@ const JEV_QUESTIONS = {
   action: {
     type: 'choice',
     instructions: 'Decide the trade for a disciplined Bitcoin intraday trader using the Inverse Fair Value Gap (IFVG) model '
-      + 'on a paper account. Every long uses a 1:1 bracket: stop just below the IFVG zone, target the same distance above entry. '
+      + 'on a paper account. Bullish IFVG = long setup, bearish IFVG = short setup. Every trade uses a 1:1 bracket: '
+      + 'stop just beyond the IFVG zone, target the same distance on the other side of entry. '
       + 'At most max_trades_per_day trades per day. Only take the setup when the IFVG and momentum agree; otherwise HOLD.',
     criteria: {
-      BUY: 'A bullish IFVG is holding as support and momentum favors price reaching a 1:1 target before the stop',
-      SELL: 'A bearish IFVG is rejecting price; close the open long early',
+      BUY: 'A bullish IFVG is holding as support and price should reach a 1:1 target above before the stop (go long, or close an open short)',
+      SELL: 'A bearish IFVG is holding as resistance and price should reach a 1:1 target below before the stop (go short, or close an open long)',
       HOLD: 'Signals are mixed or weak; do nothing',
     },
   },

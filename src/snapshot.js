@@ -76,8 +76,13 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   // risk / reward boxes and levels, from the entry candle to the right edge
   const ex = x(entryIdx - start);
   const span = f1(W - PAD.r - ex);
-  parts.push(`<rect x="${f1(ex)}" y="${f1(y(trade.target))}" width="${span}" height="${f1(y(trade.entryPrice) - y(trade.target))}" fill="${C.up}" fill-opacity=".07"/>`);
-  parts.push(`<rect x="${f1(ex)}" y="${f1(y(trade.entryPrice))}" width="${span}" height="${f1(y(trade.stop) - y(trade.entryPrice))}" fill="${C.down}" fill-opacity=".07"/>`);
+  const short = trade.side === 'short';
+  const box = (a, b, col) => {
+    const top = Math.min(y(a), y(b));
+    parts.push(`<rect x="${f1(ex)}" y="${f1(top)}" width="${span}" height="${f1(Math.abs(y(a) - y(b)))}" fill="${col}" fill-opacity=".07"/>`);
+  };
+  box(trade.entryPrice, trade.target, C.up);
+  box(trade.entryPrice, trade.stop, C.down);
   const level = (p, col, name, dash = '') => {
     const ly = f1(y(p));
     parts.push(`<line x1="${f1(ex)}" x2="${W - PAD.r}" y1="${ly}" y2="${ly}" stroke="${col}" stroke-width="1.4"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
@@ -89,7 +94,9 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   level(trade.stop, C.down, 'SL');
 
   // entry marker
-  parts.push(`<path d="M${f1(ex)} ${f1(y(trade.entryPrice) + 4)} l-6 10 h12 z" fill="${C.up}"/>`);
+  parts.push(short
+    ? `<path d="M${f1(ex)} ${f1(y(trade.entryPrice) - 4)} l-6 -10 h12 z" fill="${C.down}"/>`
+    : `<path d="M${f1(ex)} ${f1(y(trade.entryPrice) + 4)} l-6 10 h12 z" fill="${C.up}"/>`);
 
   // exit marker
   if (phase === 'exit' && Number.isFinite(trade.exitPrice) && exitT) {
@@ -107,9 +114,9 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
     right = `${res}  ${trade.pnl >= 0 ? '+' : '-'}$${money(Math.abs(trade.pnl || 0))}`;
   }
   const rightCol = phase === 'exit' ? (trade.pnl >= 0 ? C.up : C.down) : C.cyan;
-  parts.push(`<text x="${PAD.l}" y="22" fill="${C.text}" font-size="12" font-weight="600" ${MONO}>BTC-USD · ${tf} · LONG · ${label(when)} UTC</text>`);
+  parts.push(`<text x="${PAD.l}" y="22" fill="${C.text}" font-size="12" font-weight="600" ${MONO}>BTC-USD · ${tf} · ${short ? 'SHORT' : 'LONG'} · ${label(when)} UTC</text>`);
   parts.push(`<text x="${W - 12}" y="22" fill="${rightCol}" font-size="12" font-weight="600" text-anchor="end" ${MONO}>${label(right)}</text>`);
-  parts.push(`<text x="${PAD.l}" y="${H - 8}" fill="${C.axis}" font-size="10" ${MONO}>R:R 1:1 · risk $${money(trade.entryPrice - trade.stop)}/BTC</text>`);
+  parts.push(`<text x="${PAD.l}" y="${H - 8}" fill="${C.axis}" font-size="10" ${MONO}>R:R 1:1 · risk $${money(Math.abs(trade.entryPrice - trade.stop))}/BTC</text>`);
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Trade chart (${label(phase)})">${parts.join('')}</svg>`;
 }
