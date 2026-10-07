@@ -1,6 +1,7 @@
 import { decide } from './ai.js';
 import { summarize } from './indicators.js';
-import { latestSetup, bracketFor } from './ifvg.js';
+import { bracketFor } from './ifvg.js';
+import { scanSetups } from './strategy.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
 
@@ -67,13 +68,32 @@ export function checkBracket(trade, candles, price) {
   return null;
 }
 
+/** Minutes between Jev reviews of an open trade: 20 for 3m / 5m entries, 60 for 15m (and slower) entries. */
+export function reviewMinutes(trade) {
+  return (trade.granularity || 900) <= 300 ? 20 : 60;
+}
+
+/** Is the open trade due for a Jev review (period counted from the last review, or from the entry)? */
+export function reviewDue(trade, now = Date.now()) {
+  const since = new Date(trade.lastReviewAt || trade.entryTime).getTime();
+  return now - since >= reviewMinutes(trade) * 60000 - 5000;
+}
+
+function nextReviewLabel(trade) {
+  const t = new Date(new Date(trade.lastReviewAt || trade.entryTime).getTime() + reviewMinutes(trade) * 60000);
+  return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')} UTC`;
+}
+
 const SIDE_FOR = { bullish: 'long', bearish: 'short' };
 const ENTRY_ACTION = { long: 'BUY', short: 'SELL' };
 const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: Number(z.top.toFixed(2)), bottom: Number(z.bottom.toFixed(2)),
-  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles,
+  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, granularity: z.granularity,
+  ...(z.htf && {
+    htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
+  }),
 };
 
 export class TradingBot {
@@ -164,11 +184,14 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
-    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay'];
+    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge'];
     const s = this.state.settings;
     for (const k of allowed) {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
     }
+    if (patch.requireHtfTap !== undefined) s.requireHtfTap = patch.requireHtfTap === true || patch.requireHtfTap === 'true';
+    if (['all', 'both', '180', '300', '900'].includes(String(patch.entryTimeframes))) s.entryTimeframes = String(patch.entryTimeframes);
+    s.ifvgMaxAge = Math.min(7, Math.max(3, Math.round(s.ifvgMaxAge ?? 5)));
     s.intervalMinutes = Math.max(1, s.intervalMinutes);
     s.minConfidence = Math.min(1, Math.max(0, s.minConfidence));
     s.maxPositionPct = Math.min(100, Math.max(0, s.maxPositionPct));
@@ -196,7 +219,7 @@ export class TradingBot {
     if (this.state.running && due) return this.runOnce();
     const open = (await this.trades()).find((t) => t.status === 'open');
     if (!open) return null;
-    const candles = await this.market.getCandles(this.state.settings.granularity, 200);
+    const candles = await this.market.getCandles(open.granularity || this.state.settings.granularity, 200);
     const closed = await this.manageOpen(candles, candles.at(-1).close);
     return closed && { closed };
   }
@@ -247,11 +270,11 @@ export class TradingBot {
     if (i >= 0) trades[i] = trade;
     await this.kv.set('trades', trades);
     const shots = await this.shots(trade.id);
-    shots.exit = renderTradeImage({ candles, trade, phase: 'exit', granularity: this.state.settings.granularity });
+    shots.exit = renderTradeImage({ candles, trade, phase: 'exit', granularity: trade.granularity || this.state.settings.granularity });
     await this.kv.set(`shot_${trade.id}`, shots);
     await this.log({
       time: nowIso, price: exitPrice, action: EXIT_ACTION[trade.side || 'long'], source: 'bracket', executed: Boolean(order), tradeId: trade.id,
-      note: `${reason === 'target' ? 'Target hit (+1R)' : reason === 'stop' ? 'Stop hit (-1R)' : 'Closed on signal'} · P&L ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`,
+      note: `${reason === 'target' ? 'Target hit (+1R)' : reason === 'stop' ? 'Stop hit (-1R)' : reason === 'review' ? 'Closed by Jev risk review' : 'Closed on signal'} · P&L ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`,
     });
     return trade;
   }
@@ -278,7 +301,7 @@ export class TradingBot {
       qty,
       notional,
       entryFee: order.fee || 0,
-      granularity: this.state.settings.granularity,
+      granularity: setup.granularity || this.state.settings.granularity,
       stop: b.stop,
       target: b.target,
       risk: b.risk,
@@ -295,7 +318,7 @@ export class TradingBot {
     await this.kv.set('trades', trades);
     await Promise.all(dropped.map((t) => this.kv.del(`shot_${t.id}`)));
     await this.kv.set(`shot_${trade.id}`, {
-      entry: renderTradeImage({ candles, trade, phase: 'entry', granularity: this.state.settings.granularity }),
+      entry: renderTradeImage({ candles, trade, phase: 'entry', granularity: trade.granularity }),
     });
     return { trade, order, note: `${plan.note} · SL ${b.stop} · TP ${b.target} (1:1)` };
   }
@@ -303,6 +326,15 @@ export class TradingBot {
   async log(entry) {
     entry.id ??= `D${this.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await appendList(this.kv, 'decisions', entry, MAX_DECISIONS_KEPT);
+  }
+
+  /** Record that Jev reviewed the open trade now (the next review is one review period later). */
+  async markReviewed(trade) {
+    trade.lastReviewAt = new Date(this.now()).toISOString();
+    trade.reviews = (trade.reviews || 0) + 1;
+    const trades = await this.trades();
+    const i = trades.findIndex((t) => t.id === trade.id);
+    if (i >= 0) { trades[i] = trade; await this.kv.set('trades', trades); }
   }
 
   rememberAsked(id) {
@@ -320,33 +352,40 @@ export class TradingBot {
     let persist = manual;
     try {
       const s = this.state.settings;
-      const candles = await this.market.getCandles(s.granularity, 200);
+      // 1. Enforce the open trade's stop / target on its own timeframe.
+      let open = (await this.trades()).find((t) => t.status === 'open');
+      if (open) {
+        const oc = await this.market.getCandles(open.granularity || s.granularity, 200);
+        if (await this.manageOpen(oc, oc.at(-1).close)) persist = true;
+      }
+
+      // 2. Multi-timeframe scan: 1h/2h/4h FVG tap + fresh 5m/15m IFVG.
+      const scan = await scanSetups(this.market, s, this.now());
+      const { setup, candles } = scan;
       const indicators = summarize(candles);
       const price = indicators.price;
-      const closed = await this.manageOpen(candles, price);
-      if (closed) persist = true;
-
-      const setup = latestSetup(candles);
       entry.price = price;
       entry.setup = zoneSummary(setup);
       const trades = await this.trades();
-      const open = trades.find((t) => t.status === 'open');
+      open = trades.find((t) => t.status === 'open');
       const count = tradesToday(trades, this.now());
       const asked = setup && ((this.state.askedIfvgs || []).includes(setup.id) || trades.some((t) => t.ifvg?.id === setup.id));
 
       const want = setup ? SIDE_FOR[setup.direction] : null; // trade direction the setup offers
       const canShort = typeof this.broker.openShort === 'function';
       // An opposite IFVG while a trade is open is a chance to close it early.
-      const opposite = Boolean(open && want && want !== (open.side || 'long'));
+      const opposite = Boolean(open && want && want !== (open.side || 'long') && !asked);
+      // Periodic risk review of the open trade: every 20 min (5m entries) / 60 min (15m entries).
+      const review = Boolean(open && !opposite && reviewDue(open, this.now()));
 
       let reason = null; // why the AI is not consulted / an entry can't be taken
-      if (open && !opposite) reason = 'Managing open trade (bracket active)';
+      if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
       else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
-      else if (!setup) reason = 'No fresh IFVG setup';
+      else if (!open && !setup) reason = scan.note ? `No setup · ${scan.note}` : 'No fresh IFVG setup';
       else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';
-      else if (asked) reason = 'Already evaluated this IFVG';
+      else if (!open && asked) reason = 'Already evaluated this IFVG';
 
-      this.state.lastScan = { time: entry.time, setup: entry.setup, note: reason || 'Asked AI' };
+      this.state.lastScan = { time: entry.time, setup: entry.setup, note: reason || (review ? 'Jev reviewing open trade' : 'Asked AI') };
 
       if (reason && !manual) {
         Object.assign(entry, { action: 'HOLD', note: reason, executed: false, source: 'ifvg' });
@@ -357,7 +396,12 @@ export class TradingBot {
             indicators,
             account,
             recentCandles: candles.slice(-24),
-            granularity: s.granularity,
+            granularity: scan.granularity,
+            review: review && open && {
+              side: open.side || 'long',
+              minutesOpen: Math.round((this.now() - new Date(open.entryTime).getTime()) / 60000),
+              unrealizedR: Number(((open.side === 'short' ? open.entryPrice - price : price - open.entryPrice) / Math.abs(open.entryPrice - open.stop)).toFixed(2)),
+            },
             recentDecisions: await this.decisions(5),
             ifvg: entry.setup,
             tradesToday: count,
@@ -382,7 +426,18 @@ export class TradingBot {
         this.state.lastError = decision.error || null;
         const confident = decision.confidence >= s.minConfidence;
 
-        if (opposite && !reason && confident && decision.action === EXIT_ACTION[open.side || 'long']) {
+        if (review && !opposite) {
+          await this.markReviewed(open);
+          if (confident && decision.action === EXIT_ACTION[open.side || 'long']) {
+            const t = await this.closeTrade(open, price, 'review', candles);
+            entry.executed = true;
+            entry.tradeId = t.id;
+            entry.note = `Jev review: closed ${open.side || 'long'} early · P&L ${t.pnl >= 0 ? '+' : ''}$${t.pnl}`;
+          } else {
+            entry.tradeId = open.id;
+            entry.note = `Jev review: keep ${open.side || 'long'} open (${decision.action}${confident ? '' : ', low confidence'})`;
+          }
+        } else if (opposite && !reason && confident && decision.action === EXIT_ACTION[open.side || 'long']) {
           const t = await this.closeTrade(open, price, 'signal', candles);
           entry.executed = true;
           entry.tradeId = t.id;

@@ -10,6 +10,7 @@ import { TradingBot } from './src/bot.js';
 import { summarize } from './src/indicators.js';
 import { findIfvgs } from './src/ifvg.js';
 import { createKV } from './src/store.js';
+import { loadHtfZones } from './src/strategy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,7 +44,12 @@ app.get('/api/status', wrap(async (req, res) => {
 app.get('/api/market', wrap(async (req, res) => {
   const granularity = Number(req.query.granularity) || bot.settings.granularity;
   const candles = await market.getCandles(granularity, 200);
-  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles).slice(-6) });
+  const price = candles.at(-1)?.close ?? 0;
+  // Active 1h/2h/4h FVGs within 3% of price, for the chart overlay.
+  const htfZones = (await loadHtfZones(market).catch(() => []))
+    .filter((z) => Math.abs((z.top + z.bottom) / 2 - price) / price < 0.03)
+    .slice(-12);
+  res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles).slice(-6), htfZones });
 }));
 app.get('/api/account', wrap(async (req, res) => res.json(await broker.getAccount())));
 app.get('/api/orders', wrap(async (req, res) => res.json(await broker.getOrders(100))));

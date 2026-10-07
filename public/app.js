@@ -28,6 +28,7 @@ function toast(msg, isError = false) {
 let granularity = 3600;
 let candles = [];
 let ifvgs = [];
+let htfZones = [];
 let trades = [];
 let status = null;
 
@@ -54,7 +55,9 @@ function drawChart() {
   const idxAt = (t) => Math.max(0, Math.min(candles.length - 1, Math.floor((t - t0) / (granularity * 1000))));
   // Leave empty candle slots on the right so the open trade's risk/reward block is fully visible.
   const entryIdx = open ? idxAt(new Date(open.entryTime).getTime()) : null;
-  const future = open ? Math.max(2, entryIdx + RR_CANDLES + 2 - (candles.length - 1)) : 0;
+  // The block grows with the trade: from the entry to the latest candle (at least RR_CANDLES wide).
+  const rrEnd = open ? Math.max(entryIdx + RR_CANDLES, candles.length + 1) : 0;
+  const future = open ? Math.max(2, rrEnd + 2 - (candles.length - 1)) : 0;
   const step = (w - pad.l - pad.r) / (candles.length + future);
   const x = (i) => pad.l + step * (i + 0.5);
   const y = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
@@ -67,6 +70,17 @@ function drawChart() {
     ctx.beginPath(); ctx.moveTo(pad.l, y(p)); ctx.lineTo(w - pad.r, y(p)); ctx.stroke();
     ctx.fillText(Math.round(p).toLocaleString(), w - pad.r + 8, y(p) + 4);
   }
+
+  // 1h / 2h / 4h FVG zones (full width, behind everything)
+  htfZones.forEach((z) => {
+    if (z.top < lo || z.bottom > hi) return;
+    const bull = z.type === 'bullish';
+    const x0 = z.readyAt > t0 ? x(idxAt(z.readyAt)) - step / 2 : pad.l;
+    ctx.fillStyle = bull ? 'rgba(16, 185, 129, .07)' : 'rgba(244, 63, 94, .07)';
+    ctx.fillRect(x0, y(z.top), w - pad.r - x0, Math.max(1, y(z.bottom) - y(z.top)));
+    ctx.fillStyle = bull ? 'rgba(52, 211, 153, .75)' : 'rgba(251, 113, 133, .75)';
+    ctx.fillText(`${z.tf} FVG`, x0 + 4, y(z.top) + 11);
+  });
 
   // IFVG zones
   ifvgs.forEach((z) => {
@@ -100,10 +114,10 @@ function drawChart() {
   });
   ctx.stroke();
 
-  // open trade: risk/reward block spanning RR_CANDLES candles from the entry
+  // open trade: risk/reward block from the entry to the latest candle (min RR_CANDLES wide)
   if (open) {
     const x0 = x(entryIdx) - step / 2;
-    const x1 = x(entryIdx + RR_CANDLES) + step / 2;
+    const x1 = x(rrEnd) + step / 2;
     const yIn = y(open.entryPrice);
     ctx.fillStyle = 'rgba(16, 185, 129, .18)'; // reward
     ctx.fillRect(x0, Math.min(yIn, y(open.target)), x1 - x0, Math.abs(y(open.target) - yIn));
@@ -164,6 +178,7 @@ async function loadMarket() {
     const data = await api(`/api/market?granularity=${granularity}`);
     candles = data.candles;
     ifvgs = data.ifvgs || [];
+    htfZones = data.htfZones || [];
     renderIndicators(data.indicators);
     state.textContent = candles.length ? '' : 'No candle data returned for this timeframe.';
     drawChart();

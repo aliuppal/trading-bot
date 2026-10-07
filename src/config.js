@@ -29,6 +29,12 @@ export const config = {
     maxPositionPct: num(process.env.MAX_POSITION_PCT, 50),
     maxTradePct: num(process.env.MAX_TRADE_PCT, 10),
     maxTradesPerDay: Math.min(10, num(process.env.MAX_TRADES_PER_DAY, 10)),
+    // IFVG must have inverted within the last N entry candles (3-7)
+    ifvgMaxAge: Math.min(7, Math.max(3, num(process.env.IFVG_MAX_AGE, 5))),
+    // Entry needs a tap of a same-direction 1h/2h/4h FVG first
+    requireHtfTap: process.env.REQUIRE_HTF_TAP !== 'false',
+    // all = 3m + 5m + 15m entries; or 180 / 300 / 900 for one timeframe
+    entryTimeframes: process.env.ENTRY_TIMEFRAMES || 'all',
     autoStart: process.env.AUTO_START !== 'false',
   },
   // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).

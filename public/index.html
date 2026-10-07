@@ -57,6 +57,7 @@
         <div class="panel-head">
           <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M8 2v12M12 4v8" /></svg>Price · SMA 20</h2>
           <div class="segmented" id="granularity" role="tablist" aria-label="Candle size">
+            <button type="button" role="tab" data-g="180">3m</button>
             <button type="button" role="tab" data-g="300">5m</button>
             <button type="button" role="tab" data-g="900">15m</button>
             <button type="button" role="tab" data-g="3600" class="active" aria-selected="true">1h</button>
@@ -66,6 +67,8 @@
         </div>
         <div class="legend">
           <span><i style="background:rgba(6,182,212,.35);border:1px dashed #06B6D4"></i>IFVG zone</span>
+          <span><i style="background:rgba(16,185,129,.25)"></i>HTF bullish FVG</span>
+          <span><i style="background:rgba(244,63,94,.25)"></i>HTF bearish FVG</span>
           <span><i style="background:#06B6D4;height:2px;vertical-align:3px"></i>SMA 20</span>
           <span><i style="background:#10B981;height:2px;vertical-align:3px"></i>Target</span>
           <span><i style="background:#F43F5E;height:2px;vertical-align:3px"></i>Stop</span>
@@ -145,22 +148,27 @@
 
           <h3 class="section-label">Strategy</h3>
           <ul class="rules">
-            <li>Setup <b>Bullish IFVG → long · Bearish IFVG → short</b></li>
+            <li>Zone <b>tap of a 1h / 2h / 4h FVG</b></li>
+            <li>Entry <b>IFVG on 15m › 5m › 3m (3m: 1h FVG only)</b></li>
+            <li>Direction <b>bullish → long · bearish → short</b></li>
             <li>Decision <b id="ruleAi">Jev, auto-execute</b></li>
             <li>Risk : reward <b>1 : 1</b></li>
             <li>Stop <b>just beyond the IFVG zone</b></li>
+            <li>Jev review <b>every 20 min (3m/5m) · 60 min (15m)</b></li>
           </ul>
 
           <h3 class="section-label">Risk settings</h3>
           <form id="settingsForm" class="settings">
             <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
-            <label>Candles<select name="granularity">
-              <option value="300">5m</option><option value="900">15m</option><option value="3600">1h</option>
-              <option value="21600">6h</option><option value="86400">1d</option></select></label>
+            <label>Entry timeframes<select name="entryTimeframes">
+              <option value="all">15m › 5m › 3m</option><option value="both">15m › 5m</option>
+              <option value="900">15m only</option><option value="300">5m only</option><option value="180">3m only</option></select></label>
             <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
             <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
             <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
             <label>Trades / day (max 10)<input name="maxTradesPerDay" type="number" min="0" max="10" step="1" /></label>
+            <label>IFVG age (3-7 candles)<input name="ifvgMaxAge" type="number" min="3" max="7" step="1" /></label>
+            <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
             <button type="submit" class="btn btn-ghost">Save settings</button>
           </form>
 

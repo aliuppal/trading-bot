@@ -26,7 +26,7 @@ export class MemKV {
 
 /**
  * Flat candles ending in a bullish IFVG: a bearish FVG (zone 59500-59950) that the last candle closes back above.
- * The last candle opens at `end - 1000` ms.
+ * The last candle closed at `end - 1000` ms.
  */
 export function ifvgCandles(end = Date.UTC(2026, 9, 7, 12)) {
   const H = 900000;
@@ -36,7 +36,7 @@ export function ifvgCandles(end = Date.UTC(2026, 9, 7, 12)) {
   rows.push({ open: 59950, high: 59960, low: 58990, close: 59000 }); // displacement down
   rows.push({ open: 59000, high: 59500, low: 58800, close: 59100 }); // c: a.low 59950 > c.high 59500 -> bearish FVG
   rows.push({ open: 59100, high: 60150, low: 59050, close: 60100 }); // closes above 59950 -> bullish IFVG
-  const start = end - 1000 - (rows.length - 1) * H;
+  const start = end - 1000 - rows.length * H; // last candle already closed at end - 1000
   return rows.map((r, i) => ({ ...r, time: start + i * H, volume: 10 }));
 }
 

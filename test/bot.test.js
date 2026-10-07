@@ -8,7 +8,7 @@ import { LocalBroker } from '../src/brokers/local.js';
 import { FileKV } from '../src/store.js';
 import { geminiResponse, ifvgCandles, MemKV } from './helpers.js';
 
-const settings = { minConfidence: 0.6, maxPositionPct: 50, maxTradePct: 10, intervalMinutes: 5, granularity: 900, maxTradesPerDay: 10 };
+const settings = { minConfidence: 0.6, maxPositionPct: 50, maxTradePct: 10, intervalMinutes: 5, granularity: 900, maxTradesPerDay: 10, ifvgMaxAge: 3, requireHtfTap: false, entryTimeframes: '900' };
 const acct = (o = {}) => ({ cash: 100000, btc: 0, price: 50000, equity: 100000, ...o });
 const NOW = Date.UTC(2026, 9, 7, 12);
 
@@ -106,7 +106,7 @@ test('no IFVG: scheduled scans skip the AI', async () => {
   const flat = ifvgCandles(NOW).slice(0, 40);
   const { bot } = setup({ candles: flat, fetchImpl: async () => { calls++; throw new Error('nope'); } });
   const entry = await bot.runOnce();
-  assert.equal(entry.note, 'No fresh IFVG setup');
+  assert.match(entry.note, /No setup · 15m: no fresh IFVG/);
   assert.equal(calls, 0);
 });
 
@@ -254,4 +254,26 @@ test('missing snapshots are re-rendered on demand as base64 images', async () =>
   assert.match(shots.entry, /^data:image\/svg\+xml;base64,/);
   assert.match(Buffer.from(shots.entry.split(',')[1], 'base64').toString(), /^<svg/);
   assert.deepEqual(await s.kv.get(`shot_${t.id}`, {}), shots);
+});
+
+test('Jev risk review: a 15m trade is reviewed after 60 min and closed when Jev says close', async () => {
+  let answer = { action: 'BUY', confidence: 0.8, size_pct: 5, reasoning: 'IFVG holding' };
+  const s = setup({ fetchImpl: async (...a) => geminiResponse(answer)(...a) });
+  await s.bot.runOnce();
+  const [t] = await s.bot.trades();
+  assert.equal(t.status, 'open');
+
+  // 30 min later: no review yet for a 15m trade
+  s.bot.now = () => NOW + 30 * 60000;
+  const early = await s.bot.runOnce();
+  assert.match(early.note, /Managing open trade/);
+
+  // 61 min later: Jev reviews and answers close (SELL closes a long)
+  answer = { action: 'SELL', confidence: 0.9, size_pct: 0, reasoning: 'momentum turned' };
+  s.bot.now = () => NOW + 61 * 60000;
+  const rev = await s.bot.runOnce();
+  assert.match(rev.note, /Jev review: closed long early/);
+  const [closed] = await s.bot.trades();
+  assert.equal(closed.exitReason, 'review');
+  assert.equal(closed.reviews, 1);
 });

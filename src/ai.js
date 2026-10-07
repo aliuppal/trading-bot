@@ -16,7 +16,7 @@ const RESPONSE_SCHEMA = {
 };
 
 export function buildPrompt({
-  indicators, account, recentCandles, granularity, recentDecisions = [], ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade,
+  indicators, account, recentCandles, granularity, recentDecisions = [], ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review,
 }) {
   const candleLines = recentCandles
     .map((c) => `${new Date(c.time).toISOString()} O:${c.open} H:${c.high} L:${c.low} C:${c.close} V:${Math.round(c.volume)}`)
@@ -38,7 +38,10 @@ Strategy: Inverse Fair Value Gap (IFVG).
 Every trade is a 1:1 bracket: stop just beyond the IFVG zone, target the same distance on the other side of entry.
 Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
 Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
+Higher-timeframe confirmation: ${ifvg?.htf ? `price tapped a ${ifvg.htf.tf} ${ifvg.htf.type} FVG (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none'}
+Entry timeframe: ${ifvg?.granularity ? `${ifvg.granularity / 60}m` : `${granularity / 60}m`}
 Open trade: ${openTrade ? `${openTrade.side || 'long'} from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none'}
+${review ? `RISK REVIEW of the open ${review.side}: open ${review.minutesOpen} min, currently ${review.unrealizedR}R. Decide whether to keep it (HOLD) or close it now to protect capital (${review.side === 'long' ? 'SELL' : 'BUY'} = close).` : ''}
 
 Technical indicators (latest):
 ${JSON.stringify(indicators, null, 2)}
@@ -194,11 +197,14 @@ const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
 
 /** Flat state object for Jev: indicators, account and recent closes. */
-export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
     setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
     risk_reward: '1:1',
+    htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
+    entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
+    ...(review && { review_minutes_open: review.minutesOpen, review_unrealized_r: review.unrealizedR }),
     trades_today: tradesToday,
     max_trades_per_day: maxTradesPerDay,
     ifvg_top: ifvg?.top ?? null,
@@ -251,7 +257,24 @@ export function scoreToPct(score) {
   return Number((SIZE_LEVELS[lo] + (SIZE_LEVELS[hi] - SIZE_LEVELS[lo]) * (s - lo)).toFixed(1));
 }
 
+/** Questions for reviewing an open trade: keep it (HOLD) or close it now (CLOSE). */
+export function reviewQuestions(side) {
+  return {
+    action: {
+      type: 'choice',
+      instructions: `Risk review of an open ${side} BTC trade (1:1 bracket, IFVG model). Keep it unless the setup has clearly `
+        + 'failed or momentum has turned against it; closing early protects capital.',
+      criteria: {
+        HOLD: `The ${side} setup is still valid; let the stop / target decide`,
+        CLOSE: `Momentum has turned against the ${side}; close it now to cut risk`,
+      },
+    },
+  };
+}
+
 export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
+  const review = context.review;
+  const questions = review ? reviewQuestions(review.side) : JEV_QUESTIONS;
   const res = await fetchImpl(JEV_URL, {
     method: 'POST',
     headers: {
@@ -260,7 +283,7 @@ export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
       'HTTP-Referer': 'https://github.com/aliuppal/trading-bot',
       'X-Title': 'BTC AI Paper Trader',
     },
-    body: JSON.stringify({ model, state: buildJevState(context), questions: JEV_QUESTIONS }),
+    body: JSON.stringify({ model, state: buildJevState(context), questions }),
   });
   if (!res.ok) {
     const err = new Error(`Jev HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -270,12 +293,15 @@ export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
   const data = await res.json();
   if (data.error) throw new Error(`Jev: ${data.error.message || JSON.stringify(data.error)}`);
   const a = data.answers?.action;
-  const action = String(a?.choice || '').toUpperCase();
-  if (!ACTIONS.includes(action)) throw new Error(`Jev returned no valid action: ${JSON.stringify(data).slice(0, 200)}`);
+  const choice = String(a?.choice || '').toUpperCase();
+  const choices = review ? ['HOLD', 'CLOSE'] : ACTIONS;
+  if (!choices.includes(choice)) throw new Error(`Jev returned no valid action: ${JSON.stringify(data).slice(0, 200)}`);
   const probs = a.probabilities || {};
-  const confidence = Number(probs[action] ?? a.confidence ?? 0);
+  const confidence = Number(probs[choice] ?? a.confidence ?? 0);
+  // A review's CLOSE becomes the exit action for the open trade (SELL closes a long, BUY closes a short).
+  const action = choice === 'CLOSE' ? (review.side === 'short' ? 'BUY' : 'SELL') : choice;
   const sizePct = action === 'HOLD' ? 0 : scoreToPct(data.answers?.size?.score);
-  const odds = ACTIONS.map((k) => `${k} ${Math.round((probs[k] ?? 0) * 100)}%`).join(' · ');
+  const odds = choices.map((k) => `${k} ${Math.round((probs[k] ?? 0) * 100)}%`).join(' · ');
   return {
     action,
     confidence: Number(confidence.toFixed(2)),

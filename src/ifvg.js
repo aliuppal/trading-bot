@@ -96,3 +96,92 @@ export function bracketShort(entry, zone, { bufferPct = 0.05, ...lim } = {}) {
 export function bracketFor(side, entry, zone, opts) {
   return side === 'short' ? bracketShort(entry, zone, opts) : bracketLong(entry, zone, opts);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Higher-timeframe (HTF) FVGs and taps
+// ---------------------------------------------------------------------------------------------
+
+/** Merge candles into a larger timeframe (e.g. 1h -> 2h / 4h), buckets aligned to UTC. */
+export function aggregate(candles, toSeconds) {
+  const size = toSeconds * 1000;
+  const out = [];
+  for (const c of candles) {
+    const t = Math.floor(c.time / size) * size;
+    const last = out.at(-1);
+    if (last && last.time === t) {
+      last.high = Math.max(last.high, c.high);
+      last.low = Math.min(last.low, c.low);
+      last.close = c.close;
+      last.volume += c.volume || 0;
+    } else {
+      out.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 });
+    }
+  }
+  return out;
+}
+
+/**
+ * FVGs on a higher timeframe that are still active (price has not closed through them).
+ * readyAt: when the 3rd candle closed, i.e. from when the gap exists.
+ */
+export function activeFvgs(candles, seconds, { minGapPct = 0.05, label } = {}) {
+  return findFvgs(candles, { minGapPct })
+    .filter((f) => f.invertedIndex === undefined)
+    .map((f) => ({
+      tf: label || `${seconds / 3600}h`,
+      type: f.type,
+      top: f.top,
+      bottom: f.bottom,
+      formedAt: f.formedAt,
+      readyAt: candles[f.index + 1].time + seconds * 1000,
+    }));
+}
+
+/**
+ * Has price tapped an HTF FVG of the same direction recently?
+ * Bullish setups need a bullish HTF FVG (demand), bearish setups a bearish one (supply).
+ * A tap is any lower-timeframe candle in `recent` that traded into the zone after it formed.
+ * Returns the most recently tapped zone (with tappedAt) or null.
+ */
+export function findHtfTap(recent, zones, direction) {
+  let best = null;
+  for (const z of zones) {
+    if (z.type !== direction) continue;
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const c = recent[i];
+      if (c.time < z.readyAt) break;
+      if (c.low <= z.top && c.high >= z.bottom) {
+        if (!best || c.time > best.tappedAt) best = { ...z, tappedAt: c.time };
+        break;
+      }
+    }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Closed vs. forming candles (multi-timeframe priority)
+// ---------------------------------------------------------------------------------------------
+
+/** Drop the last candle while it is still forming (now is before its close). */
+export function closedCandles(candles, seconds, now = Date.now()) {
+  const last = candles.at(-1);
+  return last && now < last.time + seconds * 1000 ? candles.slice(0, -1) : candles;
+}
+
+/**
+ * Is an IFVG in the given direction forming right now? True when the still-open candle's live price is
+ * beyond a recent active FVG (above a bearish FVG's top for bullish, below a bullish FVG's bottom for bearish),
+ * so the inversion will be confirmed if the candle closes there. Returns the zone or null.
+ */
+export function formingIfvg(candles, seconds, direction, now = Date.now(), { minGapPct = 0.03, lookback = 30 } = {}) {
+  const last = candles.at(-1);
+  if (!last || now >= last.time + seconds * 1000) return null; // nothing forming
+  const closed = candles.slice(0, -1);
+  const fvgType = direction === 'bullish' ? 'bearish' : 'bullish';
+  const live = last.close;
+  const f = findFvgs(closed, { minGapPct })
+    .filter((z) => z.type === fvgType && z.invertedIndex === undefined && closed.length - 1 - z.index <= lookback)
+    .find((z) => (direction === 'bullish' ? live > z.top : live < z.bottom));
+  return f ? { direction, top: f.top, bottom: f.bottom } : null;
+}

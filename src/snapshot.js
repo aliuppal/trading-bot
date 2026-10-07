@@ -46,7 +46,9 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
   // Empty slots on the right so the whole risk/reward block fits after the entry candle.
   const entryLocal = entryIdx - start;
-  const future = Math.max(0, entryLocal + RR_CANDLES + 1 - (n - 1));
+  // The block runs from the entry to the exit (exit chart) or the latest candle (entry chart), at least RR_CANDLES wide.
+  const rrEnd = Math.max(entryLocal + RR_CANDLES, phase === 'exit' ? n - 1 : n);
+  const future = Math.max(0, rrEnd + 1 - (n - 1));
   const step = plotW / Math.max(n + future, 1);
   const x = (i) => PAD.l + step * (i + 0.5);
   const y = (p) => PAD.t + (1 - (p - lo) / (hi - lo)) * plotH;
@@ -68,6 +70,15 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
     parts.push(`<text x="${f1(zx + 4)}" y="${f1(zy - 4)}" fill="${C.cyan}" font-size="10" ${MONO}>IFVG</text>`);
   }
 
+  // the tapped 1h / 2h / 4h FVG (full width)
+  const htf = trade.ifvg?.htf;
+  if (htf && htf.top >= lo && htf.bottom <= hi) {
+    const col = htf.type === 'bullish' ? C.up : C.down;
+    const hy = y(Math.min(htf.top, hi)), hh = Math.max(1, y(Math.max(htf.bottom, lo)) - hy);
+    parts.push(`<rect x="${PAD.l}" y="${f1(hy)}" width="${W - PAD.r - PAD.l}" height="${f1(hh)}" fill="${col}" fill-opacity=".08"/>`);
+    parts.push(`<text x="${PAD.l + 4}" y="${f1(hy + 12)}" fill="${col}" font-size="10" ${MONO}>${label(htf.tf)} ${label(htf.type)} FVG tapped</text>`);
+  }
+
   // candles
   view.forEach((c, i) => {
     const col = c.close >= c.open ? C.up : C.down;
@@ -79,7 +90,7 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
 
   // risk / reward boxes and levels, from the entry candle to the right edge
   const ex = x(entryLocal) - step / 2;
-  const exEnd = x(entryLocal + RR_CANDLES) + step / 2;
+  const exEnd = x(rrEnd) + step / 2;
   const span = f1(exEnd - ex);
   const short = trade.side === 'short';
   const box = (a, b, col) => {
