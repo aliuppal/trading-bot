@@ -48,7 +48,7 @@ test('no same-direction HTF FVG tap means no setup', async () => {
   const flatH1 = Array.from({ length: 40 }, (_, i) => flat(NOW - (40 - i) * H1, 65000));
   const r = await scanSetups(market({ 3600: flatH1, default: ifvgCandles(NOW) }), { entryTimeframes: '900' }, NOW);
   assert.equal(r.setup, null);
-  assert.match(r.note, /no bullish 1h\/2h\/4h FVG tap/);
+  assert.match(r.note, /no unmitigated 1h\/2h\/4h FVG tap and no ITL sweep/);
 });
 
 test('formingIfvg sees a bullish IFVG in the still-open candle', () => {

@@ -212,7 +212,8 @@ export const ENTRY_MODELS = 'SWING: tap of a 30m/1h/2h/4h FVG, then an IFVG on 1
   + 'SCALP: tap of a 5m/15m/30m FVG, then an IFVG on 3m (preferred) > 2m > 1m. '
   + '(Within each, a lower timeframe waits if a higher one is forming.) '
   + 'IFVG = gap inverted within 3-7 candles by a decisive close (>= 20% through, body across). '
-  + 'A+: perfect IFVG (<= 5 candles) + displacement + draw on liquidity / LRLR in the trade direction, valid without a tap.';
+  + 'Context before the IFVG: first tap of an unmitigated FVG, OR a liquidity sweep (ITL swept before a long, ITH swept before a short). '
+  + 'A+: perfect IFVG (<= 5 candles) + displacement + draw on liquidity, or context + displacement + LRLR in the trade direction.';
 
 /** Map a fractional score index onto LEVERAGE_LEVELS (rounded to the nearest level). */
 export function scoreToLeverage(score) {
@@ -234,7 +235,8 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     lrlr: liquidity?.lrlr ? `${liquidity.lrlr.side}: ${liquidity.lrlr.prices.map((p) => Math.round(p)).join(', ')}` : 'none',
     target_mode: targetMode === 'liquidity' ? (targets?.length ? 'Jev picks the liquidity target (target question)' : 'nearest liquidity 0.75R-5R away') : `fixed 1:${riskReward}`,
     target_options: targets?.length ? targetCriteria(targets) : null,
-    htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
+    htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} unmitigated FVG tapped (first touch, ${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
+    liquidity_sweep: ifvg?.sweep ? `${ifvg.sweep.tf} ${ifvg.sweep.type} ${ifvg.sweep.price} swept, price closed back` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
     entry_models: ENTRY_MODELS,
@@ -243,6 +245,7 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     ...(review && { review_minutes_open: review.minutesOpen, review_unrealized_r: review.unrealizedR }),
     trades_today: tradesToday,
     max_trades_per_day: maxTradesPerDay,
+    daily_limit_note: 'The daily limit is a cap, not a target: the count resets every UTC day and unused trades are fine. Never take a weak setup to use up the limit; wait for a clean setup to form.',
     ifvg_top: ifvg?.top ?? null,
     ifvg_bottom: ifvg?.bottom ?? null,
     ifvg_age_candles: ifvg?.ageCandles ?? null,
@@ -271,7 +274,8 @@ const JEV_QUESTIONS = {
     instructions: 'Decide the trade for a disciplined Bitcoin intraday trader using the Inverse Fair Value Gap (IFVG) model '
       + 'on a paper account. Bullish IFVG = long setup, bearish IFVG = short setup. Every trade uses a fixed bracket: '
       + 'stop just beyond the IFVG zone, target at the risk_reward multiple on the other side of entry. '
-      + 'At most max_trades_per_day trades per day. Only take the setup when the IFVG and momentum agree; otherwise HOLD. '
+      + 'At most max_trades_per_day trades per day; that is a cap, not a target: unused trades are fine and the count resets each UTC day, so never force a trade. '
+      + 'Only take the setup when the IFVG and momentum agree; otherwise HOLD and wait for a clean setup to form. '
       + 'Use the liquidity levels: favor trades toward the draw on liquidity (liquidity_above for longs, liquidity_below for shorts, '
       + 'especially a low-resistance run, lrlr) and avoid trades whose path runs straight into nearby opposing liquidity. '
       + 'setup_grade A+ means a perfect IFVG (gap inverted within 3-5 candles) with an aggressive displacement candle, '

@@ -81,3 +81,28 @@ test('liquidity targets: every valid level for Jev to choose from, nearest first
   const t = liquidityTargets(liq, 'short', 100, 1);
   assert.deepEqual(t.map((x) => x.level.type), ['EQL', 'PDL']); // 0.5R too near, 20R too far
 });
+
+const sbar = (i, low, high, open, close) => ({ time: i * 60000, open: open ?? (low + high) / 2, high, low, close: close ?? (low + high) / 2 });
+
+test('intermediate-term low: a short-term low below the short-term lows on both sides', async () => {
+  const { intermediateSwings } = await import('../src/liquidity.js');
+  // short-term lows at 98 (i=3), 95 (i=8), 97 (i=13): the middle one is the ITL
+  const lows = [100, 99, 99, 98, 99, 100, 99, 99, 95, 99, 100, 99, 99, 97, 99, 100, 100];
+  const c = lows.map((l, i) => sbar(i, l, l + 2));
+  const it = intermediateSwings(c);
+  assert.deepEqual(it.lows.map((p) => p.price), [95]);
+});
+
+test('ITL sweep: wick below the ITL and a close back above it', async () => {
+  const { findSweep } = await import('../src/liquidity.js');
+  const lows = [100, 99, 99, 98, 99, 100, 99, 99, 95, 99, 100, 99, 99, 97, 99, 100, 100];
+  const c = lows.map((l, i) => sbar(i, l, l + 2));
+  c.push(sbar(17, 94, 99, 98, 96.5)); // raid: low 94 < ITL 95, closes back above at 96.5
+  const s = findSweep(c, 'bullish', 0);
+  assert.equal(s.type, 'ITL');
+  assert.equal(s.price, 95);
+  assert.equal(findSweep(c, 'bullish', 18 * 60000), null, 'sweep older than the window');
+  const broke = lows.map((l, i) => sbar(i, l, l + 2));
+  for (let i = 17; i < 22; i++) broke.push(sbar(i, 90, 94.5, 94, 92)); // closes below for good: a break, not a sweep
+  assert.equal(findSweep(broke, 'bullish', 0), null);
+});

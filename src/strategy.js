@@ -5,17 +5,19 @@
 //            A lower-timeframe IFVG waits while a higher entry timeframe has an IFVG forming in the same direction.
 //   SCALP  zone: active FVG on 5m / 15m / 30m           entry: IFVG on 1m
 //
-// In both, bullish setups need a tap of a bullish FVG (demand) and bearish setups a bearish one (supply),
+// In both, bullish setups need a first tap of an unmitigated bullish FVG (demand) and bearish setups a bearish one (supply),
+// OR a liquidity sweep: an ITL raided before a long, an ITH raided before a short (on 15m for swings, 5m for scalps),
 // and the entry IFVG must be confirmed on a closed candle: gap formed -> inverted within `ifvgMaxAge` candles (3-7),
 // entry within 2 candles of the inversion.
 import { activeFvgs, closedCandles, findHtfTap, formingIfvg, latestSetup, minGapFor } from './ifvg.js';
-import { liquidityLevels } from './liquidity.js';
+import { liquidityLevels, findSweep } from './liquidity.js';
 
 /**
  * Setup grade.
  *   A+  perfect IFVG (gap -> inversion in <= 5 candles) + displacement candle + draw on liquidity in the trade
  *       direction (an LRLR that way adds to it). Tradeable even without a higher-timeframe FVG tap.
- *   A   the normal setup: IFVG after a tap of a same-direction higher-timeframe FVG.
+ *   A+  also: context (unmitigated FVG tap or ITH/ITL sweep) + displacement + LRLR in the trade direction.
+ *   A   the normal setup: IFVG after a tap of a same-direction higher-timeframe FVG or an ITH/ITL sweep.
  */
 /**
  * Opposing 3m/5m/15m FVGs between entry and target: for a long, active bearish FVGs (resistance) in the way up;
@@ -27,7 +29,7 @@ export function pathBlockers(zones, side, entry, target, tfs = ['3m', '5m', '15m
   return zones.filter((z) => tfs.includes(z.tf) && z.type === type && z.top > lo && z.bottom < hi);
 }
 
-export function gradeSetup(s, liquidity) {
+export function gradeSetup(s, liquidity, context = false) {
   const toward = s.direction === 'bullish' ? 'above' : 'below';
   const perfect = s.formationCandles != null && s.formationCandles <= 5;
   const reasons = [];
@@ -38,7 +40,8 @@ export function gradeSetup(s, liquidity) {
   if (liquidity?.lrlr?.side === toward) reasons.push(`LRLR ${toward}`);
   const next = (toward === 'above' ? liquidity?.above : liquidity?.below)?.[0];
   if (draw && next) reasons.push(`-> ${next.type} ${Math.round(next.price).toLocaleString('en-US')}`);
-  return { grade: perfect && s.displacement && draw ? 'A+' : 'A', qualityReasons: reasons };
+  const lrlr = liquidity?.lrlr?.side === toward;
+  return { grade: s.displacement && ((perfect && draw) || (context && lrlr)) ? 'A+' : 'A', qualityReasons: reasons };
 }
 
 // Swing entries (15m preferred over 5m). Scalp entries are SCALP_TIMEFRAMES.
@@ -54,7 +57,9 @@ export const ZONES_FOR_ENTRY = {
   900: ['1h', '2h', '4h'],
 };
 const ZONE_TFS = { '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400 };
-const TAP_WINDOW_MINUTES = { swing: 180, scalp: 60 }; // how recent the zone tap must be
+const TAP_WINDOW_MINUTES = { swing: 180, scalp: 60 }; // how recent the zone tap / liquidity sweep must be
+/** Timeframe whose intermediate-term highs / lows are swept before an entry. */
+const SWEEP_TF = { swing: 900, scalp: 300 };
 export const tfLabel = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 
 /** Caches candles for one scan so each timeframe is fetched once. */
@@ -84,16 +89,26 @@ async function evaluate(market, g, category, zones, settings, now, liquidity) {
   const s = latestSetup(closed, { maxAge: 2, maxGapAge: formation, minGapPct: minGapFor(g), displacement: settings.requireDisplacement === true });
   const tag = `${category} ${tfLabel(g)}`;
   if (!s) { r.note = `${tag}: no fresh IFVG`; return r; }
-  const quality = gradeSetup(s, liquidity);
   let htf = null;
+  let sweep = null;
+  const allowed = ZONES_FOR_ENTRY[g];
+  const since = closed.at(-1).time - TAP_WINDOW_MINUTES[category] * 60000;
   if (settings.requireHtfTap !== false) {
-    const allowed = ZONES_FOR_ENTRY[g];
-    const since = closed.at(-1).time - TAP_WINDOW_MINUTES[category] * 60000;
+    // first touch of an unmitigated same-direction FVG
     htf = findHtfTap(closed.filter((c) => c.time >= since), zones.filter((z) => allowed.includes(z.tf)), s.direction);
-    // An A+ setup (perfect IFVG + displacement + toward liquidity) is tradeable without the tap.
-    if (!htf && quality.grade !== 'A+') { r.note = `${tag}: ${s.direction} IFVG, no ${s.direction} ${allowed.join('/')} FVG tap`; return r; }
   }
-  r.setup = { ...s, id: `${g}:${s.id}`, granularity: g, category, htf, ...quality };
+  // or a raid of intermediate-term liquidity: ITL before a long, ITH before a short
+  const sweepTf = SWEEP_TF[category];
+  sweep = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction, since);
+  if (sweep) sweep = { ...sweep, tf: tfLabel(sweepTf) };
+  const quality = gradeSetup(s, liquidity, Boolean(htf || sweep));
+  if (sweep) quality.qualityReasons.unshift(`swept ${sweep.tf} ${sweep.type} ${Number(sweep.price.toPrecision(6))}`);
+  // A+ (perfect IFVG + displacement + toward liquidity) is tradeable without either.
+  if (settings.requireHtfTap !== false && !htf && !sweep && quality.grade !== 'A+') {
+    r.note = `${tag}: ${s.direction} IFVG, no unmitigated ${allowed.join('/')} FVG tap and no ${s.direction === 'bullish' ? 'ITL' : 'ITH'} sweep`;
+    return r;
+  }
+  r.setup = { ...s, id: `${g}:${s.id}`, granularity: g, category, htf, sweep, ...quality };
   return r;
 }
 

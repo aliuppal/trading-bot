@@ -171,7 +171,8 @@ export function describeSetup(setup, side) {
   if (!setup) return '';
   const parts = [`${setup.grade ? `${setup.grade} ` : ''}${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
   if (setup.qualityReasons?.length) parts.push(setup.qualityReasons.join(' + ').replace(' + -> ', ' -> '));
-  if (setup.htf) parts.push(`tapped ${setup.htf.tf} ${setup.htf.type} FVG ${px(setup.htf.bottom)}-${px(setup.htf.top)}${setup.htf.tappedAt ? ` at ${hhmm(setup.htf.tappedAt)} UTC` : ''}`);
+  if (setup.htf) parts.push(`tapped unmitigated ${setup.htf.tf} ${setup.htf.type} FVG ${px(setup.htf.bottom)}-${px(setup.htf.top)}${setup.htf.tappedAt ? ` at ${hhmm(setup.htf.tappedAt)} UTC` : ''}`);
+  if (setup.sweep && !setup.qualityReasons?.some((q) => q.startsWith('swept'))) parts.push(`swept ${setup.sweep.tf} ${setup.sweep.type} ${px(setup.sweep.price)}`);
   const age = setup.ageCandles === 0 ? 'on the last closed candle' : `${setup.ageCandles} candle${setup.ageCandles === 1 ? '' : 's'} ago`;
   parts.push(`${setup.htf ? '-> ' : ''}${setup.granularity ? tfName(setup.granularity) : ''} ${setup.direction} IFVG ${px(setup.bottom)}-${px(setup.top)} (formed in ${setup.formationCandles ?? '?'} candles, inverted ${age}${setup.displacement ? ', displacement candle' : ''})`);
   return parts.join(' · ').replace(' · -> ', ' -> ');
@@ -183,6 +184,7 @@ const zoneSummary = (z) => z && {
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
   }),
+  ...(z.sweep && { sweep: z.sweep }),
 };
 
 export class TradingBot {
@@ -698,7 +700,7 @@ export class TradingBot {
           if (setup.grade === 'A+' && !setup.clearPath) setup.grade = 'A';
         }
       }
-      if (setup && !setup.htf && setup.grade !== 'A+' && s.requireHtfTap !== false) {
+      if (setup && !setup.htf && !setup.sweep && setup.grade !== 'A+' && s.requireHtfTap !== false) {
         scan.note = `${setup.category} ${setup.granularity / 60}m: ${setup.qualityReasons.at(-1)}, not A+ and no FVG tap`;
         scan.setup = null;
         setup = null;

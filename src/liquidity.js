@@ -27,6 +27,45 @@ export function swings(candles, n = 2) {
   return { highs, lows };
 }
 
+/**
+ * Intermediate-term highs / lows: a short-term swing high (low) that is higher (lower) than the short-term
+ * swing highs (lows) on both sides of it. Returns { highs, lows } with { price, time, index }.
+ */
+export function intermediateSwings(candles, n = 2) {
+  const st = swings(candles, n);
+  const pick = (pts, higher) => pts.filter((p, i) => i > 0 && i < pts.length - 1
+    && (higher ? p.price > pts[i - 1].price && p.price > pts[i + 1].price : p.price < pts[i - 1].price && p.price < pts[i + 1].price));
+  return { highs: pick(st.highs, true), lows: pick(st.lows, false) };
+}
+
+/**
+ * Liquidity sweep before an entry: a candle at or after `since` traded beyond an ITL (bullish) / ITH (bearish)
+ * and price closed back inside within 3 candles (a raid on the stops, not a break).
+ * Only swing points confirmed before the sweep count. Returns { type: 'ITL'|'ITH', price, sweptAt } (latest) or null.
+ */
+export function findSweep(candles, direction, since, { n = 2 } = {}) {
+  if (!candles?.length) return null;
+  const it = intermediateSwings(candles, n);
+  const bull = direction === 'bullish';
+  const pts = bull ? it.lows : it.highs;
+  let best = null;
+  for (const p of pts) {
+    for (let j = p.index + n + 1; j < candles.length; j++) {
+      const c = candles[j];
+      const beyond = bull ? c.low < p.price : c.high > p.price;
+      if (!beyond) continue;
+      // first raid of this level decides
+      if (c.time >= since) {
+        let back = false;
+        for (let k = j; k < Math.min(candles.length, j + 4); k++) if (bull ? candles[k].close > p.price : candles[k].close < p.price) { back = true; break; }
+        if (back && (!best || c.time > best.sweptAt)) best = { type: bull ? 'ITL' : 'ITH', price: p.price, sweptAt: c.time };
+      }
+      break;
+    }
+  }
+  return best;
+}
+
 /** Has any candle after `index` traded beyond the level (by more than tolPct %)? */
 function swept(candles, index, price, side, tolPct = 0) {
   const lim = side === 'high' ? price * (1 + tolPct / 100) : price * (1 - tolPct / 100);
