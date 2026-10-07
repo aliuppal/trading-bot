@@ -704,6 +704,7 @@ $('tabs').onclick = (e) => {
     x.setAttribute('aria-selected', String(x === b));
   });
   document.querySelectorAll('.tab-pane').forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+  refreshAll(); // fresh values whenever a tab is opened
 };
 
 $('trades').onclick = (e) => {
@@ -746,4 +747,18 @@ window.addEventListener('resize', drawChart);
 
 refreshAll();
 setInterval(refreshAll, 15000);
+
+// Live refresh: every 3 s ask whether trades / orders / decisions changed; reload right away if they did.
+let lastSig = null;
+async function checkChanges() {
+  if (document.hidden) return;
+  try {
+    const { sig } = await api('/api/changes');
+    if (lastSig !== null && sig !== lastSig) { await refreshAll(); loadMarket(); }
+    lastSig = sig;
+  } catch { /* next tick */ }
+}
+setInterval(checkChanges, 3000);
+checkChanges();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshAll(); loadMarket(); } });
 setInterval(loadMarket, 15000); // keep the chart live (new candles, open trade)

@@ -85,7 +85,7 @@ const LISTS = {
       id: t.id, side: t.side || 'long', status: t.status, entry_time: iso(t.entryTime), entry_price: num(t.entryPrice),
       qty: num(t.qty), notional: num(t.notional), stop: num(t.stop), target: num(t.target),
       exit_time: iso(t.exitTime), exit_price: num(t.exitPrice), exit_reason: t.exitReason ?? null,
-      r: num(t.r), pnl: num(t.pnl), confidence: num(t.confidence), source: t.source ?? null, data: t,
+      r: num(t.r), pnl: num(t.pnl), confidence: num(t.confidence), source: t.source ?? null, data: t, updated_at: new Date().toISOString(),
     }),
   },
   decisions: {
@@ -94,7 +94,7 @@ const LISTS = {
     row: (d) => ({
       id: d.id || `D${Date.parse(d.time)}`, time: iso(d.time), action: d.action ?? null, confidence: num(d.confidence),
       price: num(d.price), executed: Boolean(d.executed), note: d.note ?? null, reasoning: d.reasoning ?? null,
-      source: d.source ?? null, trade_id: d.tradeId ?? null, data: d,
+      source: d.source ?? null, trade_id: d.tradeId ?? null, data: d, updated_at: new Date().toISOString(),
     }),
   },
   orders: {
@@ -102,7 +102,7 @@ const LISTS = {
     limit: 200,
     row: (o) => ({
       id: o.id, time: iso(o.time), side: o.side, qty: num(o.qty), price: num(o.price), notional: num(o.notional),
-      fee: num(o.fee), pnl: num(o.pnl), status: o.status ?? null, source: o.source ?? null, reason: o.reason ?? null, data: o,
+      fee: num(o.fee), pnl: num(o.pnl), status: o.status ?? null, source: o.source ?? null, reason: o.reason ?? null, data: o, updated_at: new Date().toISOString(),
     }),
   },
 };
@@ -191,6 +191,13 @@ export class SupabaseKV {
     }
     return this.req('POST', 'kv', 'on_conflict=key', { key, value, updated_at: new Date().toISOString() },
       'resolution=merge-duplicates,return=minimal');
+  }
+
+  /** Cheap change marker for a list table: id and time of the most recently written row. */
+  async latest(key) {
+    if (!LISTS[key]) return null;
+    const rows = await this.req('GET', key, 'select=id,updated_at&order=updated_at.desc&limit=1');
+    return rows[0] ? `${rows[0].id}@${rows[0].updated_at}` : '';
   }
 
   /** Insert one row into a list table (decisions, orders, trades). */

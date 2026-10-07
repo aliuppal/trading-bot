@@ -58,6 +58,8 @@ app.get('/api/market', wrap(async (req, res) => {
 }));
 app.get('/api/account', wrap(async (req, res) => res.json(await broker.getAccount())));
 app.get('/api/orders', wrap(async (req, res) => res.json(await broker.getOrders(100))));
+// Tiny polling endpoint: the dashboard reloads its tables only when this changes.
+app.get('/api/changes', wrap(async (req, res) => res.json({ sig: await bot.changeSignature() })));
 app.get('/api/decisions', wrap(async (req, res) => res.json(await bot.decisions(100))));
 app.get('/api/trades', wrap(async (req, res) => res.json(await bot.trades())));
 app.get('/api/trades/:id/shots', wrap(async (req, res) => res.json(await bot.shotsFor(String(req.params.id)))));

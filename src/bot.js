@@ -194,6 +194,16 @@ export class TradingBot {
     };
   }
 
+  /** A short string that changes whenever trades, decisions or orders change (dashboard live refresh). */
+  async changeSignature() {
+    const kv = this.kv;
+    const mark = async (key) => (typeof kv.latest === 'function'
+      ? kv.latest(key)
+      : JSON.stringify((await kv.get(key, [])).slice(0, 1)).length + ':' + JSON.stringify((await kv.get(key, [])).slice(0, 1)).slice(0, 80));
+    const [t, d, o] = await Promise.all([mark('trades'), mark('decisions'), mark('orders')]);
+    return `${t}|${d}|${o}`;
+  }
+
   async decisions(limit = 100) {
     return (await this.kv.get('decisions', [])).slice(0, limit);
   }

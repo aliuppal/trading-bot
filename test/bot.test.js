@@ -473,3 +473,12 @@ test('futures broker: P&L comes from filled qty x price, not the requested size;
   assert.ok(Math.abs(closed.pnl - expected) < 0.02, `pnl ${closed.pnl} vs ${expected}`);
   assert.equal(closed.status, 'win');
 });
+
+test('change signature moves when a trade, decision or order is written', async () => {
+  const s = setup();
+  const before = await s.bot.changeSignature();
+  await s.bot.runOnce(); // opens a trade, logs a decision, writes an order
+  const after = await s.bot.changeSignature();
+  assert.notEqual(before, after);
+  assert.equal(await s.bot.changeSignature(), after); // stable when nothing changes
+});
