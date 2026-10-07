@@ -23,7 +23,7 @@ export const config = {
   },
   startingCash: num(process.env.STARTING_CASH, 100000),
   bot: {
-    intervalMinutes: num(process.env.BOT_INTERVAL_MINUTES, 5),
+    intervalMinutes: num(process.env.BOT_INTERVAL_MINUTES, 1),
     granularity: num(process.env.CANDLE_GRANULARITY, 900),
     minConfidence: num(process.env.MIN_CONFIDENCE, 0.6),
     maxPositionPct: num(process.env.MAX_POSITION_PCT, 50),
@@ -35,6 +35,8 @@ export const config = {
     requireHtfTap: process.env.REQUIRE_HTF_TAP !== 'false',
     // all = 3m + 5m + 15m entries; or 180 / 300 / 900 for one timeframe
     entryTimeframes: process.env.ENTRY_TIMEFRAMES || 'all',
+    // 1m scalp entries off 5m / 15m / 30m FVG taps
+    scalpEnabled: process.env.SCALP_ENABLED !== 'false',
     autoStart: process.env.AUTO_START !== 'false',
   },
   // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).

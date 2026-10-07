@@ -76,3 +76,32 @@ test('a confirmed 15m IFVG wins over 5m', async () => {
   const r = await scanSetups(market({ default: ifvgCandles(NOW) }), { entryTimeframes: 'both', requireHtfTap: false }, NOW);
   assert.equal(r.setup?.granularity, 900);
 });
+
+/** 5m candles with an active bullish FVG at 58,700-59,200 formed ~2h ago, then flat around 60,000. */
+function m5WithBullishFvg() {
+  const M5 = 300000;
+  const rows = [];
+  for (let i = 60; i > 26; i--) rows.push(flat(NOW - i * M5, 58500));
+  rows.push({ time: NOW - 26 * M5, open: 58500, high: 58700, low: 58400, close: 58650, volume: 1 });
+  rows.push({ time: NOW - 25 * M5, open: 58650, high: 59900, low: 58600, close: 59850, volume: 1 });
+  rows.push({ time: NOW - 24 * M5, open: 59850, high: 60100, low: 59200, close: 60000, volume: 1 });
+  for (let i = 23; i >= 1; i--) rows.push(flat(NOW - i * M5));
+  return rows;
+}
+
+test('scalp: 1m IFVG after a 5m FVG tap, when no swing setup exists', async () => {
+  // 1m entry candles: the bullish IFVG pattern on a 1-minute grid
+  const m1 = ifvgCandles(NOW).map((c, i, a) => ({ ...c, time: NOW - 61000 - (a.length - 1 - i) * 60000 }));
+  const quiet = (step) => Array.from({ length: 50 }, (_, i) => flat(NOW - (50 - i) * step - 1000, 65000));
+  const r = await scanSetups(market({
+    60: m1, 300: m5WithBullishFvg(), 900: quiet(900000), 180: quiet(180000), default: quiet(3600000),
+  }), { ifvgMaxAge: 5 }, NOW);
+  assert.equal(r.setup?.category, 'scalp', r.note);
+  assert.equal(r.setup.granularity, 60);
+  assert.equal(r.setup.htf.tf, '5m');
+});
+
+test('swing setups are labelled swing', async () => {
+  const r = await scanSetups(market({ default: ifvgCandles(NOW) }), { entryTimeframes: '900', requireHtfTap: false }, NOW);
+  assert.equal(r.setup?.category, 'swing');
+});

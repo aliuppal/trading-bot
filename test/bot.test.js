@@ -106,7 +106,7 @@ test('no IFVG: scheduled scans skip the AI', async () => {
   const flat = ifvgCandles(NOW).slice(0, 40);
   const { bot } = setup({ candles: flat, fetchImpl: async () => { calls++; throw new Error('nope'); } });
   const entry = await bot.runOnce();
-  assert.match(entry.note, /No setup · 15m: no fresh IFVG/);
+  assert.match(entry.note, /No setup · swing 15m: no fresh IFVG · scalp 1m: no fresh IFVG/);
   assert.equal(calls, 0);
 });
 

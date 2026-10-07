@@ -39,7 +39,7 @@ Every trade is a 1:1 bracket: stop just beyond the IFVG zone, target the same di
 Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
 Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
 Higher-timeframe confirmation: ${ifvg?.htf ? `price tapped a ${ifvg.htf.tf} ${ifvg.htf.type} FVG (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none'}
-Entry timeframe: ${ifvg?.granularity ? `${ifvg.granularity / 60}m` : `${granularity / 60}m`}
+Entry timeframe: ${ifvg?.granularity ? `${ifvg.granularity / 60}m` : `${granularity / 60}m`}${ifvg?.category ? ` (${ifvg.category} trade)` : ''}
 Open trade: ${openTrade ? `${openTrade.side || 'long'} from ${openTrade.entryPrice}, SL ${openTrade.stop}, TP ${openTrade.target}` : 'none'}
 ${review ? `RISK REVIEW of the open ${review.side}: open ${review.minutesOpen} min, currently ${review.unrealizedR}R. Decide whether to keep it (HOLD) or close it now to protect capital (${review.side === 'long' ? 'SELL' : 'BUY'} = close).` : ''}
 
@@ -204,6 +204,7 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     risk_reward: '1:1',
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
+    trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
     ...(review && { review_minutes_open: review.minutesOpen, review_unrealized_r: review.unrealizedR }),
     trades_today: tradesToday,
     max_trades_per_day: maxTradesPerDay,

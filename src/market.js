@@ -3,7 +3,9 @@
 const COINBASE = 'https://api.exchange.coinbase.com';
 const BINANCE = 'https://api.binance.com';
 
-const BINANCE_INTERVALS = { 60: '1m', 180: '3m', 300: '5m', 900: '15m', 3600: '1h', 21600: '6h', 86400: '1d' };
+const BINANCE_INTERVALS = { 60: '1m', 300: '5m', 900: '15m', 3600: '1h', 21600: '6h', 86400: '1d' };
+// Timeframes Coinbase doesn't offer, built from a smaller one: seconds -> [base seconds, candles per bucket].
+const BUILT = { 180: [60, 3], 1800: [900, 2], 7200: [3600, 2], 14400: [3600, 4] };
 
 async function getJson(url) {
   const res = await fetch(url, { headers: { 'User-Agent': 'trading-bot/1.0' } });
@@ -13,8 +15,7 @@ async function getJson(url) {
 
 /** Returns candles oldest-first: { time (ms), open, high, low, close, volume } */
 export async function getCandles(granularity = 3600, limit = 200) {
-  // Coinbase has no 3-minute candles: build them from 1-minute candles (300 x 1m = 100 x 3m).
-  if (granularity === 180) return threeMinute(limit);
+  if (BUILT[granularity]) return built(granularity, limit);
   try {
     const rows = await getJson(`${COINBASE}/products/BTC-USD/candles?granularity=${granularity}`);
     // Coinbase: [time(s), low, high, open, close, volume], newest first
@@ -41,11 +42,13 @@ export async function getPrice() {
   }
 }
 
-async function threeMinute(limit) {
-  const ones = await getCandles(60, 300);
-  const size = 180000;
+/** 3m / 30m / 2h / 4h candles merged from 1m / 15m / 1h candles (300 base candles), buckets aligned to UTC. */
+async function built(granularity, limit) {
+  const [base] = BUILT[granularity];
+  const rows = await getCandles(base, 300);
+  const size = granularity * 1000;
   const out = [];
-  for (const c of ones) {
+  for (const c of rows) {
     const t = Math.floor(c.time / size) * size;
     const last = out.at(-1);
     if (last && last.time === t) {

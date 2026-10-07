@@ -57,11 +57,14 @@
         <div class="panel-head">
           <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M8 2v12M12 4v8" /></svg>Price · SMA 20</h2>
           <div class="segmented" id="granularity" role="tablist" aria-label="Candle size">
+            <button type="button" role="tab" data-g="60">1m</button>
             <button type="button" role="tab" data-g="180">3m</button>
             <button type="button" role="tab" data-g="300">5m</button>
-            <button type="button" role="tab" data-g="900">15m</button>
-            <button type="button" role="tab" data-g="3600" class="active" aria-selected="true">1h</button>
-            <button type="button" role="tab" data-g="21600">6h</button>
+            <button type="button" role="tab" data-g="900" class="active" aria-selected="true">15m</button>
+            <button type="button" role="tab" data-g="1800">30m</button>
+            <button type="button" role="tab" data-g="3600">1h</button>
+            <button type="button" role="tab" data-g="7200">2h</button>
+            <button type="button" role="tab" data-g="14400">4h</button>
             <button type="button" role="tab" data-g="86400">1d</button>
           </div>
         </div>
@@ -93,8 +96,8 @@
   
         <div class="tab-pane" data-pane="trades">
           <div class="table-wrap"><table id="trades"><thead><tr>
-            <th>Chart</th><th>Opened</th><th>Side</th><th>Result</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Exit</th><th class="r">R</th><th class="r">P&amp;L</th><th>Source</th>
-          </tr></thead><tbody><tr><td colspan="11" class="empty">Loading trades…</td></tr></tbody></table></div>
+            <th>Chart</th><th>Opened</th><th>Type</th><th>Side</th><th>Result</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Target</th><th class="r">Exit</th><th class="r">R</th><th class="r">P&amp;L</th><th>Source</th>
+          </tr></thead><tbody><tr><td colspan="12" class="empty">Loading trades…</td></tr></tbody></table></div>
         </div>
   
         <div class="tab-pane" data-pane="decisions" hidden>
@@ -148,13 +151,13 @@
 
           <h3 class="section-label">Strategy</h3>
           <ul class="rules">
-            <li>Zone <b>tap of a 1h / 2h / 4h FVG</b></li>
-            <li>Entry <b>IFVG on 15m › 5m › 3m (3m: 1h FVG only)</b></li>
+            <li>Swing <b>30m/1h/2h/4h FVG tap → IFVG 15m › 5m › 3m</b></li>
+            <li>Scalp <b>5m/15m/30m FVG tap → 1m IFVG</b></li>
             <li>Direction <b>bullish → long · bearish → short</b></li>
             <li>Decision <b id="ruleAi">Jev, auto-execute</b></li>
             <li>Risk : reward <b>1 : 1</b></li>
             <li>Stop <b>just beyond the IFVG zone</b></li>
-            <li>Jev review <b>every 20 min (3m/5m) · 60 min (15m)</b></li>
+            <li>Jev review <b>10 min (1m) · 20 min (3m/5m) · 60 min (15m)</b></li>
           </ul>
 
           <h3 class="section-label">Risk settings</h3>
@@ -168,6 +171,7 @@
             <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
             <label>Trades / day (max 10)<input name="maxTradesPerDay" type="number" min="0" max="10" step="1" /></label>
             <label>IFVG age (3-7 candles)<input name="ifvgMaxAge" type="number" min="3" max="7" step="1" /></label>
+            <label>Scalp trades (1m)<select name="scalpEnabled"><option value="true">On</option><option value="false">Off</option></select></label>
             <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
             <button type="submit" class="btn btn-ghost">Save settings</button>
           </form>

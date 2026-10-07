@@ -216,7 +216,7 @@ function renderOpenTrade(t) {
   const short = t.side === 'short';
   const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
   const upnl = (short ? t.entryPrice - price : price - t.entryPrice) * t.qty;
-  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> ${fmtTime(t.entryTime)}</span>
+  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> ${fmtTime(t.entryTime)}</span>
       <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
     <div class="ot-levels">
       <div><span>Stop</span><em class="down">${usd(t.stop)}</em></div>
@@ -322,7 +322,7 @@ async function loadTrades() {
     $('tradeCount').textContent = trades.length ? ` ${trades.length}${closed.length ? ` · ${Math.round((wins / closed.length) * 100)}% win` : ''}` : '';
     const body = $('trades').querySelector('tbody');
     if (!trades.length) {
-      body.innerHTML = '<tr><td colspan="11" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
+      body.innerHTML = '<tr><td colspan="12" class="empty"><b>No trades yet</b>When an IFVG forms and Jev agrees (BUY on bullish, SELL on bearish), the bot opens a 1:1 trade and saves a chart snapshot here.</td></tr>';
       drawChart();
       renderPnl();
       return;
@@ -330,6 +330,7 @@ async function loadTrades() {
     body.innerHTML = trades.map((t, i) => `<tr>
       <td><button type="button" class="thumb" data-trade="${i}" aria-label="Open chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">…</span></button></td>
       <td class="t">${fmtTime(t.entryTime)}</td>
+      <td><span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span>${t.granularity ? ` <span class="src">${t.granularity >= 3600 ? t.granularity / 3600 + 'h' : t.granularity / 60 + 'm'}</span>` : ''}</td>
       <td><span class="pill ${t.side === 'short' ? 'SELL' : 'BUY'}">${t.side === 'short' ? 'SHORT' : 'LONG'}</span></td>
       <td><span class="pill ${RESULT[t.status] || ''}">${RESULT[t.status] || esc(String(t.status).toUpperCase())}</span></td>
       <td class="r">${usd(t.entryPrice)}</td><td class="r down">${usd(t.stop)}</td><td class="r up">${usd(t.target)}</td>
@@ -347,7 +348,7 @@ async function loadTrades() {
     drawChart();
     renderPnl();
   } catch (e) {
-    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="11" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
+    $('trades').querySelector('tbody').innerHTML = `<tr><td colspan="12" class="empty"><b>Couldn't load trades</b>${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -436,7 +437,7 @@ async function openShot(t) {
   $('shotBody').innerHTML = '<p class="sub">Loading chart…</p>';
   $('shotMeta').innerHTML = [
     ['Entry', usd(t.entryPrice)], ['Stop', usd(t.stop)], ['Target', usd(t.target)],
-    ['Side', t.side === 'short' ? 'Short' : 'Long'], ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
+    ['Type', t.category === 'scalp' ? 'Scalp' : 'Swing'], ['Side', t.side === 'short' ? 'Short' : 'Long'], ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
     ['P&L', t.pnl !== undefined ? signedUsd(t.pnl) : '—'], ['Confidence', t.confidence ?? '—'],
     ['IFVG zone', t.ifvg ? `${usd(t.ifvg.bottom)} – ${usd(t.ifvg.top)}` : '—'],
   ].map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');

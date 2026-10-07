@@ -249,6 +249,8 @@ td.empty b { display: block; margin-bottom: 4px; font: 600 14px/20px var(--font-
   color: var(--text-2); background: var(--neutral-bg); border: 1px solid var(--neutral-line); }
 .pill.BUY, .pill.buy, .pill.cover, .pill.WIN { color: var(--emerald-hi); background: var(--emerald-bg); border-color: var(--emerald-line); }
 .pill.SELL, .pill.sell, .pill.short, .pill.ERROR, .pill.LOSS { color: var(--rose-hi); background: var(--rose-bg); border-color: var(--rose-line); }
+.pill.SCALP { color: #FBBF24; background: rgba(251, 191, 36, .1); border-color: rgba(251, 191, 36, .3); }
+.pill.SWING { color: var(--cyan); background: transparent; border-color: var(--cyan-line); }
 .pill.OPEN { color: var(--cyan); background: var(--cyan-bg); border-color: var(--cyan-line); }
 .ok { color: var(--emerald-hi); }
 

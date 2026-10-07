@@ -46,8 +46,8 @@ app.get('/api/market', wrap(async (req, res) => {
   const candles = await market.getCandles(granularity, 200);
   const price = candles.at(-1)?.close ?? 0;
   // Active 1h/2h/4h FVGs within 3% of price, for the chart overlay.
-  const htfZones = (await loadHtfZones(market).catch(() => []))
-    .filter((z) => Math.abs((z.top + z.bottom) / 2 - price) / price < 0.03)
+  const htfZones = (await loadHtfZones(market, ['30m', '1h', '2h', '4h']).catch(() => []))
+    .filter((z) => ['30m', '1h', '2h', '4h'].includes(z.tf) && Math.abs((z.top + z.bottom) / 2 - price) / price < 0.03)
     .slice(-12);
   res.json({ candles, indicators: summarize(candles), ifvgs: findIfvgs(candles).slice(-6), htfZones });
 }));

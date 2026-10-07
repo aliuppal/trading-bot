@@ -68,9 +68,10 @@ export function checkBracket(trade, candles, price) {
   return null;
 }
 
-/** Minutes between Jev reviews of an open trade: 20 for 3m / 5m entries, 60 for 15m (and slower) entries. */
+/** Minutes between Jev reviews of an open trade: 10 for 1m scalps, 20 for 3m / 5m entries, 60 for 15m entries. */
 export function reviewMinutes(trade) {
-  return (trade.granularity || 900) <= 300 ? 20 : 60;
+  const g = trade.granularity || 900;
+  return g <= 60 ? 10 : g <= 300 ? 20 : 60;
 }
 
 /** Is the open trade due for a Jev review (period counted from the last review, or from the entry)? */
@@ -90,7 +91,7 @@ const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: Number(z.top.toFixed(2)), bottom: Number(z.bottom.toFixed(2)),
-  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, granularity: z.granularity,
+  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, granularity: z.granularity, category: z.category,
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
   }),
@@ -190,6 +191,7 @@ export class TradingBot {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
     }
     if (patch.requireHtfTap !== undefined) s.requireHtfTap = patch.requireHtfTap === true || patch.requireHtfTap === 'true';
+    if (patch.scalpEnabled !== undefined) s.scalpEnabled = patch.scalpEnabled === true || patch.scalpEnabled === 'true';
     if (['all', 'both', '180', '300', '900'].includes(String(patch.entryTimeframes))) s.entryTimeframes = String(patch.entryTimeframes);
     s.ifvgMaxAge = Math.min(7, Math.max(3, Math.round(s.ifvgMaxAge ?? 5)));
     s.intervalMinutes = Math.max(1, s.intervalMinutes);
@@ -302,6 +304,7 @@ export class TradingBot {
       notional,
       entryFee: order.fee || 0,
       granularity: setup.granularity || this.state.settings.granularity,
+      category: setup.category || 'swing',
       stop: b.stop,
       target: b.target,
       risk: b.risk,
