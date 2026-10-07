@@ -105,3 +105,19 @@ test('swing setups are labelled swing', async () => {
   const r = await scanSetups(market({ default: ifvgCandles(NOW) }), { entryTimeframes: '900', requireHtfTap: false }, NOW);
   assert.equal(r.setup?.category, 'swing');
 });
+
+test('A+ setup: perfect IFVG + displacement + draw on liquidity is tradeable without an HTF tap', async () => {
+  const flatH1 = Array.from({ length: 40 }, (_, i) => flat(NOW - (40 - i) * H1, 65000)); // no HTF FVG at all
+  const liqAbove = { draw: 'above', lrlr: { side: 'above', prices: [61000, 60800, 60600] }, above: [{ type: 'EQH', price: 61000 }], below: [] };
+  const r = await scanSetups(market({ 3600: flatH1, default: ifvgCandles(NOW) }), { entryTimeframes: '900', scalpEnabled: false }, NOW, { liquidity: liqAbove });
+  assert.equal(r.setup?.grade, 'A+', r.note);
+  assert.equal(r.setup.htf, null);
+  assert.match(r.setup.qualityReasons.join(' '), /perfect IFVG \(2 candles\).*displacement.*draw on liquidity above.*LRLR above/);
+});
+
+test('not A+ when the draw on liquidity is the other way: still needs the HTF tap', async () => {
+  const flatH1 = Array.from({ length: 40 }, (_, i) => flat(NOW - (40 - i) * H1, 65000));
+  const liqBelow = { draw: 'below', lrlr: null, above: [], below: [{ type: 'PDL', price: 58000 }] };
+  const r = await scanSetups(market({ 3600: flatH1, default: ifvgCandles(NOW) }), { entryTimeframes: '900', scalpEnabled: false }, NOW, { liquidity: liqBelow });
+  assert.equal(r.setup, null);
+});

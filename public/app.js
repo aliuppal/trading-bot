@@ -384,7 +384,7 @@ function renderOpenTrade(t) {
   const short = t.side === 'short';
   const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
   const upnl = (short ? t.entryPrice - price : price - t.entryPrice) * t.qty;
-  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> <span class="pill">1:${t.rr ?? 1}</span>${(t.leverage ?? 1) > 1 ? ` <span class="pill">${t.leverage}x</span>` : ''}${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
+  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> ${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> <span class="pill">1:${t.rr ?? 1}</span>${(t.leverage ?? 1) > 1 ? ` <span class="pill">${t.leverage}x</span>` : ''}${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
       <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
     <div class="ot-levels">
       <div><span>${t.breakeven ? 'Stop · BE' : 'Stop'}</span><em class="${t.breakeven ? '' : 'down'}">${usd(t.stop)}</em></div>
@@ -508,7 +508,7 @@ async function loadTrades() {
     body.innerHTML = trades.map((t, i) => `<tr>
       <td><button type="button" class="thumb" data-trade="${i}" aria-label="Open chart for trade at ${esc(fmtTime(t.entryTime))}"><span class="no-shot">…</span></button></td>
       <td class="t">${fmtTime(t.entryTime)}</td>
-      <td><span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span>${t.granularity ? ` <span class="src">${t.granularity >= 3600 ? t.granularity / 3600 + 'h' : t.granularity / 60 + 'm'}${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</span>` : ''}</td>
+      <td>${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span>${t.granularity ? ` <span class="src">${t.granularity >= 3600 ? t.granularity / 3600 + 'h' : t.granularity / 60 + 'm'}${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</span>` : ''}</td>
       <td><span class="pill ${t.side === 'short' ? 'SELL' : 'BUY'}">${t.side === 'short' ? 'SHORT' : 'LONG'}</span></td>
       <td><span class="pill ${RESULT[t.status] || ''}">${RESULT[t.status] || esc(String(t.status).toUpperCase())}</span></td>
       <td class="r">${usd(t.entryPrice)}</td><td class="r down">${usd(t.stop)}</td><td class="r up">${usd(t.target)}</td>

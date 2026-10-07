@@ -119,7 +119,8 @@ const px = (v) => Math.round(v).toLocaleString('en-US');
  */
 export function describeSetup(setup, side) {
   if (!setup) return '';
-  const parts = [`${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
+  const parts = [`${setup.grade ? `${setup.grade} ` : ''}${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
+  if (setup.qualityReasons?.length) parts.push(setup.qualityReasons.join(' + ').replace(' + -> ', ' -> '));
   if (setup.htf) parts.push(`tapped ${setup.htf.tf} ${setup.htf.type} FVG ${px(setup.htf.bottom)}-${px(setup.htf.top)}${setup.htf.tappedAt ? ` at ${hhmm(setup.htf.tappedAt)} UTC` : ''}`);
   const age = setup.ageCandles === 0 ? 'on the last closed candle' : `${setup.ageCandles} candle${setup.ageCandles === 1 ? '' : 's'} ago`;
   parts.push(`${setup.htf ? '-> ' : ''}${setup.granularity ? tfName(setup.granularity) : ''} ${setup.direction} IFVG ${px(setup.bottom)}-${px(setup.top)} (formed in ${setup.formationCandles ?? '?'} candles, inverted ${age}${setup.displacement ? ', displacement candle' : ''})`);
@@ -128,7 +129,7 @@ export function describeSetup(setup, side) {
 
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: Number(z.top.toFixed(2)), bottom: Number(z.bottom.toFixed(2)),
-  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, granularity: z.granularity, category: z.category, displacement: z.displacement,
+  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, grade: z.grade, qualityReasons: z.qualityReasons, granularity: z.granularity, category: z.category, displacement: z.displacement,
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
   }),
@@ -466,7 +467,7 @@ export class TradingBot {
       const { setup, candles } = scan;
       const indicators = summarize(candles);
       // Liquidity: PDH/PDL, today's high/low, PWH/PWL, equal highs/lows, HTF swings, LRLR.
-      const liquidity = await liquidityLevels(this.market, this.now()).catch(() => null);
+      const liquidity = scan.liquidity !== undefined ? scan.liquidity : await liquidityLevels(this.market, this.now()).catch(() => null);
       this.state.liquidity = liquidity && { above: liquidity.above.slice(0, 4), below: liquidity.below.slice(0, 4), lrlr: liquidity.lrlr, draw: liquidity.draw };
       const price = indicators.price;
       entry.price = price;

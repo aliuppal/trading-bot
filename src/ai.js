@@ -41,6 +41,7 @@ Every trade has a stop just beyond the IFVG zone and a target ${riskReward}x tha
 Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
 Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
 Higher-timeframe confirmation: ${ifvg?.htf ? `price tapped a ${ifvg.htf.tf} ${ifvg.htf.type} FVG (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none'}
+Setup grade: ${ifvg?.grade ?? 'n/a'}${ifvg?.qualityReasons?.length ? ` (${ifvg.qualityReasons.join(', ')})` : ''}
 Entry timeframe: ${ifvg?.granularity ? `${ifvg.granularity / 60}m` : `${granularity / 60}m`}${ifvg?.category ? ` (${ifvg.category} trade)` : ''}
 Liquidity above: ${liquidity ? describeLevels(liquidity.above, 4) : 'unknown'}
 Liquidity below: ${liquidity ? describeLevels(liquidity.below, 4) : 'unknown'}
@@ -227,6 +228,8 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
+    setup_grade: ifvg?.grade ?? null, // A+ = perfect IFVG + displacement + toward liquidity
+    setup_quality: ifvg?.qualityReasons?.length ? ifvg.qualityReasons.join(', ') : null,
     ...(review && { review_minutes_open: review.minutesOpen, review_unrealized_r: review.unrealizedR }),
     trades_today: tradesToday,
     max_trades_per_day: maxTradesPerDay,
@@ -260,7 +263,9 @@ const JEV_QUESTIONS = {
       + 'stop just beyond the IFVG zone, target at the risk_reward multiple on the other side of entry. '
       + 'At most max_trades_per_day trades per day. Only take the setup when the IFVG and momentum agree; otherwise HOLD. '
       + 'Use the liquidity levels: favor trades toward the draw on liquidity (liquidity_above for longs, liquidity_below for shorts, '
-      + 'especially a low-resistance run, lrlr) and avoid trades whose path runs straight into nearby opposing liquidity.',
+      + 'especially a low-resistance run, lrlr) and avoid trades whose path runs straight into nearby opposing liquidity. '
+      + 'setup_grade A+ means a perfect IFVG (gap inverted within 3-5 candles) with an aggressive displacement candle, '
+      + 'moving toward liquidity (often with an LRLR that way): these deserve high conviction.',
     criteria: {
       BUY: 'A bullish IFVG is holding as support and price should reach the target above before the stop (go long, or close an open short)',
       SELL: 'A bearish IFVG is holding as resistance and price should reach the target below before the stop (go short, or close an open long)',
