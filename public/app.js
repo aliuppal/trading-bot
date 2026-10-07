@@ -6,6 +6,8 @@ const pxDec = (v) => { const a = Math.abs(Number(v)); return a >= 100 ? 2 : a >=
 const px = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? '—'
   : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: pxDec(v), maximumFractionDigits: pxDec(v) })}`);
 const pxPlain = (v) => { const d = pxDec(v) > 2 ? pxDec(v) : 0; return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }); };
+/** 300 -> 5m, 3600 -> 1h */
+const tfText = (g) => (g >= 3600 ? `${g / 3600}h` : `${g / 60}m`);
 const symOf = (t) => t?.symbol || 'BTCUSDC';
 const signedUsd = (v) => `${v >= 0 ? '+' : ''}${usd(v)}`;
 const fmtTime = (t) => (t ? new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
@@ -396,7 +398,7 @@ function renderOpenTrade(t) {
   const short = t.side === 'short';
   const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
   const upnl = (short ? t.entryPrice - price : price - t.entryPrice) * t.qty;
-  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <b>${esc(symOf(t))}</b> ${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span> <span class="pill">1:${t.rr ?? 1}</span>${(t.leverage ?? 1) > 1 ? ` <span class="pill">${t.leverage}x</span>` : ''}${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
+  return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <b>${esc(symOf(t))}</b> ${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}${t.granularity ? ` · ${tfText(t.granularity)}` : ''}</span> <span class="pill">1:${t.rr ?? 1}</span>${(t.leverage ?? 1) > 1 ? ` <span class="pill">${t.leverage}x</span>` : ''}${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
       <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
     <div class="ot-levels">
       <div><span>${t.breakeven ? 'Stop · BE' : 'Stop'}</span><em class="${t.breakeven ? '' : 'down'}">${px(t.stop)}</em></div>
@@ -587,7 +589,7 @@ async function loadTrades() {
       </div></td>
       <td class="t">${fmtTime(t.entryTime)}</td>
       <td><b>${esc(symOf(t))}</b></td>
-      <td>${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}</span>${t.granularity ? ` <span class="src">${t.granularity >= 3600 ? t.granularity / 3600 + 'h' : t.granularity / 60 + 'm'}${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</span>` : ''}</td>
+      <td>${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}${t.granularity ? ` · ${tfText(t.granularity)}` : ''}</span>${(t.leverage ?? 1) > 1 ? ` <span class="src">${t.leverage}x</span>` : ''}</td>
       <td><span class="pill ${t.side === 'short' ? 'SELL' : 'BUY'}">${t.side === 'short' ? 'SHORT' : 'LONG'}</span></td>
       <td><span class="pill ${RESULT[t.status] || ''}">${RESULT[t.status] || esc(String(t.status).toUpperCase())}</span></td>
       <td class="r">${px(t.entryPrice)}</td><td class="r down">${px(t.stop)}</td><td class="r up">${px(t.target)}</td>

@@ -78,6 +78,8 @@ app.get('/api/status', wrap(async (req, res) => {
     }
     st.scanStats = sum.scans ? sum : st.scanStats;
     st.symbols = bots.map((b) => ({ symbol: b.symbol, lastScan: b.state.lastScan?.note ?? null }));
+    // live price for each open trade (cards show its P&L whatever symbol is charted)
+    await Promise.all((st.openTrades || []).map(async (t) => { t.lastPrice = await markets[t.symbol || bot.symbol]?.getPrice().catch(() => null); }));
   }
   res.json(st);
 }));
