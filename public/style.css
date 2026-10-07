@@ -162,6 +162,9 @@ select { font-family: var(--font-mono); font-size: 13px; }
 .meter-track i.used { background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 6px rgba(6, 182, 212, .35); }
 .meter-track.full i.used { background: var(--rose); border-color: var(--rose); box-shadow: none; }
 
+.meter-split { display: flex; gap: 16px; margin-top: 8px; font: 500 11px/16px var(--font-mono); color: var(--muted); }
+.meter-split > span { display: inline-flex; align-items: center; gap: 6px; }
+
 /* open trade + last decision */
 .open-trade, .decision { margin-top: 12px; padding: 12px; border-radius: var(--r-lg); background: var(--l2); border: 1px solid var(--line-soft); font-size: 13px; }
 .open-trade:empty, .decision:empty { display: none; }

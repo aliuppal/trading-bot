@@ -29,6 +29,9 @@ export const config = {
     maxPositionPct: num(process.env.MAX_POSITION_PCT, 50),
     maxTradePct: num(process.env.MAX_TRADE_PCT, 10),
     maxTradesPerDay: Math.min(10, num(process.env.MAX_TRADES_PER_DAY, 10)),
+    // Per-category daily limits (both also count toward maxTradesPerDay)
+    maxSwingPerDay: Math.min(10, num(process.env.MAX_SWING_PER_DAY, 5)),
+    maxScalpPerDay: Math.min(10, num(process.env.MAX_SCALP_PER_DAY, 5)),
     // IFVG must have inverted within the last N entry candles (3-7)
     ifvgMaxAge: Math.min(7, Math.max(3, num(process.env.IFVG_MAX_AGE, 5))),
     // Entry needs a tap of a same-direction 1h/2h/4h FVG first

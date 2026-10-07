@@ -66,12 +66,15 @@ export async function scanSetups(rawMarket, settings, now = Date.now()) {
   const market = cachedMarket(rawMarket);
   const needTap = settings.requireHtfTap !== false;
   const scalpOn = settings.scalpEnabled !== false;
-  const zoneTfs = needTap ? [...new Set([...(scalpOn ? ['5m', '15m'] : []), '30m', '1h', '2h', '4h'])] : [];
+  const swingOn = settings.swingEnabled !== false;
+  const zoneTfs = needTap
+    ? [...new Set([...(scalpOn ? ['5m', '15m', '30m'] : []), ...(swingOn ? ['30m', '1h', '2h', '4h'] : [])])]
+    : [];
   const zones = needTap ? await loadHtfZones(market, zoneTfs) : [];
   const notes = [];
 
   // Swing: highest entry timeframe first.
-  const tfs = [...(ENTRY_TIMEFRAMES[String(settings.entryTimeframes ?? 'all')] || ENTRY_TIMEFRAMES.all)].sort((a, b) => b - a);
+  const tfs = swingOn ? [...(ENTRY_TIMEFRAMES[String(settings.entryTimeframes ?? 'all')] || ENTRY_TIMEFRAMES.all)].sort((a, b) => b - a) : [];
   const res = {};
   for (const g of tfs) res[g] = await evaluate(market, g, 'swing', zones, settings, now);
   let waiting = null;
@@ -95,6 +98,7 @@ export async function scanSetups(rawMarket, settings, now = Date.now()) {
     if (r.note) notes.push(r.note);
   }
 
-  const top = tfs[0];
-  return { setup: null, candles: res[top].candles, granularity: top, zones, waiting: false, note: notes.join(' · ') };
+  const top = tfs[0] ?? 60;
+  const candles = res[top]?.candles ?? (await market.getCandles(top, 200));
+  return { setup: null, candles, granularity: top, zones, waiting: false, note: notes.join(' · ') };
 }

@@ -277,3 +277,18 @@ test('Jev risk review: a 15m trade is reviewed after 60 min and closed when Jev 
   assert.equal(closed.exitReason, 'review');
   assert.equal(closed.reviews, 1);
 });
+
+test('swing limit reached: swing setups are skipped, scalps still allowed', async () => {
+  let calls = 0;
+  const kv = new MemKV();
+  await kv.set('trades', Array.from({ length: 5 }, (_, i) => ({
+    id: `T${i}`, status: 'win', category: 'swing', entryTime: new Date(NOW - i * 60000).toISOString(),
+  })));
+  const { bot } = setup({ kv, fetchImpl: async () => { calls++; throw new Error('should not be called'); } });
+  await bot.updateSettings({ maxSwingPerDay: 5, maxScalpPerDay: 5, scalpEnabled: 'false' });
+  const entry = await bot.runOnce();
+  assert.equal(entry.executed, false);
+  assert.match(entry.note, /Swing limit reached/);
+  assert.equal(calls, 0);
+  assert.equal((await bot.status()).swingToday, 5);
+});

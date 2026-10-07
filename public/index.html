@@ -140,6 +140,7 @@
           <div class="meter">
             <div class="meter-head"><span>Trades today (UTC)</span><b id="tradesToday">0 / 10</b></div>
             <div class="meter-track" id="meterTrack"></div>
+            <div class="meter-split" id="meterSplit"></div>
           </div>
           <div id="openTrade" class="open-trade"></div>
           <div class="btn-row">
@@ -170,6 +171,8 @@
             <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
             <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
             <label>Trades / day (max 10)<input name="maxTradesPerDay" type="number" min="0" max="10" step="1" /></label>
+            <label>Swing trades / day<input name="maxSwingPerDay" type="number" min="0" max="10" step="1" /></label>
+            <label>Scalp trades / day<input name="maxScalpPerDay" type="number" min="0" max="10" step="1" /></label>
             <label>IFVG age (3-7 candles)<input name="ifvgMaxAge" type="number" min="3" max="7" step="1" /></label>
             <label>Scalp trades (1m)<select name="scalpEnabled"><option value="true">On</option><option value="false">Off</option></select></label>
             <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>

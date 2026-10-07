@@ -42,10 +42,10 @@ export function entryNotional(sizePct, account, settings) {
 
 const utcDay = (t) => new Date(t).toISOString().slice(0, 10);
 
-/** Number of trades opened on the same UTC day as `now`. */
-export function tradesToday(trades, now = Date.now()) {
+/** Number of trades opened on the same UTC day as `now` (optionally only one category: 'swing' / 'scalp'). */
+export function tradesToday(trades, now = Date.now(), category) {
   const day = utcDay(now);
-  return trades.filter((t) => utcDay(t.entryTime) === day).length;
+  return trades.filter((t) => utcDay(t.entryTime) === day && (!category || (t.category || 'swing') === category)).length;
 }
 
 /**
@@ -141,6 +141,8 @@ export class TradingBot {
       lastError: s.lastError,
       settings: s.settings,
       tradesToday: tradesToday(trades, this.now()),
+      swingToday: tradesToday(trades, this.now(), 'swing'),
+      scalpToday: tradesToday(trades, this.now(), 'scalp'),
       openTrade: trades.find((t) => t.status === 'open') || null,
       ai: this.ai.apiKey ? `${this.ai.provider}:${this.ai.model === 'auto' ? 'free models' : this.ai.model}` : 'rules (no AI key set)',
       broker: this.broker.name,
@@ -185,7 +187,7 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
-    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge'];
+    const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay'];
     const s = this.state.settings;
     for (const k of allowed) {
       if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Number(patch[k]);
@@ -199,6 +201,8 @@ export class TradingBot {
     s.maxPositionPct = Math.min(100, Math.max(0, s.maxPositionPct));
     s.maxTradePct = Math.min(100, Math.max(0, s.maxTradePct));
     s.maxTradesPerDay = Math.min(10, Math.max(0, Math.round(s.maxTradesPerDay)));
+    s.maxSwingPerDay = Math.min(10, Math.max(0, Math.round(s.maxSwingPerDay ?? 5)));
+    s.maxScalpPerDay = Math.min(10, Math.max(0, Math.round(s.maxScalpPerDay ?? 5)));
     await this.save();
     return s;
   }
@@ -362,8 +366,13 @@ export class TradingBot {
         if (await this.manageOpen(oc, oc.at(-1).close)) persist = true;
       }
 
-      // 2. Multi-timeframe scan: 1h/2h/4h FVG tap + fresh 5m/15m IFVG.
-      const scan = await scanSetups(this.market, s, this.now());
+      // 2. Multi-timeframe scan. A category whose daily limit is used up is not scanned.
+      const before = await this.trades();
+      const swingLeft = tradesToday(before, this.now(), 'swing') < (s.maxSwingPerDay ?? 5);
+      const scalpLeft = tradesToday(before, this.now(), 'scalp') < (s.maxScalpPerDay ?? 5);
+      const scan = await scanSetups(this.market, {
+        ...s, swingEnabled: s.swingEnabled !== false && swingLeft, scalpEnabled: s.scalpEnabled !== false && scalpLeft,
+      }, this.now());
       const { setup, candles } = scan;
       const indicators = summarize(candles);
       const price = indicators.price;
@@ -384,7 +393,8 @@ export class TradingBot {
       let reason = null; // why the AI is not consulted / an entry can't be taken
       if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
       else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
-      else if (!open && !setup) reason = scan.note ? `No setup · ${scan.note}` : 'No fresh IFVG setup';
+      else if (!open && !swingLeft && !scalpLeft) reason = `Daily swing (${s.maxSwingPerDay ?? 5}) and scalp (${s.maxScalpPerDay ?? 5}) limits reached`;
+      else if (!open && !setup) reason = `${!swingLeft ? 'Swing limit reached · ' : ''}${!scalpLeft ? 'Scalp limit reached · ' : ''}${scan.note ? `No setup · ${scan.note}` : 'No fresh IFVG setup'}`;
       else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';
       else if (!open && asked) reason = 'Already evaluated this IFVG';
 
