@@ -36,6 +36,11 @@ let status = null;
 
 const RR_CANDLES = 8; // width of the risk/reward block, in candles
 
+// View window: `count` candle slots on screen, `offset` candles scrolled back from the latest (0 = live edge).
+const view = { count: null, offset: 0 };
+let pointer = null; // { x, y } in CSS px while the mouse is over the chart
+let geom = null; // last layout, for mouse interaction
+
 function drawChart() {
   const canvas = $('chart');
   const dpr = window.devicePixelRatio || 1;
@@ -47,36 +52,56 @@ function drawChart() {
   if (candles.length < 2) return;
 
   const open = status?.openTrade;
-  const pad = { l: 4, r: 72, t: 10, b: 20 };
-  const extra = open ? [open.stop, open.target] : [];
-  const lo = Math.min(...candles.map((c) => c.low), ...extra);
-  const hi = Math.max(...candles.map((c) => c.high), ...extra);
+  const pad = { l: 4, r: 72, t: 10, b: 22 };
   const t0 = candles[0].time;
   const idxAt = (t) => Math.max(0, Math.min(candles.length - 1, Math.floor((t - t0) / (granularity * 1000))));
-  // Leave empty candle slots on the right so the open trade's risk/reward block is fully visible.
+  // The open trade's risk/reward block grows with the trade: from the entry to the latest candle (>= RR_CANDLES wide).
   const entryIdx = open ? idxAt(new Date(open.entryTime).getTime()) : null;
-  // The block grows with the trade: from the entry to the latest candle (at least RR_CANDLES wide).
   const rrEnd = open ? Math.max(entryIdx + RR_CANDLES, candles.length + 1) : 0;
-  const future = open ? Math.max(2, rrEnd + 2 - (candles.length - 1)) : 0;
-  const step = (w - pad.l - pad.r) / (candles.length + future);
-  const x = (i) => pad.l + step * (i + 0.5);
-  const y = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
-  const mono = "11px 'JetBrains Mono', ui-monospace, monospace";
+  const future = open ? Math.max(3, rrEnd + 2 - (candles.length - 1)) : 3; // empty slots right of the last candle
+  const total = candles.length + future;
 
-  // grid + price labels
+  // visible window
+  view.count = Math.round(Math.min(total, Math.max(15, view.count ?? Math.min(total, 150))));
+  view.offset = Math.min(Math.max(0, view.offset), Math.max(0, total - 10));
+  const end = total - 1 - view.offset;
+  const start = end - view.count + 1;
+  const plotW = w - pad.l - pad.r;
+  const step = plotW / view.count;
+  const x = (i) => pad.l + step * (i - start + 0.5);
+  const visible = candles.filter((_, i) => i >= start && i <= end);
+  const extra = open && rrEnd >= start && entryIdx <= end ? [open.stop, open.target, open.initialStop ?? open.stop] : [];
+  let lo = Math.min(...visible.map((c) => c.low), ...extra);
+  let hi = Math.max(...visible.map((c) => c.high), ...extra);
+  const padY = (hi - lo) * 0.05 || hi * 0.001;
+  lo -= padY; hi += padY;
+  const y = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
+  const priceAt = (py) => lo + (1 - (py - pad.t) / (h - pad.t - pad.b)) * (hi - lo);
+  geom = { pad, w, h, step, start, total };
+  const mono = "11px 'JetBrains Mono', ui-monospace, monospace";
+  const fmtT = (t) => new Date(t).toLocaleString([], granularity >= 86400 ? { month: 'short', day: 'numeric' } : { hour: '2-digit', minute: '2-digit' });
+
+  // grid, price axis, time axis
   ctx.strokeStyle = css('--border'); ctx.fillStyle = css('--dim'); ctx.font = mono; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const p = lo + ((hi - lo) * i) / 4;
     ctx.beginPath(); ctx.moveTo(pad.l, y(p)); ctx.lineTo(w - pad.r, y(p)); ctx.stroke();
     ctx.fillText(Math.round(p).toLocaleString(), w - pad.r + 8, y(p) + 4);
   }
+  const every = Math.max(1, Math.ceil(view.count / 6));
+  for (let i = Math.ceil(Math.max(0, start) / every) * every; i <= Math.min(end, candles.length - 1); i += every) {
+    ctx.fillText(fmtT(candles[i].time), x(i) - 18, h - 6);
+  }
 
-  // 1h / 2h / 4h FVG zones (full width, behind everything)
+  ctx.save();
+  ctx.beginPath(); ctx.rect(pad.l, 0, plotW, h - pad.b); ctx.clip();
+
+  // higher-timeframe FVG zones
   const labelled = [];
   htfZones.forEach((z) => {
     if (z.top < lo || z.bottom > hi) return;
     const bull = z.type === 'bullish';
-    const x0 = z.readyAt > t0 ? x(idxAt(z.readyAt)) - step / 2 : pad.l;
+    const x0 = Math.max(pad.l, z.readyAt > t0 ? x(idxAt(z.readyAt)) - step / 2 : pad.l);
     const top = y(Math.min(z.top, hi)), bot = y(Math.max(z.bottom, lo));
     ctx.fillStyle = bull ? 'rgba(16, 185, 129, .05)' : 'rgba(244, 63, 94, .05)';
     ctx.fillRect(x0, top, w - pad.r - x0, Math.max(1, bot - top));
@@ -84,13 +109,12 @@ function drawChart() {
     ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(w - pad.r, top); ctx.moveTo(x0, bot); ctx.lineTo(w - pad.r, bot); ctx.stroke();
     const ly = top + 11;
     const near = labelled.find((l) => Math.abs(l.y - ly) < 12 && Math.abs(l.x - x0) < 70);
-    const text = `${z.tf} ${bull ? 'bull' : 'bear'} FVG`;
     if (near) { near.text += ` · ${z.tf}`; return; }
-    labelled.push({ x: x0 + 4, y: ly, text, color: bull ? 'rgba(52, 211, 153, .85)' : 'rgba(251, 113, 133, .85)' });
+    labelled.push({ x: x0 + 4, y: ly, text: `${z.tf} ${bull ? 'bull' : 'bear'} FVG`, color: bull ? 'rgba(52, 211, 153, .85)' : 'rgba(251, 113, 133, .85)' });
   });
   labelled.forEach((l) => { ctx.fillStyle = l.color; ctx.fillText(l.text, l.x, l.y); });
 
-  // IFVG zones
+  // entry-timeframe IFVG zones
   ifvgs.forEach((z) => {
     if (z.formedAt < t0) return;
     const bull = z.direction === 'bullish';
@@ -104,33 +128,34 @@ function drawChart() {
     ctx.setLineDash([]);
   });
 
-  // candles
+  // candles (visible only)
   const cw = Math.max(1, step * 0.6);
-  candles.forEach((c, i) => {
+  for (let i = Math.max(0, start); i <= Math.min(end, candles.length - 1); i++) {
+    const c = candles[i];
     ctx.strokeStyle = ctx.fillStyle = c.close >= c.open ? css('--green') : css('--red');
     ctx.beginPath(); ctx.moveTo(x(i), y(c.high)); ctx.lineTo(x(i), y(c.low)); ctx.stroke();
     const top = y(Math.max(c.open, c.close));
     ctx.fillRect(x(i) - cw / 2, top, cw, Math.max(1, y(Math.min(c.open, c.close)) - top));
-  });
+  }
 
   // SMA20
   ctx.strokeStyle = css('--blue'); ctx.lineWidth = 1.5; ctx.beginPath();
-  candles.forEach((c, i) => {
-    if (i < 19) return;
+  let started = false;
+  for (let i = Math.max(19, Math.floor(start) - 1); i <= Math.min(end + 1, candles.length - 1); i++) {
     const avg = candles.slice(i - 19, i + 1).reduce((a, b) => a + b.close, 0) / 20;
-    i === 19 ? ctx.moveTo(x(i), y(avg)) : ctx.lineTo(x(i), y(avg));
-  });
+    if (started) ctx.lineTo(x(i), y(avg)); else { ctx.moveTo(x(i), y(avg)); started = true; }
+  }
   ctx.stroke();
 
-  // open trade: risk/reward block from the entry to the latest candle (min RR_CANDLES wide)
+  // open trade: risk/reward block
   if (open) {
     const x0 = x(entryIdx) - step / 2;
     const x1 = x(rrEnd) + step / 2;
     const yIn = y(open.entryPrice);
-    ctx.fillStyle = 'rgba(16, 185, 129, .18)'; // reward
-    ctx.fillRect(x0, Math.min(yIn, y(open.target)), x1 - x0, Math.abs(y(open.target) - yIn));
-    ctx.fillStyle = 'rgba(244, 63, 94, .18)'; // risk
     const sl = open.initialStop ?? open.stop; // risk box keeps the original stop distance
+    ctx.fillStyle = 'rgba(16, 185, 129, .18)';
+    ctx.fillRect(x0, Math.min(yIn, y(open.target)), x1 - x0, Math.abs(y(open.target) - yIn));
+    ctx.fillStyle = 'rgba(244, 63, 94, .18)';
     ctx.fillRect(x0, Math.min(yIn, y(sl)), x1 - x0, Math.abs(y(sl) - yIn));
     [[open.target, css('--green'), 'TP'], [open.entryPrice, css('--text-2'), 'IN'], [open.stop, css('--red'), open.breakeven ? 'BE' : 'SL']].forEach(([p, col, name]) => {
       ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.setLineDash(name === 'IN' ? [4, 3] : []);
@@ -146,11 +171,11 @@ function drawChart() {
     if (et >= t0) {
       const px = x(idxAt(et));
       ctx.beginPath();
-      if (t.side === 'short') { // red down-triangle above the entry
+      if (t.side === 'short') {
         const py = y(t.entryPrice) - 12;
         ctx.fillStyle = css('--red');
         ctx.moveTo(px, py + 7); ctx.lineTo(px - 5, py - 2); ctx.lineTo(px + 5, py - 2);
-      } else { // green up-triangle below the entry
+      } else {
         const py = y(t.entryPrice) + 12;
         ctx.fillStyle = css('--green');
         ctx.moveTo(px, py - 7); ctx.lineTo(px - 5, py + 2); ctx.lineTo(px + 5, py + 2);
@@ -162,7 +187,96 @@ function drawChart() {
       ctx.beginPath(); ctx.arc(x(idxAt(new Date(t.exitTime).getTime())), y(t.exitPrice), 4, 0, Math.PI * 2); ctx.stroke();
     }
   });
+  ctx.restore();
+
+  // crosshair with price and time labels
+  if (pointer && pointer.x >= pad.l && pointer.x <= w - pad.r && pointer.y >= pad.t && pointer.y <= h - pad.b) {
+    const i = Math.round(start + (pointer.x - pad.l) / step - 0.5);
+    const cx = x(i);
+    ctx.strokeStyle = 'rgba(148, 163, 184, .45)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, pad.t); ctx.lineTo(cx, h - pad.b); ctx.moveTo(pad.l, pointer.y); ctx.lineTo(w - pad.r, pointer.y); ctx.stroke();
+    ctx.setLineDash([]);
+    const tag = (text, tx, ty, wd) => {
+      ctx.fillStyle = css('--l3'); ctx.fillRect(tx, ty - 11, wd, 16);
+      ctx.strokeStyle = 'rgba(6, 182, 212, .5)'; ctx.strokeRect(tx, ty - 11, wd, 16);
+      ctx.fillStyle = css('--text'); ctx.fillText(text, tx + 4, ty + 1);
+    };
+    tag(Math.round(priceAt(pointer.y)).toLocaleString(), w - pad.r + 2, pointer.y, pad.r - 4);
+    const c = candles[i];
+    if (c) {
+      tag(fmtT(c.time), Math.min(w - pad.r - 64, Math.max(pad.l, cx - 32)), h - 7, 64);
+      $('chartOhlc').textContent = `O ${Math.round(c.open).toLocaleString()}  H ${Math.round(c.high).toLocaleString()}  L ${Math.round(c.low).toLocaleString()}  C ${Math.round(c.close).toLocaleString()}`;
+    }
+  } else {
+    $('chartOhlc').textContent = view.offset > 0 ? 'scrolled back · double-click or ⟲ for live' : '';
+  }
 }
+
+/* ---- chart interaction: wheel zoom, drag to pan, pinch, buttons, double-click reset ---- */
+
+function zoomChart(factor, anchorX) {
+  if (!geom) return;
+  const { pad, w, step, start, total } = geom;
+  const ax = anchorX ?? (w - pad.r); // zoom around the cursor (or the right edge)
+  const slot = start + (ax - pad.l) / step; // the slot under the anchor stays put
+  const count = Math.min(total, Math.max(15, view.count * factor));
+  const newStart = slot - ((ax - pad.l) / (w - pad.l - pad.r)) * count;
+  view.count = count;
+  view.offset = Math.max(0, total - 1 - (newStart + count - 1));
+  drawChart();
+}
+
+function panChart(dxPixels) {
+  if (!geom) return;
+  view.offset = Math.max(0, view.offset + dxPixels / geom.step);
+  drawChart();
+}
+
+function resetChart() {
+  view.count = null;
+  view.offset = 0;
+  drawChart();
+}
+
+(() => {
+  const canvas = $('chart');
+  let drag = null;
+  let pinch = null;
+  const rel = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomChart(e.deltaY > 0 ? 1.15 : 1 / 1.15, rel(e).x); }, { passive: false });
+  canvas.addEventListener('mousedown', (e) => { drag = rel(e).x; canvas.classList.add('grabbing'); });
+  window.addEventListener('mouseup', () => { drag = null; canvas.classList.remove('grabbing'); });
+  canvas.addEventListener('mousemove', (e) => {
+    const p = rel(e);
+    if (drag !== null) { panChart(p.x - drag); drag = p.x; }
+    pointer = p;
+    drawChart();
+  });
+  canvas.addEventListener('mouseleave', () => { pointer = null; drawChart(); });
+  canvas.addEventListener('dblclick', resetChart);
+  // touch: one finger pans, two fingers pinch-zoom
+  canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) drag = rel(e.touches[0]).x;
+    if (e.touches.length === 2) pinch = Math.abs(e.touches[0].clientX - e.touches[1].clientX);
+  }, { passive: true });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2 && pinch) {
+      const d = Math.abs(e.touches[0].clientX - e.touches[1].clientX);
+      const mid = (rel(e.touches[0]).x + rel(e.touches[1]).x) / 2;
+      if (d > 0) zoomChart(pinch / d, mid);
+      pinch = d;
+    } else if (e.touches.length === 1 && drag !== null) {
+      const px = rel(e.touches[0]).x;
+      panChart(px - drag);
+      drag = px;
+    }
+  }, { passive: false });
+  canvas.addEventListener('touchend', () => { drag = null; pinch = null; });
+  $('zoomIn').onclick = () => zoomChart(1 / 1.3);
+  $('zoomOut').onclick = () => zoomChart(1.3);
+  $('zoomReset').onclick = resetChart;
+})();
 
 function renderIndicators(ind) {
   const items = [
@@ -185,6 +299,8 @@ async function loadMarket() {
   if (!candles.length) { state.className = 'chart-state'; state.textContent = 'Loading candles…'; }
   try {
     const data = await api(`/api/market?granularity=${granularity}`);
+    const lastBefore = candles.at(-1)?.time;
+    if (view.offset > 0 && lastBefore) view.offset += data.candles.filter((c) => c.time > lastBefore).length;
     candles = data.candles;
     ifvgs = data.ifvgs || [];
     htfZones = data.htfZones || [];
@@ -489,6 +605,8 @@ $('granularity').onclick = (e) => {
   const b = e.target.closest('button');
   if (!b) return;
   granularity = Number(b.dataset.g);
+  view.count = null;
+  view.offset = 0;
   setSegment(granularity);
   candles = [];
   loadMarket();

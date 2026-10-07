@@ -98,7 +98,12 @@ main { padding: 24px 32px; display: grid; grid-template-columns: minmax(0, 1fr);
 
 /* ---------- chart ---------- */
 .chart-body { position: relative; padding: 12px 16px 0; }
-canvas { width: 100%; display: block; }
+canvas { width: 100%; display: block; cursor: crosshair; touch-action: none; }
+canvas.grabbing { cursor: grabbing; }
+.legend .ohlc { color: var(--text-2); font-feature-settings: "tnum"; }
+.legend .zoom { display: inline-flex; gap: 2px; padding: 2px; background: var(--field); border: 1px solid var(--line-soft); border-radius: var(--r); }
+.legend .zoom button { width: 24px; height: 20px; padding: 0; border: 0; border-radius: 3px; background: none; color: var(--muted); font: 600 13px/1 var(--font-mono); cursor: pointer; }
+.legend .zoom button:hover { background: var(--l2); color: var(--text); }
 .chart-state { position: absolute; inset: 12px 16px 0; display: grid; place-items: center; text-align: center; padding: 16px;
   font: 500 12px/16px var(--font-mono); color: var(--dim); }
 .chart-state:empty { display: none; }

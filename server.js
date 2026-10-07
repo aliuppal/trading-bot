@@ -45,7 +45,7 @@ app.get('/api/status', wrap(async (req, res) => {
 }));
 app.get('/api/market', wrap(async (req, res) => {
   const granularity = Number(req.query.granularity) || bot.settings.granularity;
-  const candles = await market.getCandles(granularity, 200);
+  const candles = await market.getCandles(granularity, 300); // 300 = more history to scroll back through
   const price = candles.at(-1)?.close ?? 0;
   // Active 1h/2h/4h FVGs within 3% of price, for the chart overlay.
   const htfZones = (await loadHtfZones(market, ['30m', '1h', '2h', '4h']).catch(() => []))
