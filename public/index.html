@@ -56,7 +56,10 @@
         <div class="panel-head">
           <h2 class="card-title"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M8 2v12M12 4v8" /></svg>Price · SMA 20</h2>
           <label class="sr-only" for="chartSymbol">Chart symbol</label>
-          <select id="chartSymbol" class="symbol-select"><option>BTCUSDC</option></select>
+          <div class="chart-tools">
+            <select id="chartSymbol" class="symbol-select"><option>BTCUSDC</option></select>
+            <button type="button" id="jevBtn" class="btn-jev" title="Jev buy / sell / hold odds and model confidence for every symbol" aria-expanded="false" aria-controls="jevOverview">JEV · all symbols</button>
+          </div>
           <div class="segmented" id="granularity" role="tablist" aria-label="Candle size">
             <button type="button" role="tab" data-g="60">1m</button>
             <button type="button" role="tab" data-g="120">2m</button>
@@ -70,6 +73,7 @@
             <button type="button" role="tab" data-g="86400">1d</button>
           </div>
         </div>
+        <div id="jevOverview" class="jev-overview" hidden></div>
         <div class="legend">
           <span><i style="background:rgba(6,182,212,.35);border:1px dashed #06B6D4"></i>IFVG zone</span>
           <span><i style="background:rgba(16,185,129,.25)"></i>HTF bullish FVG</span>
@@ -155,9 +159,8 @@
           <div class="btn-row">
             <button id="startBtn" class="btn btn-primary">Start bot</button>
             <button id="stopBtn" class="btn btn-ghost">Stop</button>
-            <button id="runBtn" class="btn btn-jev" title="Ask Jev about every symbol now">JEV</button>
+            <button id="runBtn" class="btn btn-ghost">Ask AI now</button>
           </div>
-          <div id="jevCheck" class="jev-check"></div>
 
           <h3 class="section-label">Strategy</h3>
           <ul class="rules">

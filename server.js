@@ -123,9 +123,12 @@ app.post('/api/bot/run', wrap(async (req, res) => {
   // "Ask AI now": every symbol, one after another
   const out = await bot.locked(async () => { const r = []; for (const b of bots) { await b.load(); r.push(await b.runOnceUnlocked({ manual: true })); } return r; });
   if (out === null) throw new Error('Another bot cycle is running right now, try again in a few seconds');
-  // one row per symbol for the JEV check panel
-  const results = out.map((e, i) => ({ symbol: e.symbol || bots[i].symbol, action: e.action, label: e.label, confidence: e.confidence, executed: Boolean(e.executed), note: e.note || '', time: e.time }));
-  res.json({ results, executed: results.filter((r) => r.executed).length });
+  res.json(out.find((e) => e.executed) || { action: 'HOLD', note: out.map((e) => `${e.symbol || ''} ${e.action}${e.confidence !== undefined ? ` ${Math.round(e.confidence * 100)}%` : ''}`).join(' · ') });
+}));
+// JEV overview: Jev's BUY / SELL / HOLD odds and model confidence for every symbol, in parallel. Read-only, no trades.
+app.get('/api/jev/overview', wrap(async (req, res) => {
+  await Promise.all(bots.slice(1).map((b) => b.load()));
+  res.json(await Promise.all(bots.map((b) => b.jevView().catch((e) => ({ symbol: b.symbol, error: e.message })))));
 }));
 app.post('/api/settings', wrap(async (req, res) => res.json(await bot.updateSettings(req.body || {}))));
 

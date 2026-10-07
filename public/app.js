@@ -752,21 +752,53 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('shot
 
 $('startBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/start', { method: 'POST' }); toast('Bot started: IFVG setups will be traded automatically'); refreshAll(); });
 $('stopBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/stop', { method: 'POST' }); toast('Bot stopped (open trades keep their stop and target)'); refreshAll(); });
-// JEV: check every symbol now, one row per symbol
 $('runBtn').onclick = (e) => withBtn(e.target, async () => {
-  $('botState').textContent = 'Jev checking…';
-  const n = status?.symbols?.length || 1;
-  $('jevCheck').innerHTML = `<div class="jev-head"><b>Jev</b><span class="num">checking ${n} symbol${n > 1 ? 's' : ''}…</span></div>`;
+  $('botState').textContent = 'Thinking…';
   const d = await api('/api/bot/run', { method: 'POST' });
-  const rows = d.results || [d];
-  $('jevCheck').innerHTML = `<div class="jev-head"><b>Jev</b><span class="num">${fmtTime(Date.now())}${d.executed ? ` · ${d.executed} executed` : ''}</span></div>`
-    + rows.map((r) => {
-      const lbl = decisionLabel(r);
-      return `<div class="jev-row"><b>${esc(r.symbol || '')}</b><span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span><span class="num">${r.confidence !== undefined ? `${Math.round(r.confidence * 100)}%` : ''}</span><span class="jev-note" title="${esc(r.note)}">${r.executed ? '<span class="ok">✓ executed</span> ' : ''}${esc(r.note)}</span></div>`;
-    }).join('');
-  toast(d.executed ? `Jev opened ${d.executed} trade${d.executed > 1 ? 's' : ''}` : 'Jev checked all symbols: no new trade');
+  toast(`AI says ${d.action}${d.executed ? ' — order executed' : d.note ? ` — ${d.note}` : ''}`, d.action === 'ERROR');
   await Promise.all([refreshAll(), loadMarket()]);
 });
+
+// JEV overview: odds for every symbol (read-only, nothing is traded)
+const pct = (v) => (v === undefined || v === null ? '—' : `${Math.round(v * 100)}%`);
+function renderJevOverview(rows, when) {
+  const best = (r) => (r.odds ? Object.entries(r.odds).sort((x, y) => y[1] - x[1])[0][0] : null);
+  return `<div class="jev-head"><b>Jev · all symbols</b><span class="num">${when}</span></div>
+  <div class="table-wrap"><table class="jev-table"><thead><tr><th>Symbol</th><th class="r">Price</th><th>Jev says</th><th class="r">Buy</th><th class="r">Sell</th><th class="r">Hold</th><th class="r">Model conf.</th><th>Setup</th></tr></thead><tbody>`
+  + rows.map((r) => {
+    if (r.error) return `<tr><td><b>${esc(r.symbol)}</b></td><td colspan="7" class="src">${esc(r.error)}</td></tr>`;
+    const top = best(r);
+    const bar = (k, cls) => `<td class="r"><span class="odds ${cls}${top === k ? ' top' : ''}"><i style="width:${Math.round((r.odds?.[k] ?? 0) * 100)}%"></i><em>${pct(r.odds?.[k])}</em></span></td>`;
+    return `<tr class="jev-sym" data-symbol="${esc(r.symbol)}" tabindex="0" title="Show ${esc(r.symbol)} on the chart"><td><b>${esc(r.symbol)}</b>${r.open ? ` <span class="pill OPEN">${esc(r.open.toUpperCase())}</span>` : ''}</td>
+      <td class="r">${px(r.price)}</td>
+      <td><span class="pill ${esc(r.action || '')}">${esc(r.action || '—')}</span></td>
+      ${bar('BUY', 'buy')}${bar('SELL', 'sell')}${bar('HOLD', 'hold')}
+      <td class="r">${r.modelConfidence !== null && r.modelConfidence !== undefined ? Number(r.modelConfidence).toFixed(2) : '—'}</td>
+      <td class="src">${esc(r.setup || (r.note ? r.note.slice(0, 70) : 'no setup'))}</td></tr>`;
+  }).join('') + '</tbody></table></div>';
+}
+$('jevBtn').onclick = (e) => {
+  const box = $('jevOverview');
+  const btn = e.currentTarget;
+  if (box.dataset.loading) return;
+  if (!box.hidden) { box.hidden = true; btn.setAttribute('aria-expanded', 'false'); return; }
+  box.hidden = false; btn.setAttribute('aria-expanded', 'true');
+  box.innerHTML = `<div class="jev-head"><b>Jev · all symbols</b><span class="num">asking Jev about ${status?.symbols?.length || 1} symbols…</span></div>`;
+  box.dataset.loading = '1';
+  withBtn(btn, async () => {
+    try { box.innerHTML = renderJevOverview(await api('/api/jev/overview'), fmtTime(Date.now())); }
+    catch (err) { box.innerHTML = `<div class="jev-head"><b>Jev · all symbols</b><span class="num down">${esc(err.message)}</span></div>`; }
+    finally { delete box.dataset.loading; }
+  });
+};
+const showSymbol = (e) => {
+  const tr = e.target.closest('.jev-sym');
+  if (!tr) return;
+  $('chartSymbol').value = tr.dataset.symbol;
+  $('chartSymbol').onchange({ target: $('chartSymbol') });
+};
+$('jevOverview').onclick = showSymbol;
+$('jevOverview').onkeydown = (e) => { if (e.key === 'Enter') showSymbol(e); };
 $('settingsForm').onsubmit = (e) => {
   e.preventDefault();
   withBtn(e.submitter, async () => {

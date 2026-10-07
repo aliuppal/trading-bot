@@ -90,3 +90,13 @@ test('IFVG formation must take at most 3-7 candles (gap -> inversion)', async ()
   assert.equal(latestSetup(build(6), { maxGapAge: 7 }), null); // 8 candles: too slow
   assert.equal(latestSetup(build(4), { maxGapAge: 5 }), null); // 6 candles with a 5-candle limit
 });
+
+test('HTF FVG tap counts only on the first touch (unmitigated)', async () => {
+  const { findHtfTap } = await import('../src/ifvg.js');
+  const H = 3600000;
+  const zone = { tf: '1h', type: 'bullish', top: 105, bottom: 100, readyAt: 0, firstTouchEnd: 5 * H };
+  const tapAt = (t) => [{ time: t, open: 108, high: 108, low: 104, close: 107 }];
+  assert.ok(findHtfTap(tapAt(4.5 * H), [zone], 'bullish'), 'inside the first-touch candle: valid');
+  assert.equal(findHtfTap(tapAt(6 * H), [zone], 'bullish'), null, 'later re-tap of a mitigated FVG: rejected');
+  assert.ok(findHtfTap(tapAt(6 * H), [{ ...zone, firstTouchEnd: null }], 'bullish'));
+});

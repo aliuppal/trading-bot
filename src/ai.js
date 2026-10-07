@@ -221,7 +221,7 @@ export function scoreToLeverage(score) {
 }
 
 /** Flat state object for Jev: indicators, account and recent closes. */
-export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr' }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr', targets }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
     setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
@@ -232,7 +232,8 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     liquidity_below: liquidity ? describeLevels(liquidity.below, 4) : 'unknown',
     draw_on_liquidity: liquidity?.draw ?? null,
     lrlr: liquidity?.lrlr ? `${liquidity.lrlr.side}: ${liquidity.lrlr.prices.map((p) => Math.round(p)).join(', ')}` : 'none',
-    target_mode: targetMode === 'liquidity' ? 'nearest liquidity (LRLR / equal highs-lows first) 0.75R-5R away' : `fixed 1:${riskReward}`,
+    target_mode: targetMode === 'liquidity' ? (targets?.length ? 'Jev picks the liquidity target (target question)' : 'nearest liquidity 0.75R-5R away') : `fixed 1:${riskReward}`,
+    target_options: targets?.length ? targetCriteria(targets) : null,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
@@ -317,9 +318,24 @@ export function reviewQuestions(side) {
   };
 }
 
+/** Target options for Jev: T1 = nearest. */
+export function targetCriteria(targets) {
+  return Object.fromEntries(targets.map((t, i) => [`T${i + 1}`, `${t.level.label || t.level.type} at ${t.price} (${t.r}R)`]));
+}
+export function targetQuestion(targets) {
+  return {
+    type: 'choice',
+    instructions: 'If trading, which liquidity level should the take profit sit on? Pick the level price is most likely to reach '
+      + 'before the stop: the draw on liquidity, an LRLR end, equal highs/lows, PDH/PDL or a swing high/low. '
+      + 'Nearer levels are safer, further levels pay more R; skip a level when opposing FVGs or liquidity sit in the path.',
+    criteria: targetCriteria(targets),
+  };
+}
+
 export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
   const review = context.review;
-  const questions = review ? reviewQuestions(review.side) : JEV_QUESTIONS;
+  const targets = !review && context.targets?.length ? context.targets : null;
+  const questions = review ? reviewQuestions(review.side) : targets ? { ...JEV_QUESTIONS, target: targetQuestion(targets) } : JEV_QUESTIONS;
   const res = await fetchImpl(JEV_URL, {
     method: 'POST',
     headers: {
@@ -354,6 +370,9 @@ export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
     sizePct,
     leverage,
     reasoning: `Jev: ${odds} (model confidence ${a.confidence ?? 'n/a'}); suggested size ${sizePct}%${review ? '' : `, leverage ${leverage}x`}.`,
+    odds: Object.fromEntries(choices.map((k) => [k, Number((probs[k] ?? 0).toFixed(2))])),
+    modelConfidence: a.confidence ?? null,
+    targetChoice: targets ? String(data.answers?.target?.choice || '').toUpperCase() || null : null,
     model: data.model || model,
     cost: data.usage?.cost,
   };

@@ -74,3 +74,10 @@ test('liquidity target keeps small-price decimals (XRP)', () => {
   const liq = { below: [{ type: 'SWL', price: 2.48731 }], above: [], lrlr: null };
   assert.equal(liquidityTarget(liq, 'short', 2.5012, 0.01).price, 2.48731);
 });
+
+test('liquidity targets: every valid level for Jev to choose from, nearest first', async () => {
+  const { liquidityTargets } = await import('../src/liquidity.js');
+  const liq = { below: [{ type: 'SWL', price: 99.5 }, { type: 'EQL', price: 98.5 }, { type: 'PDL', price: 97 }, { type: 'PWL', price: 80 }], above: [], lrlr: null };
+  const t = liquidityTargets(liq, 'short', 100, 1);
+  assert.deepEqual(t.map((x) => x.level.type), ['EQL', 'PDL']); // 0.5R too near, 20R too far
+});

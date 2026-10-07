@@ -347,17 +347,30 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .sym-scan b { color: inherit; font-weight: 600; margin-right: 4px; }
 .meter-row.off { opacity: .55; }
 
-/* JEV all-symbols check */
-.btn-jev { background: rgba(6, 182, 212, .14); border: 1px solid rgba(6, 182, 212, .45); color: #22D3EE; font-family: var(--font-mono); font-weight: 700; letter-spacing: .08em; }
-.btn-jev:hover { background: rgba(6, 182, 212, .24); }
-.jev-check { margin-top: 12px; padding: 10px 12px; border-radius: var(--r-lg); background: var(--l2); border: 1px solid var(--line-soft); font-size: 12px; }
-.jev-check:empty { display: none; }
-.jev-head { display: flex; justify-content: space-between; margin-bottom: 6px; font: 500 12px/16px var(--font-mono); color: var(--muted); }
-.jev-head b { color: #22D3EE; }
-.jev-row { display: grid; grid-template-columns: 72px auto 36px 1fr; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line-soft); font-family: var(--font-mono); }
-.jev-row .num { color: var(--muted); text-align: right; }
-.jev-note { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* timeframe buttons stay on the right, also when the header wraps */
 #granularity { margin-left: auto; }
 .chart-panel .symbol-select { margin-left: 0; }
+
+/* chart header: symbol picker + JEV button */
+.chart-tools { display: flex; align-items: center; gap: 8px; }
+.chart-panel .chart-tools .symbol-select { width: auto; margin: 0; padding: 6px 10px; }
+.btn-jev { padding: 6px 12px; border-radius: var(--r); background: rgba(6, 182, 212, .14); border: 1px solid rgba(6, 182, 212, .45); color: #22D3EE; font: 700 11px/16px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+.btn-jev:hover, .btn-jev[aria-expanded="true"] { background: rgba(6, 182, 212, .24); }
+.btn-jev:disabled { opacity: .6; cursor: wait; }
+.jev-overview { margin: 0 16px 8px; padding: 10px 12px; border-radius: var(--r-lg); background: var(--l2); border: 1px solid rgba(6, 182, 212, .3); }
+.jev-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font: 500 12px/16px var(--font-mono); color: var(--muted); }
+.jev-head b { color: #22D3EE; }
+.jev-table td, .jev-table th { padding: 6px 8px; font-size: 12px; }
+.jev-sym { cursor: pointer; }
+.jev-sym:hover, .jev-sym:focus { background: rgba(6, 182, 212, .06); outline: none; }
+.odds { position: relative; display: inline-block; width: 64px; height: 18px; border-radius: 4px; background: rgba(148, 163, 184, .08); overflow: hidden; vertical-align: middle; text-align: left; }
+.odds i { position: absolute; top: 0; bottom: 0; left: 0; opacity: .35; }
+.odds em { position: relative; font: 500 11px/18px var(--font-mono); font-style: normal; padding: 0 6px; }
+.odds.buy i { background: #10B981; }
+.odds.sell i { background: #F43F5E; }
+.odds.hold i { background: #64748B; }
+.odds.top { box-shadow: inset 0 0 0 1px currentColor; }
+.odds.buy.top { color: #10B981; }
+.odds.sell.top { color: #F43F5E; }
+.odds.hold.top { color: #CBD5E1; }

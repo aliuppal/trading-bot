@@ -1,10 +1,10 @@
-import { decide } from './ai.js';
+import { decide, askJev } from './ai.js';
 import { summarize } from './indicators.js';
 import { bracketFor } from './ifvg.js';
 import { scanSetups, pathBlockers } from './strategy.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
-import { liquidityLevels, liquidityTarget, describeLevels } from './liquidity.js';
+import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } from './liquidity.js';
 
 const MIN_ORDER_USD = 10;
 const MAX_TRADES_KEPT = 200;
@@ -141,6 +141,25 @@ const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 const tfName = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 const hhmm = (t) => new Date(t).toISOString().slice(11, 16);
 // prices for any symbol: 83,291 (BTC) / 3,512.40 (ETH) / 2.3457 (XRP)
+/**
+ * HTF (30m / 1h / 2h / 4h) FVG sitting inside the bracket, between entry and target: its near edge
+ * (top of a zone below a short, bottom of a zone above a long), if at least minR away. Nearest one wins.
+ */
+export function htfTargetInBracket(zones, side, entry, target, risk, { minR = 0.5, tfs = ['30m', '1h', '2h', '4h'] } = {}) {
+  if (!risk || !Number.isFinite(target)) return null;
+  let best = null;
+  for (const z of zones || []) {
+    if (!tfs.includes(z.tf)) continue;
+    const edge = side === 'short' ? z.top : z.bottom;
+    const ahead = side === 'short' ? edge < entry && edge > target : edge > entry && edge < target;
+    if (!ahead) continue;
+    const r = Math.abs(edge - entry) / risk;
+    if (r < minR) continue;
+    if (!best || Math.abs(edge - entry) < Math.abs(best.price - entry)) best = { price: edge, r: Number(r.toFixed(2)), zone: z };
+  }
+  return best;
+}
+
 export const fmtPx = (v) => { const a = Math.abs(v); return Number(v).toLocaleString('en-US', { maximumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 4, minimumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 4 }); };
 const px = fmtPx;
 
@@ -484,7 +503,7 @@ export class TradingBot {
     return trade;
   }
 
-  async openTrade({ side, setup, decision, account, price, candles, liquidity }) {
+  async openTrade({ side, setup, decision, account, price, candles, liquidity, zones = [] }) {
     const label = side === 'short' ? 'SHORT' : 'BUY';
     if (!bracketFor(side, price, setup)) return { note: `${label} skipped: price is on the wrong side of the IFVG, no valid stop` };
     const st = this.state.settings;
@@ -520,9 +539,15 @@ export class TradingBot {
     // Target at liquidity: the nearest level (LRLR / equal highs-lows / PDH-PDL ...) 0.75R-5R away (else the fixed R:R target).
     let targetLevel = null;
     if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
-      const lt = liquidityTarget(liquidity, side, entryPrice, b.risk); // nearest swing low (short) / high (long) or other liquidity, 0.75R-5R, on the level
-      if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.label || lt.level.type} ${fmtPx(lt.price)}`; }
+      // Jev's pick when it chose one (still on the right side of the fill, >= 0.5R), else the nearest valid level
+      const p = decision?.targetPick;
+      const pr = p && (side === 'short' ? entryPrice - p.price : p.price - entryPrice) / b.risk;
+      const lt = pr >= 0.5 ? { ...p, r: Number(pr.toFixed(2)), byJev: true } : liquidityTarget(liquidity, side, entryPrice, b.risk);
+      if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.label || lt.level.type} ${fmtPx(lt.price)}${lt.byJev ? ' (Jev pick)' : ''}`; }
     }
+    // A 30m-4h FVG inside the bracket (between entry and target) is where price reacts first: target its near edge.
+    const hz = htfTargetInBracket(zones, side, entryPrice, b.target, b.risk);
+    if (hz) { b.target = hz.price; b.rr = hz.r; targetLevel = `${hz.zone.tf} ${hz.zone.type} FVG ${fmtPx(hz.price)} (HTF in bracket)`; }
     const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}` };
     const trade = {
       id: `T${this.now()}-${this.symbol}`,
@@ -607,6 +632,28 @@ export class TradingBot {
     return r;
   }
 
+  /** What Jev thinks about this symbol right now: BUY / SELL / HOLD odds and model confidence. Read-only. */
+  async jevView() {
+    const s = this.state.settings;
+    const scan = await scanSetups(this.market, s, this.now());
+    const indicators = summarize(scan.candles);
+    const open = (await this.trades()).find((t) => t.status === 'open');
+    const st = scan.setup;
+    const base = {
+      symbol: this.symbol, price: indicators.price, open: open ? open.side || 'long' : null, note: scan.note || null,
+      setup: st ? `${st.category} ${st.granularity / 60}m ${st.direction} IFVG${st.grade ? ` (${st.grade})` : ''}` : null,
+    };
+    if (!this.ai.apiKey || this.ai.provider !== 'jev') return { ...base, error: 'Jev key not set' };
+    const account = await this.broker.getAccount(indicators.price).catch(() => ({ cash: 0, equity: 0 }));
+    const d = await askJev({
+      indicators, account, recentCandles: scan.candles.slice(-24), granularity: scan.granularity, ifvg: zoneSummary(st),
+      riskReward: s.riskReward ?? 1, maxLeverage: this.broker.supportsLeverage ? s.maxLeverage ?? 5 : 1, breakevenAtR: s.breakevenAtR ?? 0,
+      liquidity: scan.liquidity, targetMode: s.targetMode ?? 'rr', maxTradesPerDay: s.maxTradesPerDay,
+      openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
+    }, this.ai, this.fetch);
+    return { ...base, action: d.action, confidence: d.confidence, odds: d.odds, modelConfidence: d.modelConfidence, sizePct: d.sizePct, leverage: d.leverage };
+  }
+
   async runOnceUnlocked({ manual = false } = {}) {
     if (this.busy) throw new Error('Bot is already running a cycle');
     this.busy = true;
@@ -687,6 +734,12 @@ export class TradingBot {
         Object.assign(entry, { action: 'HOLD', note: reason, executed: false, source: 'ifvg' });
       } else {
         const account = await this.broker.getAccount(price);
+        // Liquidity targets Jev can choose from (target mode = liquidity, new entries only)
+        let targets = [];
+        if (setup && !open && (s.targetMode ?? 'rr') === 'liquidity') {
+          const tb = bracketFor(want, price, setup, { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
+          if (tb) targets = liquidityTargets(liquidity, want, price, tb.risk);
+        }
         const decision = await decide(
           {
             indicators,
@@ -706,6 +759,7 @@ export class TradingBot {
             breakevenAtR: s.breakevenAtR ?? 0,
             liquidity,
             targetMode: s.targetMode ?? 'rr',
+            targets,
             maxTradesPerDay: s.maxTradesPerDay,
             openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
           },
@@ -714,6 +768,8 @@ export class TradingBot {
         );
         persist = true;
         if (setup) this.rememberAsked(setup.id);
+        const pick = /^T(\d+)$/.exec(decision.targetChoice || '');
+        if (pick && targets[Number(pick[1]) - 1]) decision.targetPick = targets[Number(pick[1]) - 1];
         Object.assign(entry, {
           action: decision.action,
           confidence: decision.confidence,
@@ -750,7 +806,7 @@ export class TradingBot {
           if (reason) entry.note = `${decision.action} not taken: ${reason}`;
           else if (!confident) entry.note = `Confidence ${decision.confidence} below minimum ${s.minConfidence}`;
           else {
-            const res = await this.openTrade({ side: want, setup, decision, account, price, candles, liquidity });
+            const res = await this.openTrade({ side: want, setup, decision, account, price, candles, liquidity, zones: scan.zones || [] });
             entry.note = res.note;
             if (res.trade) { entry.executed = true; entry.tradeId = res.trade.id; entry.order = res.order; entry.label = want === 'short' ? 'SHORT' : 'LONG'; }
           }

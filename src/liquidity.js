@@ -176,8 +176,17 @@ export function describeLevels(list, n = 3) {
  * Liquidity-based target: the nearest liquidity in the trade direction (swing low for a short, swing high for a long,
  * LRLR swing points, equal highs / lows, PDH/PDL, today, previous week, HTF swings), placed at the level itself (frontPct % in front if set). Accepted between minR and maxR x risk. Returns { price, level, r } or null.
  */
-export function liquidityTarget(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0 } = {}) {
-  if (!liq || !risk) return null;
+export function liquidityTarget(liq, side, entry, risk, opts = {}) {
+  return liquidityTargets(liq, side, entry, risk, { ...opts, max: 1 })[0] || null;
+}
+
+/**
+ * Every liquidity level in the trade direction that makes a valid target (minR-maxR x risk), nearest first:
+ * the options Jev chooses the target from. Returns [{ price, level, r }].
+ */
+export function liquidityTargets(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0, max = 6 } = {}) {
+  if (!liq || !risk) return [];
+  const out = [];
   const toward = side === 'long' ? 'above' : 'below';
   const cands = [...(side === 'long' ? liq.above : liq.below)];
   if (liq.lrlr?.side === toward) {
@@ -189,7 +198,8 @@ export function liquidityTarget(liq, side, entry, risk, { minR = 0.75, maxR = 5,
   for (const l of ahead) {
     const price = side === 'long' ? l.price * (1 - frontPct / 100) : l.price * (1 + frontPct / 100);
     const r = Math.abs(price - entry) / risk;
-    if (r >= minR && r <= maxR) return { price: roundPx(price), level: l, r: Number(r.toFixed(2)) };
+    if (r >= minR && r <= maxR && !out.some((o) => o.price === roundPx(price))) out.push({ price: roundPx(price), level: l, r: Number(r.toFixed(2)) });
+    if (out.length >= max) break;
   }
-  return null;
+  return out;
 }

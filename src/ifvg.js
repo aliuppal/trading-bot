@@ -179,20 +179,29 @@ export function aggregate(candles, toSeconds) {
 export function activeFvgs(candles, seconds, { minGapPct = 0.05, label } = {}) {
   return findFvgs(candles, { minGapPct })
     .filter((f) => f.invertedIndex === undefined)
-    .map((f) => ({
-      tf: label || `${seconds / 3600}h`,
-      type: f.type,
-      top: f.top,
-      bottom: f.bottom,
-      formedAt: f.formedAt,
-      readyAt: candles[f.index + 1].time + seconds * 1000,
-    }));
+    .map((f) => {
+      // first HTF candle after the gap that traded into it: the zone is mitigated once that candle closes
+      let firstTouchEnd = null;
+      for (let j = f.index + 2; j < candles.length; j++) {
+        if (candles[j].low <= f.top && candles[j].high >= f.bottom) { firstTouchEnd = candles[j].time + seconds * 1000; break; }
+      }
+      return {
+        tf: label || `${seconds / 3600}h`,
+        type: f.type,
+        top: f.top,
+        bottom: f.bottom,
+        formedAt: f.formedAt,
+        readyAt: candles[f.index + 1].time + seconds * 1000,
+        firstTouchEnd, // null = never touched (unmitigated)
+      };
+    });
 }
 
 /**
  * Has price tapped an HTF FVG of the same direction recently?
  * Bullish setups need a bullish HTF FVG (demand), bearish setups a bearish one (supply).
  * A tap is any lower-timeframe candle in `recent` that traded into the zone after it formed.
+ * The tap must be the zone's first touch (unmitigated FVG): a zone already traded into on an earlier HTF candle is skipped.
  * Returns the most recently tapped zone (with tappedAt) or null.
  */
 export function findHtfTap(recent, zones, direction) {
@@ -203,7 +212,8 @@ export function findHtfTap(recent, zones, direction) {
       const c = recent[i];
       if (c.time < z.readyAt) break;
       if (c.low <= z.top && c.high >= z.bottom) {
-        if (!best || c.time > best.tappedAt) best = { ...z, tappedAt: c.time };
+        const fresh = !z.firstTouchEnd || c.time < z.firstTouchEnd; // still inside the first-touch HTF candle
+        if (fresh && (!best || c.time > best.tappedAt)) best = { ...z, tappedAt: c.time };
         break;
       }
     }

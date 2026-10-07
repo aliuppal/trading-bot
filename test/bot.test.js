@@ -574,3 +574,18 @@ test('swing / scalp can be switched off and on', async () => {
   assert.equal(bot.state.settings.swingEnabled, true);
   assert.equal(bot.state.settings.scalpEnabled, false);
 });
+
+test('HTF FVG inside the bracket becomes the target (near edge)', async () => {
+  const { htfTargetInBracket } = await import('../src/bot.js');
+  const zones = [
+    { tf: '1h', type: 'bullish', top: 83150, bottom: 83120 }, // below a short, inside the bracket
+    { tf: '5m', type: 'bullish', top: 83200, bottom: 83190 }, // LTF: ignored
+    { tf: '4h', type: 'bearish', top: 82900, bottom: 82850 }, // beyond the target: ignored
+  ];
+  const t = htfTargetInBracket(zones, 'short', 83300, 83000, 100);
+  assert.equal(t.price, 83150);
+  assert.equal(t.r, 1.5);
+  assert.equal(htfTargetInBracket(zones, 'short', 83300, 83200, 100), null); // nothing inside a tighter bracket
+  const l = htfTargetInBracket([{ tf: '30m', type: 'bearish', top: 101.5, bottom: 101 }], 'long', 100, 103, 1);
+  assert.equal(l.price, 101);
+});
