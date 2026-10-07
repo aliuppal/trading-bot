@@ -420,19 +420,18 @@ async function loadStatus() {
     const scan = s.lastScan?.note ? ` · ${s.lastScan.note}` : '';
     $('botTimes').textContent = `Last scan ${fmtTime(s.lastRun)}${s.nextRun ? ` · next ${fmtTime(s.nextRun)}` : ''}${scan}`;
 
-    const max = s.settings.maxTradesPerDay ?? 10;
+    const maxSw = s.settings.maxSwingPerDay ?? 5, maxSc = s.settings.maxScalpPerDay ?? 5;
+    const max = maxSw + maxSc; // total = swing + scalp limits
     $('tradesToday').textContent = `${s.tradesToday} / ${max}`;
     $('stripTrades').textContent = `${s.tradesToday}/${max}`;
-    const track = $('meterTrack');
-    track.className = `meter-track${s.tradesToday >= max ? ' full' : ''}`;
-    track.style.gridTemplateColumns = `repeat(${Math.max(1, max)}, 1fr)`;
-    track.innerHTML = Array.from({ length: Math.max(1, max) }, (_, i) => `<i class="${i < s.tradesToday ? 'used' : ''}"></i>`).join('');
+    // one bar per trade type
+    const bar = (used, limit, cls) => `<div class="meter-row"><span class="pill ${cls}">${cls}</span><div class="meter-track ${cls.toLowerCase()}${used >= limit && limit ? ' full' : ''}" style="grid-template-columns:repeat(${Math.max(1, limit)},1fr)">${Array.from({ length: Math.max(1, limit) }, (_, i) => `<i class="${i < used ? 'used' : ''}"></i>`).join('')}</div><b>${used} / ${limit}</b></div>`;
+    $('meterTrack').innerHTML = bar(s.swingToday ?? 0, maxSw, 'SWING') + bar(s.scalpToday ?? 0, maxSc, 'SCALP');
     const ss = s.scanStats;
     $('scanStats').innerHTML = ss
       ? `<b>Scans today ${ss.scans}</b> · no IFVG ${ss.noIfvg || 0} · IFVG but no FVG tap ${ss.noTap || 0} · waiting ${ss.waiting || 0} · in trade ${ss.inTrade || 0}${ss.limit ? ` · limit ${ss.limit}` : ''} · <b>sent to Jev ${ss.askedJev || 0}</b> · <b>taken ${ss.taken || 0}</b>`
       : 'Scans today: counting starts with the next scan';
-    $('meterSplit').innerHTML = `<span><span class="pill SWING">SWING</span> ${s.swingToday ?? 0} / ${s.settings.maxSwingPerDay ?? 5}</span>`
-      + `<span><span class="pill SCALP">SCALP</span> ${s.scalpToday ?? 0} / ${s.settings.maxScalpPerDay ?? 5}</span>`;
+    $('meterSplit').innerHTML = '';
     $('openTrade').innerHTML = renderOpenTrade(s.openTrade);
 
     if (!settingsLoaded) {

@@ -191,6 +191,8 @@ export class TradingBot {
     // Every entry model is always considered (swing 15m/5m/3m and scalp 1m); daily limits control how many.
     this.state.settings.entryTimeframes = 'all';
     this.state.settings.scalpEnabled = true;
+    // Total trades per day = swing limit + scalp limit.
+    this.state.settings.maxTradesPerDay = (this.state.settings.maxSwingPerDay ?? 5) + (this.state.settings.maxScalpPerDay ?? 5);
     return this.state;
   }
 
@@ -290,6 +292,7 @@ export class TradingBot {
     s.maxTradesPerDay = Math.min(10, Math.max(0, Math.round(s.maxTradesPerDay)));
     s.maxSwingPerDay = Math.min(10, Math.max(0, Math.round(s.maxSwingPerDay ?? 5)));
     s.maxScalpPerDay = Math.min(10, Math.max(0, Math.round(s.maxScalpPerDay ?? 5)));
+    s.maxTradesPerDay = s.maxSwingPerDay + s.maxScalpPerDay; // total per day = swing + scalp limits
     s.riskReward = Math.min(10, Math.max(0.5, Number(s.riskReward ?? 1)));
     // Breakeven trigger (in R) must sit before the target; 0 = off.
     s.breakevenAtR = Math.max(0, Number(s.breakevenAtR ?? 0));
