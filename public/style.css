@@ -221,7 +221,7 @@ td.empty b { display: block; margin-bottom: 4px; font: 600 14px/20px var(--font-
 .modal-shots { display: grid; gap: 12px; padding: 16px; }
 .modal-shots figure { margin: 0; }
 .modal-shots figcaption { margin-bottom: 6px; font: 600 10px/14px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
-.modal-shots svg { width: 100%; height: auto; display: block; border-radius: var(--r-lg); border: 1px solid var(--line-soft); }
+.modal-shots svg, .modal-shots img { width: 100%; height: auto; display: block; border-radius: var(--r-lg); border: 1px solid var(--line-soft); }
 .modal-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; padding: 0 16px 16px; }
 .modal-meta div { font: 500 13px/18px var(--font-mono); }
 .modal-meta span { display: block; font: 600 10px/14px var(--font-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }

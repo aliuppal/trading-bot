@@ -284,6 +284,9 @@ function getShots(t) {
   return shotCache.get(key);
 }
 
+// Snapshots are base64 data URIs (older ones may be raw SVG markup from our own server).
+const shotHtml = (s, alt) => (!s ? '' : s.startsWith('data:image/') ? `<img src="${esc(s)}" alt="${esc(alt)}" loading="lazy">` : s);
+
 const RESULT = { open: 'OPEN', win: 'WIN', loss: 'LOSS' };
 async function loadTrades() {
   try {
@@ -312,7 +315,7 @@ async function loadTrades() {
       const shots = await getShots(t);
       const btn = body.querySelector(`[data-trade="${i}"]`);
       const svg = shots.exit || shots.entry;
-      if (btn) btn.innerHTML = svg || '<span class="no-shot">no chart</span>';
+      if (btn) btn.innerHTML = shotHtml(svg, 'Trade chart') || '<span class="no-shot">no chart</span>';
     });
     drawChart();
   } catch (e) {
@@ -334,7 +337,7 @@ async function openShot(t) {
   $('shotClose').focus();
   const shots = await getShots(t);
   const figs = [['At entry', shots.entry], ['At exit', shots.exit]].filter(([, s]) => s);
-  $('shotBody').innerHTML = figs.map(([cap, svg]) => `<figure><figcaption>${cap}</figcaption>${svg}</figure>`).join('')
+  $('shotBody').innerHTML = figs.map(([cap, svg]) => `<figure><figcaption>${cap}</figcaption>${shotHtml(svg, cap)}</figure>`).join('')
     || '<p class="sub">No chart was saved for this trade.</p>';
 }
 

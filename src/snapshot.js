@@ -120,3 +120,9 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Trade chart (${label(phase)})">${parts.join('')}</svg>`;
 }
+
+/** The same chart as a base64 data URI (data:image/svg+xml;base64,…), usable directly as an <img> src. */
+export function renderTradeImage(opts) {
+  const svg = renderTradeSvg(opts);
+  return svg ? `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}` : '';
+}

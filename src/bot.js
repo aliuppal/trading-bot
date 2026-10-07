@@ -1,7 +1,7 @@
 import { decide } from './ai.js';
 import { summarize } from './indicators.js';
 import { latestSetup, bracketFor } from './ifvg.js';
-import { renderTradeSvg } from './snapshot.js';
+import { renderTradeImage } from './snapshot.js';
 
 const MIN_ORDER_USD = 10;
 const MAX_TRADES_KEPT = 200;
@@ -138,6 +138,30 @@ export class TradingBot {
     return this.kv.get(`shot_${id}`, {});
   }
 
+  /**
+   * Snapshots for a trade, re-rendered from market candles (and saved) when one is missing,
+   * e.g. after a storage reset. Only possible while the exchange still returns candles covering the trade.
+   */
+  async shotsFor(id) {
+    const shots = await this.shots(id);
+    const trade = (await this.trades()).find((t) => t.id === id);
+    if (!trade) return shots;
+    const needEntry = !shots.entry;
+    const needExit = trade.status !== 'open' && !shots.exit;
+    if (!needEntry && !needExit) return shots;
+    const granularity = trade.granularity || this.state.settings.granularity;
+    const candles = await this.market.getCandles(granularity, 300);
+    const entryT = new Date(trade.entryTime).getTime();
+    if (!candles.length || candles[0].time > entryT) return shots; // trade is older than the available history
+    if (needEntry) {
+      const atEntry = { ...trade, status: 'open', exitTime: undefined, exitPrice: undefined, pnl: undefined };
+      shots.entry = renderTradeImage({ candles: candles.filter((c) => c.time <= entryT), trade: atEntry, phase: 'entry', granularity });
+    }
+    if (needExit) shots.exit = renderTradeImage({ candles, trade, phase: 'exit', granularity });
+    await this.kv.set(`shot_${id}`, shots);
+    return shots;
+  }
+
   async updateSettings(patch) {
     const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay'];
     const s = this.state.settings;
@@ -222,7 +246,7 @@ export class TradingBot {
     if (i >= 0) trades[i] = trade;
     await this.kv.set('trades', trades);
     const shots = await this.shots(trade.id);
-    shots.exit = renderTradeSvg({ candles, trade, phase: 'exit', granularity: this.state.settings.granularity });
+    shots.exit = renderTradeImage({ candles, trade, phase: 'exit', granularity: this.state.settings.granularity });
     await this.kv.set(`shot_${trade.id}`, shots);
     await this.log({
       time: nowIso, price: exitPrice, action: EXIT_ACTION[trade.side || 'long'], source: 'bracket', executed: Boolean(order), tradeId: trade.id,
@@ -253,6 +277,7 @@ export class TradingBot {
       qty,
       notional,
       entryFee: order.fee || 0,
+      granularity: this.state.settings.granularity,
       stop: b.stop,
       target: b.target,
       risk: b.risk,
@@ -269,7 +294,7 @@ export class TradingBot {
     await this.kv.set('trades', trades);
     await Promise.all(dropped.map((t) => this.kv.del(`shot_${t.id}`)));
     await this.kv.set(`shot_${trade.id}`, {
-      entry: renderTradeSvg({ candles, trade, phase: 'entry', granularity: this.state.settings.granularity }),
+      entry: renderTradeImage({ candles, trade, phase: 'entry', granularity: this.state.settings.granularity }),
     });
     return { trade, order, note: `${plan.note} · SL ${b.stop} · TP ${b.target} (1:1)` };
   }

@@ -67,7 +67,7 @@ test('bullish IFVG + AI BUY opens a 1:1 trade with an entry snapshot', async () 
   assert.ok(t.stop < 59500);
   assert.ok(Math.abs((t.entryPrice - t.stop) - (t.target - t.entryPrice)) < 0.02);
   assert.equal((await broker.getOrders()).length, 1);
-  assert.match((await kv.get(`shot_${t.id}`, {})).entry, /^<svg/);
+  assert.match((await kv.get(`shot_${t.id}`, {})).entry, /^data:image\/svg\+xml;base64,/);
   // the same IFVG is not traded twice
   const again = await bot.runOnce();
   assert.equal(again.executed, false);
@@ -84,7 +84,7 @@ test('target hit closes the trade as a win with an exit snapshot', async () => {
   assert.equal(closed.exitReason, 'target');
   assert.equal(closed.r, 1);
   assert.ok(closed.pnl > 0);
-  assert.match((await s.kv.get(`shot_${t.id}`, {})).exit, /^<svg/);
+  assert.match((await s.kv.get(`shot_${t.id}`, {})).exit, /^data:image\/svg\+xml;base64,/);
 });
 
 test('daily limit of 10 trades stops new entries without calling the AI', async () => {
@@ -189,4 +189,15 @@ test('SupabaseKV upserts, reads and deletes through the REST API', async () => {
   assert.equal(calls[0].path, '/rest/v1/kv');
   assert.equal(calls[0].headers.apikey, 'sb_secret_x');
   assert.match(calls[1].headers.Prefer, /merge-duplicates/);
+});
+
+test('missing snapshots are re-rendered on demand as base64 images', async () => {
+  const s = setup();
+  await s.bot.runOnce();
+  const [t] = await s.bot.trades();
+  await s.kv.del(`shot_${t.id}`);
+  const shots = await s.bot.shotsFor(t.id);
+  assert.match(shots.entry, /^data:image\/svg\+xml;base64,/);
+  assert.match(Buffer.from(shots.entry.split(',')[1], 'base64').toString(), /^<svg/);
+  assert.deepEqual(await s.kv.get(`shot_${t.id}`, {}), shots);
 });

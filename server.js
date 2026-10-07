@@ -46,7 +46,7 @@ app.get('/api/account', wrap(async (req, res) => res.json(await broker.getAccoun
 app.get('/api/orders', wrap(async (req, res) => res.json(await broker.getOrders(100))));
 app.get('/api/decisions', wrap(async (req, res) => res.json(await bot.decisions(100))));
 app.get('/api/trades', wrap(async (req, res) => res.json(await bot.trades())));
-app.get('/api/trades/:id/shots', wrap(async (req, res) => res.json(await bot.shots(String(req.params.id)))));
+app.get('/api/trades/:id/shots', wrap(async (req, res) => res.json(await bot.shotsFor(String(req.params.id)))));
 
 app.post('/api/bot/start', wrap(async (req, res) => res.json(await bot.setRunning(true))));
 app.post('/api/bot/stop', wrap(async (req, res) => res.json(await bot.setRunning(false))));
