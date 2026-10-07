@@ -33,6 +33,8 @@ let status = null;
 
 /* ---------------- chart ---------------- */
 
+const RR_CANDLES = 8; // width of the risk/reward block, in candles
+
 function drawChart() {
   const canvas = $('chart');
   const dpr = window.devicePixelRatio || 1;
@@ -48,11 +50,14 @@ function drawChart() {
   const extra = open ? [open.stop, open.target] : [];
   const lo = Math.min(...candles.map((c) => c.low), ...extra);
   const hi = Math.max(...candles.map((c) => c.high), ...extra);
-  const step = (w - pad.l - pad.r) / candles.length;
-  const x = (i) => pad.l + step * (i + 0.5);
-  const y = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
   const t0 = candles[0].time;
   const idxAt = (t) => Math.max(0, Math.min(candles.length - 1, Math.floor((t - t0) / (granularity * 1000))));
+  // Leave empty candle slots on the right so the open trade's risk/reward block is fully visible.
+  const entryIdx = open ? idxAt(new Date(open.entryTime).getTime()) : null;
+  const future = open ? Math.max(2, entryIdx + RR_CANDLES + 2 - (candles.length - 1)) : 0;
+  const step = (w - pad.l - pad.r) / (candles.length + future);
+  const x = (i) => pad.l + step * (i + 0.5);
+  const y = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
   const mono = "11px 'JetBrains Mono', ui-monospace, monospace";
 
   // grid + price labels
@@ -95,14 +100,20 @@ function drawChart() {
   });
   ctx.stroke();
 
-  // open trade bracket
+  // open trade: risk/reward block spanning RR_CANDLES candles from the entry
   if (open) {
-    const ex = x(idxAt(new Date(open.entryTime).getTime()));
+    const x0 = x(entryIdx) - step / 2;
+    const x1 = x(entryIdx + RR_CANDLES) + step / 2;
+    const yIn = y(open.entryPrice);
+    ctx.fillStyle = 'rgba(16, 185, 129, .18)'; // reward
+    ctx.fillRect(x0, Math.min(yIn, y(open.target)), x1 - x0, Math.abs(y(open.target) - yIn));
+    ctx.fillStyle = 'rgba(244, 63, 94, .18)'; // risk
+    ctx.fillRect(x0, Math.min(yIn, y(open.stop)), x1 - x0, Math.abs(y(open.stop) - yIn));
     [[open.target, css('--green'), 'TP'], [open.entryPrice, css('--text-2'), 'IN'], [open.stop, css('--red'), 'SL']].forEach(([p, col, name]) => {
       ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.setLineDash(name === 'IN' ? [4, 3] : []);
-      ctx.beginPath(); ctx.moveTo(ex, y(p)); ctx.lineTo(w - pad.r, y(p)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, y(p)); ctx.lineTo(x1, y(p)); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = col; ctx.fillText(name, w - pad.r - 18, y(p) - 4);
+      ctx.fillStyle = col; ctx.fillText(name, x1 + 4, y(p) + 4);
     });
   }
 

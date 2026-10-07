@@ -7,6 +7,7 @@ const C = {
   up: '#10B981', down: '#F43F5E', cyan: '#06B6D4', entry: '#CBD5E1',
 };
 const W = 800, H = 400;
+const RR_CANDLES = 8; // width of the risk/reward block, in candles
 const PAD = { l: 12, r: 84, t: 40, b: 26 };
 const MONO = "font-family=\"'JetBrains Mono',ui-monospace,Consolas,monospace\"";
 
@@ -43,7 +44,10 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   lo -= padY; hi += padY;
 
   const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
-  const step = plotW / Math.max(n, 1);
+  // Empty slots on the right so the whole risk/reward block fits after the entry candle.
+  const entryLocal = entryIdx - start;
+  const future = Math.max(0, entryLocal + RR_CANDLES + 1 - (n - 1));
+  const step = plotW / Math.max(n + future, 1);
   const x = (i) => PAD.l + step * (i + 0.5);
   const y = (p) => PAD.t + (1 - (p - lo) / (hi - lo)) * plotH;
   const cw = Math.max(1, step * 0.62);
@@ -74,18 +78,19 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
   });
 
   // risk / reward boxes and levels, from the entry candle to the right edge
-  const ex = x(entryIdx - start);
-  const span = f1(W - PAD.r - ex);
+  const ex = x(entryLocal) - step / 2;
+  const exEnd = x(entryLocal + RR_CANDLES) + step / 2;
+  const span = f1(exEnd - ex);
   const short = trade.side === 'short';
   const box = (a, b, col) => {
     const top = Math.min(y(a), y(b));
-    parts.push(`<rect x="${f1(ex)}" y="${f1(top)}" width="${span}" height="${f1(Math.abs(y(a) - y(b)))}" fill="${col}" fill-opacity=".07"/>`);
+    parts.push(`<rect x="${f1(ex)}" y="${f1(top)}" width="${span}" height="${f1(Math.abs(y(a) - y(b)))}" fill="${col}" fill-opacity=".16"/>`);
   };
   box(trade.entryPrice, trade.target, C.up);
   box(trade.entryPrice, trade.stop, C.down);
   const level = (p, col, name, dash = '') => {
     const ly = f1(y(p));
-    parts.push(`<line x1="${f1(ex)}" x2="${W - PAD.r}" y1="${ly}" y2="${ly}" stroke="${col}" stroke-width="1.4"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
+    parts.push(`<line x1="${f1(ex)}" x2="${f1(exEnd)}" y1="${ly}" y2="${ly}" stroke="${col}" stroke-width="1.4"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
     parts.push(`<rect x="${W - PAD.r + 2}" y="${f1(ly - 8)}" width="${PAD.r - 4}" height="16" rx="2" fill="${col}" fill-opacity=".16" stroke="${col}" stroke-opacity=".5"/>`);
     parts.push(`<text x="${W - PAD.r + 6}" y="${f1(ly + 4)}" fill="${col}" font-size="10" ${MONO}>${name} ${Math.round(p).toLocaleString('en-US')}</text>`);
   };
@@ -95,8 +100,8 @@ export function renderTradeSvg({ candles, trade, phase = 'entry', granularity = 
 
   // entry marker
   parts.push(short
-    ? `<path d="M${f1(ex)} ${f1(y(trade.entryPrice) - 4)} l-6 -10 h12 z" fill="${C.down}"/>`
-    : `<path d="M${f1(ex)} ${f1(y(trade.entryPrice) + 4)} l-6 10 h12 z" fill="${C.up}"/>`);
+    ? `<path d="M${f1(x(entryLocal))} ${f1(y(trade.entryPrice) - 4)} l-6 -10 h12 z" fill="${C.down}"/>`
+    : `<path d="M${f1(x(entryLocal))} ${f1(y(trade.entryPrice) + 4)} l-6 10 h12 z" fill="${C.up}"/>`);
 
   // exit marker
   if (phase === 'exit' && Number.isFinite(trade.exitPrice) && exitT) {
