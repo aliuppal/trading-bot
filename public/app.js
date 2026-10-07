@@ -478,9 +478,25 @@ function decisionLabel(d) {
 }
 const labelClass = (l) => (l.startsWith('CLOSE') ? 'OPEN' : l === 'LONG' ? 'BUY' : l === 'SHORT' ? 'SELL' : l);
 
+/** Jev's latest reasoning for the charted symbol (the newest decision Jev answered, else the newest scan). */
+async function renderJevReason() {
+  const sym = chartSymbol;
+  const d = await api(`/api/jev/last?symbol=${encodeURIComponent(sym)}`).catch(() => null);
+  if (sym !== chartSymbol) return; // symbol changed meanwhile
+  const box = $('jevReason');
+  if (!d) { box.className = 'decision'; box.innerHTML = `<div class="decision-head"><span>Jev · ${esc(chartSymbol)}</span></div><div class="sub">No Jev decision for ${esc(chartSymbol)} yet</div>`; return; }
+  const lbl = decisionLabel(d);
+  box.className = `decision ${esc(d.action || '')}`;
+  box.innerHTML = `<div class="decision-head"><span>Jev · <b>${esc(chartSymbol)}</b> <span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span></span>
+    <span class="num">${d.confidence !== undefined ? `conf ${esc(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
+    ${d.reasoning ? `<p>${esc(d.reasoning)}</p>` : ''}
+    <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}</div>`;
+}
+
 async function loadDecisions() {
   try {
     const decisions = await api('/api/decisions');
+    renderJevReason();
     $('decisions').querySelector('tbody').innerHTML = decisions.map((d) => `<tr>
       <td class="t">${fmtTime(d.time)}</td><td class="r">${d.symbol ? `<span class="src">${esc(d.symbol)}</span> ` : ''}${px(d.price)}</td>
       <td><span class="pill ${esc(labelClass(decisionLabel(d)))}">${esc(decisionLabel(d))}</span></td>
@@ -844,4 +860,4 @@ setInterval(checkChanges, 3000);
 checkChanges();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshAll(); loadMarket(); } });
 setInterval(loadMarket, 15000);
-$('chartSymbol').onchange = (e) => { chartSymbol = e.target.value; candles = []; view.offset = 0; view.yZoom = 1; view.yPan = 0; loadMarket(); loadStatus(); }; // keep the chart live (new candles, open trade)
+$('chartSymbol').onchange = (e) => { chartSymbol = e.target.value; renderJevReason(); candles = []; view.offset = 0; view.yZoom = 1; view.yPan = 0; loadMarket(); loadStatus(); }; // keep the chart live (new candles, open trade)

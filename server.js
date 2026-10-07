@@ -110,6 +110,12 @@ app.get('/api/orders', wrap(async (req, res) => {
 // Tiny polling endpoint: the dashboard reloads its tables only when this changes.
 app.get('/api/changes', wrap(async (req, res) => res.json({ sig: await bot.changeSignature() })));
 app.get('/api/decisions', wrap(async (req, res) => res.json(await bot.decisions(100))));
+// Latest Jev reasoning for one symbol (searches the whole stored decision log)
+app.get('/api/jev/last', wrap(async (req, res) => {
+  const sym = String(req.query.symbol || bot.symbol);
+  const mine = (await bot.decisions(1000)).filter((d) => (d.symbol || 'BTCUSDC') === sym);
+  res.json(mine.find((d) => /^jev/.test(d.source || '') && d.reasoning) || mine.find((d) => d.reasoning) || mine[0] || null);
+}));
 app.get('/api/trades', wrap(async (req, res) => res.json(await bot.allTrades())));
 app.get('/api/trades/:id/shots', wrap(async (req, res) => {
   const id = String(req.params.id);
