@@ -41,6 +41,7 @@ Every trade has a stop just beyond the IFVG zone and a target ${riskReward}x tha
 Max ${maxTradesPerDay} trades per day; ${tradesToday} taken today.
 Setup: ${ifvg ? `${ifvg.direction} IFVG, zone ${ifvg.bottom}-${ifvg.top}, inverted ${ifvg.ageCandles} candle(s) ago` : 'none detected'}
 Higher-timeframe confirmation: ${ifvg?.htf ? `price tapped a ${ifvg.htf.tf} ${ifvg.htf.type} FVG (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none'}
+Entry models (all scanned every minute): ${ENTRY_MODELS}
 Setup grade: ${ifvg?.grade ?? 'n/a'}${ifvg?.qualityReasons?.length ? ` (${ifvg.qualityReasons.join(', ')})` : ''}
 Entry timeframe: ${ifvg?.granularity ? `${ifvg.granularity / 60}m` : `${granularity / 60}m`}${ifvg?.category ? ` (${ifvg.category} trade)` : ''}
 Liquidity above: ${liquidity ? describeLevels(liquidity.above, 4) : 'unknown'}
@@ -206,6 +207,13 @@ const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
 export const LEVERAGE_LEVELS = [1, 2, 3, 5, 10];
 
+/** The entry models the bot scans, described for Jev. */
+export const ENTRY_MODELS = 'SWING: tap of a 30m/1h/2h/4h FVG, then an IFVG on 15m (preferred) > 5m > 3m '
+  + '(a lower timeframe waits if a higher one is forming; 3m needs a 30m/1h tap). '
+  + 'SCALP: tap of a 5m/15m/30m FVG, then a 1m IFVG. '
+  + 'IFVG = gap inverted within 3-7 candles by a decisive close (>= 20% through, body across). '
+  + 'A+: perfect IFVG (<= 5 candles) + displacement + draw on liquidity / LRLR in the trade direction, valid without a tap.';
+
 /** Map a fractional score index onto LEVERAGE_LEVELS (rounded to the nearest level). */
 export function scoreToLeverage(score) {
   const i = Math.round(Math.min(LEVERAGE_LEVELS.length - 1, Math.max(0, Number(score) || 0)));
@@ -228,6 +236,7 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} FVG tapped (${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
+    entry_models: ENTRY_MODELS,
     setup_grade: ifvg?.grade ?? null, // A+ = perfect IFVG + displacement + toward liquidity
     setup_quality: ifvg?.qualityReasons?.length ? ifvg.qualityReasons.join(', ') : null,
     ...(review && { review_minutes_open: review.minutesOpen, review_unrealized_r: review.unrealizedR }),

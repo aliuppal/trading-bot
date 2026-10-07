@@ -160,6 +160,9 @@ export class TradingBot {
   async load() {
     const saved = await this.kv.get('bot', null);
     if (saved) this.state = { ...this.state, ...saved, settings: { ...this.defaults, ...saved.settings } };
+    // Every entry model is always considered (swing 15m/5m/3m and scalp 1m); daily limits control how many.
+    this.state.settings.entryTimeframes = 'all';
+    this.state.settings.scalpEnabled = true;
     return this.state;
   }
 
@@ -236,8 +239,8 @@ export class TradingBot {
     if (patch.requireHtfTap !== undefined) s.requireHtfTap = patch.requireHtfTap === true || patch.requireHtfTap === 'true';
     if (['rr', 'liquidity'].includes(patch.targetMode)) s.targetMode = patch.targetMode;
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
-    if (patch.scalpEnabled !== undefined) s.scalpEnabled = patch.scalpEnabled === true || patch.scalpEnabled === 'true';
-    if (['all', 'both', '180', '300', '900'].includes(String(patch.entryTimeframes))) s.entryTimeframes = String(patch.entryTimeframes);
+    s.scalpEnabled = true; // use Scalp trades / day = 0 to stop scalps
+    s.entryTimeframes = 'all'; // all entry models, always
     s.ifvgMaxAge = Math.min(7, Math.max(3, Math.round(s.ifvgMaxAge ?? 7)));
     s.intervalMinutes = Math.max(1, s.intervalMinutes);
     s.minConfidence = Math.min(1, Math.max(0, s.minConfidence));

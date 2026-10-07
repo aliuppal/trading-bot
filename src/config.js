@@ -40,9 +40,9 @@ export const config = {
     // Entry needs a tap of a same-direction 1h/2h/4h FVG first
     requireHtfTap: process.env.REQUIRE_HTF_TAP !== 'false',
     // all = 3m + 5m + 15m entries; or 180 / 300 / 900 for one timeframe
-    entryTimeframes: process.env.ENTRY_TIMEFRAMES || 'all',
+    entryTimeframes: 'all', // every entry model is always scanned
     // 1m scalp entries off 5m / 15m / 30m FVG taps
-    scalpEnabled: process.env.SCALP_ENABLED !== 'false',
+    scalpEnabled: true,
     // Entry IFVG must be broken by a displacement candle (big body vs. recent candles)
     requireDisplacement: process.env.REQUIRE_DISPLACEMENT === 'true',
     // Target: rr = fixed risk:reward, liquidity = nearest liquidity level 1R-5R away (falls back to rr)

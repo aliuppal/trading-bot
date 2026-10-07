@@ -106,7 +106,7 @@ test('no IFVG: scheduled scans skip the AI', async () => {
   const flat = ifvgCandles(NOW).slice(0, 40);
   const { bot } = setup({ candles: flat, fetchImpl: async () => { calls++; throw new Error('nope'); } });
   const entry = await bot.runOnce();
-  assert.match(entry.note, /No setup · swing 15m: no fresh IFVG · scalp 1m: no fresh IFVG/);
+  assert.match(entry.note, /No setup · swing 15m: no fresh IFVG.*scalp 1m: no fresh IFVG/);
   assert.equal(calls, 0);
 });
 
@@ -285,10 +285,10 @@ test('swing limit reached: swing setups are skipped, scalps still allowed', asyn
     id: `T${i}`, status: 'win', category: 'swing', entryTime: new Date(NOW - i * 60000).toISOString(),
   })));
   const { bot } = setup({ kv, fetchImpl: async () => { calls++; throw new Error('should not be called'); } });
-  await bot.updateSettings({ maxSwingPerDay: 5, maxScalpPerDay: 5, scalpEnabled: 'false' });
+  await bot.updateSettings({ maxSwingPerDay: 5, maxScalpPerDay: 0 }); // scalps limited to 0 per day
   const entry = await bot.runOnce();
   assert.equal(entry.executed, false);
-  assert.match(entry.note, /Swing limit reached/);
+  assert.match(entry.note, /Daily swing (5) and scalp (0) limits reached/);
   assert.equal(calls, 0);
   assert.equal((await bot.status()).swingToday, 5);
 });
