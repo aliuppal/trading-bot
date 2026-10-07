@@ -288,7 +288,7 @@ test('swing limit reached: swing setups are skipped, scalps still allowed', asyn
   await bot.updateSettings({ maxSwingPerDay: 5, maxScalpPerDay: 0 }); // scalps limited to 0 per day
   const entry = await bot.runOnce();
   assert.equal(entry.executed, false);
-  assert.match(entry.note, /Daily swing (5) and scalp (0) limits reached/);
+  assert.match(entry.note, /Daily swing \(5\) and scalp \(0\) limits reached/);
   assert.equal(calls, 0);
   assert.equal((await bot.status()).swingToday, 5);
 });
