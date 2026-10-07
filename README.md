@@ -1,7 +1,8 @@
 # ₿ BTC AI Paper Trader
 
 A small web app that trades Bitcoin on a **paper (fake money) account**, using the
-**free Google Gemini API** to decide whether to BUY, SELL or HOLD.
+**free AI models on [OpenRouter](https://openrouter.ai)** (or Google Gemini's free tier) to decide
+whether to BUY, SELL or HOLD.
 
 ## How it works
 
@@ -10,7 +11,7 @@ Every *N* minutes (or when you click **Ask AI now**) the bot:
 1. Pulls BTC-USD candles from Coinbase's public API (Binance as fallback). No key needed.
 2. Calculates RSI, SMA 20/50, EMA 12/26, MACD and Bollinger Bands.
 3. Sends the indicators, the last 24 candles, your account balance and its recent
-   decisions to **Gemini**, which replies with structured JSON:
+   decisions to the AI, which replies with JSON:
    `{ action, confidence, size_pct, reasoning }`.
 4. Applies risk rules before trading:
    - skip if confidence is below **Min confidence** (default 0.6)
@@ -18,7 +19,7 @@ Every *N* minutes (or when you click **Ask AI now**) the bot:
    - total BTC exposure never exceeds **Max position %** of equity (default 50%)
 5. Places a market order on the paper account and logs the decision and its reasoning.
 
-If no Gemini key is set (or Gemini errors or hits its rate limit), a simple
+If no AI key is set (or the AI errors or hits its rate limit), a simple
 rule-based strategy is used instead so the site keeps working. The **Source**
 column shows which one made each decision.
 
@@ -26,11 +27,12 @@ column shows which one made each decision.
 
 ```bash
 npm install
-cp .env.example .env      # then add your GEMINI_API_KEY
+cp .env.example .env      # then add your OPENROUTER_API_KEY
 npm start                 # http://localhost:3000
 ```
 
-1. Get a free Gemini API key at <https://aistudio.google.com/apikey> and put it in `.env`.
+1. Create an OpenRouter key at <https://openrouter.ai/keys> and set `OPENROUTER_API_KEY` in `.env`
+   (or set `GEMINI_API_KEY` from <https://aistudio.google.com/apikey> instead).
 2. Open <http://localhost:3000>, click **Ask AI now** to see a decision, or **Start bot** to run on a schedule.
 
 ## Paper accounts
@@ -47,6 +49,9 @@ it can't place live orders by accident.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `AI_PROVIDER` | auto | `openrouter` or `gemini`; if empty, whichever key is set |
+| `OPENROUTER_API_KEY` | (none) | Key from openrouter.ai |
+| `OPENROUTER_MODEL` | `auto` | `auto` = use OpenRouter's current free models (falls back to the next one if rate-limited), or a specific model id |
 | `GEMINI_API_KEY` | (none) | Free key from Google AI Studio |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Any Gemini model on your plan |
 | `BROKER` | `local` | `local` or `alpaca` |
@@ -60,14 +65,14 @@ it can't place live orders by accident.
 
 Interval, candle size and risk limits can also be changed live from the dashboard.
 
-The free Gemini tier has per-minute and per-day request limits; an interval of
-5–15 minutes stays well inside them.
+Free OpenRouter models and the free Gemini tier both have per-minute and per-day
+request limits; an interval of 5–15 minutes stays well inside them.
 
 ## Project layout
 
 ```
 server.js              Express server + REST API
-src/ai.js              Gemini prompt, structured-JSON call, rule-based fallback
+src/ai.js              Prompt, OpenRouter / Gemini calls, rule-based fallback
 src/bot.js             Scheduler + risk rules (planTrade)
 src/indicators.js      RSI / SMA / EMA / MACD / Bollinger
 src/market.js          Coinbase / Binance public market data

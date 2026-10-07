@@ -57,7 +57,7 @@ test('TradingBot.runOnce executes AI BUY on local broker', async () => {
   const broker = new LocalBroker({ dataDir: dir, startingCash: 100000, getPrice: market.getPrice });
   const bot = new TradingBot({
     broker, market, settings, dataDir: dir,
-    gemini: { apiKey: 'k', model: 'gemini-2.5-flash' },
+    ai: { provider: 'gemini', apiKey: 'k', model: 'gemini-2.5-flash' },
     fetchImpl: geminiResponse({ action: 'BUY', confidence: 0.8, size_pct: 5, reasoning: 'trend up' }),
   });
   const entry = await bot.runOnce();
@@ -72,7 +72,7 @@ test('TradingBot.runOnce logs market errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-'));
   const market = { getCandles: async () => { throw new Error('offline'); }, getPrice: async () => 1 };
   const broker = new LocalBroker({ dataDir: dir, startingCash: 1000, getPrice: market.getPrice });
-  const bot = new TradingBot({ broker, market, settings, dataDir: dir, gemini: { apiKey: '' } });
+  const bot = new TradingBot({ broker, market, settings, dataDir: dir, ai: { provider: 'none', apiKey: '' } });
   const entry = await bot.runOnce();
   assert.equal(entry.action, 'ERROR');
   assert.equal(bot.status().lastError, 'offline');

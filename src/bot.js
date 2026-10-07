@@ -31,10 +31,10 @@ export function planTrade(decision, account, settings) {
 }
 
 export class TradingBot {
-  constructor({ broker, market, gemini, settings, dataDir, fetchImpl = fetch }) {
+  constructor({ broker, market, ai, settings, dataDir, fetchImpl = fetch }) {
     this.broker = broker;
     this.market = market;
-    this.gemini = gemini;
+    this.ai = ai;
     this.settings = { ...settings };
     this.fetch = fetchImpl;
     this.timer = null;
@@ -55,7 +55,7 @@ export class TradingBot {
         : null,
       lastError: this.lastError,
       settings: this.settings,
-      ai: this.gemini.apiKey ? `gemini:${this.gemini.model}` : 'rules (set GEMINI_API_KEY to use Gemini)',
+      ai: this.ai.apiKey ? `${this.ai.provider}:${this.ai.model === 'auto' ? 'free models' : this.ai.model}` : 'rules (no AI key set)',
       broker: this.broker.name,
     };
   }
@@ -106,7 +106,7 @@ export class TradingBot {
           granularity: this.settings.granularity,
           recentDecisions: this.decisions(5),
         },
-        this.gemini,
+        this.ai,
         this.fetch,
       );
       const plan = planTrade(decision, account, this.settings);

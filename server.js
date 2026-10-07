@@ -14,7 +14,7 @@ const broker = config.broker === 'alpaca'
   ? new AlpacaBroker({ ...config.alpaca, getPrice: market.getPrice })
   : new LocalBroker({ dataDir: config.dataDir, startingCash: config.startingCash, getPrice: market.getPrice });
 
-const bot = new TradingBot({ broker, market, gemini: config.gemini, settings: config.bot, dataDir: config.dataDir });
+const bot = new TradingBot({ broker, market, ai: config.ai, settings: config.bot, dataDir: config.dataDir });
 
 const app = express();
 app.use(express.json());
@@ -49,6 +49,6 @@ app.post('/api/reset', wrap(async (req, res) => { await broker.reset(); res.json
 
 app.listen(config.port, () => {
   console.log(`BTC AI paper-trading site on http://localhost:${config.port}`);
-  console.log(`AI: ${config.gemini.apiKey ? `Gemini (${config.gemini.model})` : 'rule-based fallback (no GEMINI_API_KEY)'} | Broker: ${broker.name}`);
+  console.log(`AI: ${config.ai.apiKey ? `${config.ai.provider} (${config.ai.model})` : 'rule-based fallback (no AI key)'} | Broker: ${broker.name}`);
   if (config.bot.autoStart) bot.start();
 });

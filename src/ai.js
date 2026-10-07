@@ -1,4 +1,4 @@
-// Decision engine: asks Google Gemini (free tier) for BUY / SELL / HOLD.
+// Decision engine: asks an LLM (OpenRouter free models or Google Gemini) for BUY / SELL / HOLD.
 // Falls back to a simple rule-based strategy when no key is set or the API fails.
 
 const ACTIONS = ['BUY', 'SELL', 'HOLD'];
@@ -95,6 +95,77 @@ export async function askGemini(prompt, { apiKey, model }, fetchImpl = fetch) {
   return parseDecision(text);
 }
 
+const OPENROUTER = 'https://openrouter.ai/api/v1';
+let freeModelCache = { at: 0, ids: [] };
+
+/** Current zero-cost OpenRouter models (cached for an hour). */
+export async function listFreeModels(fetchImpl = fetch, now = Date.now()) {
+  if (freeModelCache.ids.length && now - freeModelCache.at < 3600000) return freeModelCache.ids;
+  const res = await fetchImpl(`${OPENROUTER}/models`);
+  if (!res.ok) throw new Error(`OpenRouter models HTTP ${res.status}`);
+  const { data = [] } = await res.json();
+  const ids = data
+    .filter((m) => m.id.endsWith(':free') || (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0))
+    .filter((m) => !/image|vision-only|embed/i.test(m.id))
+    .sort((a, b) => (b.context_length || 0) - (a.context_length || 0))
+    .map((m) => m.id);
+  freeModelCache = { at: now, ids };
+  return ids;
+}
+
+export function resetFreeModelCache() {
+  freeModelCache = { at: 0, ids: [] };
+}
+
+async function openRouterChat(prompt, model, apiKey, fetchImpl) {
+  const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://github.com/aliuppal/trading-bot',
+      'X-Title': 'BTC AI Paper Trader',
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: 'You are a trading assistant. Reply with a single JSON object and nothing else.' },
+        { role: 'user', content: prompt },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    const err = new Error(`OpenRouter ${model} HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  if (data.error) throw new Error(`OpenRouter ${model}: ${data.error.message || JSON.stringify(data.error)}`);
+  const text = data?.choices?.[0]?.message?.content || '';
+  if (!text) throw new Error(`Empty OpenRouter response from ${model}`);
+  return { ...parseDecision(text), model: data.model || model };
+}
+
+/**
+ * model: a specific OpenRouter model id, or "auto" to use the current free models
+ * (tries up to 3 if one is rate-limited or unavailable).
+ */
+export async function askOpenRouter(prompt, { apiKey, model }, fetchImpl = fetch) {
+  const candidates = model && model !== 'auto' ? [model] : (await listFreeModels(fetchImpl)).slice(0, 3);
+  if (!candidates.length) throw new Error('No free OpenRouter models available right now');
+  let lastErr;
+  for (const m of candidates) {
+    try {
+      return await openRouterChat(prompt, m, apiKey, fetchImpl);
+    } catch (err) {
+      lastErr = err;
+      if (err.status === 401 || err.status === 402) break; // bad key / no credits: other models won't help
+    }
+  }
+  throw lastErr;
+}
+
 /** Rule-based fallback so the site still works without an API key. */
 export function ruleBasedDecision(ind) {
   const { rsi_14: r, macd: m, sma_20, sma_50, price } = ind;
@@ -120,14 +191,22 @@ export function ruleBasedDecision(ind) {
   };
 }
 
-export async function decide(context, geminiConfig, fetchImpl = fetch) {
-  if (!geminiConfig.apiKey) {
-    return { ...ruleBasedDecision(context.indicators), source: 'rules (no GEMINI_API_KEY)' };
+const PROVIDER_LABEL = { openrouter: 'OpenRouter', gemini: 'Gemini' };
+
+/** ai: { provider: 'openrouter' | 'gemini' | 'none', apiKey, model } */
+export async function decide(context, ai, fetchImpl = fetch) {
+  if (!ai.apiKey || !PROVIDER_LABEL[ai.provider]) {
+    return { ...ruleBasedDecision(context.indicators), source: 'rules (no AI key)' };
   }
   try {
-    const d = await askGemini(buildPrompt(context), geminiConfig, fetchImpl);
-    return { ...d, source: `gemini:${geminiConfig.model}` };
+    const prompt = buildPrompt(context);
+    if (ai.provider === 'openrouter') {
+      const { model, ...d } = await askOpenRouter(prompt, ai, fetchImpl);
+      return { ...d, source: `openrouter:${model}` };
+    }
+    const d = await askGemini(prompt, ai, fetchImpl);
+    return { ...d, source: `gemini:${ai.model}` };
   } catch (err) {
-    return { ...ruleBasedDecision(context.indicators), source: 'rules (Gemini error)', error: err.message };
+    return { ...ruleBasedDecision(context.indicators), source: `rules (${PROVIDER_LABEL[ai.provider]} error)`, error: err.message };
   }
 }
