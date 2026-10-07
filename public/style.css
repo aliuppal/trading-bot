@@ -1,0 +1,58 @@
+:root {
+  --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+  --green: #3fb950; --red: #f85149; --accent: #f7931a; --blue: #58a6ff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); }
+h1 { margin: 0; font-size: 1.3rem; color: var(--accent); }
+h2 { margin: 0 0 12px; font-size: 1rem; }
+h3 { margin: 20px 0 8px; font-size: .9rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+main { padding: 16px 24px; display: grid; gap: 16px; max-width: 1400px; margin: 0 auto; }
+.badges { display: flex; gap: 8px; flex-wrap: wrap; }
+.badge { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: .8rem; color: var(--muted); }
+.badge.warn { color: var(--accent); border-color: var(--accent); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+.card, .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-width: 0; }
+.label { color: var(--muted); font-size: .8rem; }
+.value { font-size: 1.5rem; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.sub { color: var(--muted); font-size: .85rem; margin-top: 4px; }
+.up { color: var(--green); } .down { color: var(--red); }
+.grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } main, header { padding-left: 16px; padding-right: 16px; } }
+.panel-head { display: flex; justify-content: space-between; align-items: center; }
+canvas { width: 100%; display: block; }
+.indicators { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 12px; font-size: .85rem; }
+.indicators div span { color: var(--muted); display: block; font-size: .75rem; }
+button, select, input { font: inherit; color: var(--text); background: #21262d; border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; }
+button { cursor: pointer; } button:hover { border-color: var(--muted); } button:disabled { opacity: .5; cursor: wait; }
+button.primary { background: #238636; border-color: #2ea043; }
+button.buy { background: #1a3d24; border-color: var(--green); }
+button.sell { background: #4a1c1c; border-color: var(--red); }
+button.link { background: none; border: none; color: var(--muted); padding: 0; margin-top: 16px; text-decoration: underline; font-size: .8rem; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.bot-status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.decision { border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: .9rem; }
+.decision:empty { display: none; }
+.settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.settings label { display: flex; flex-direction: column; gap: 4px; font-size: .8rem; color: var(--muted); }
+.settings input, .settings select { width: 100%; }
+.settings button { grid-column: span 2; }
+.manual { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.manual input { min-width: 0; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+td.reason { min-width: 260px; color: var(--muted); }
+.pill { font-weight: 700; padding: 2px 8px; border-radius: 4px; font-size: .75rem; }
+.pill.BUY, .pill.buy { background: #1a3d24; color: var(--green); }
+.pill.SELL, .pill.sell { background: #4a1c1c; color: var(--red); }
+.pill.HOLD { background: #21262d; color: var(--muted); }
+.pill.ERROR { background: #4a1c1c; color: var(--red); }
+footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 24px; }
+#toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; display: none; max-width: 360px; }
+#toast.show { display: block; }
+#toast.error { border-color: var(--red); }

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTC AI Paper Trader</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>₿</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>₿ BTC AI Paper Trader</h1>
+    <div class="badges">
+      <span id="aiBadge" class="badge">AI: …</span>
+      <span id="brokerBadge" class="badge">Broker: …</span>
+      <span class="badge warn">Paper money only</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="cards">
+      <div class="card"><div class="label">BTC price</div><div class="value" id="price">—</div><div class="sub" id="change">—</div></div>
+      <div class="card"><div class="label">Equity</div><div class="value" id="equity">—</div><div class="sub" id="pnl">—</div></div>
+      <div class="card"><div class="label">Cash</div><div class="value" id="cash">—</div></div>
+      <div class="card"><div class="label">BTC held</div><div class="value" id="btc">—</div><div class="sub" id="avgEntry">—</div></div>
+    </section>
+
+    <section class="grid">
+      <div class="panel chart-panel">
+        <div class="panel-head">
+          <h2>Price</h2>
+          <select id="granularity">
+            <option value="300">5m</option>
+            <option value="900">15m</option>
+            <option value="3600" selected>1h</option>
+            <option value="21600">6h</option>
+            <option value="86400">1d</option>
+          </select>
+        </div>
+        <canvas id="chart" height="320"></canvas>
+        <div id="indicators" class="indicators"></div>
+      </div>
+
+      <div class="panel">
+        <h2>AI bot</h2>
+        <div class="bot-status"><span id="botDot" class="dot"></span><span id="botState">—</span></div>
+        <div class="sub" id="botTimes"></div>
+        <div class="btn-row">
+          <button id="startBtn" class="primary">Start bot</button>
+          <button id="stopBtn">Stop</button>
+          <button id="runBtn">Ask AI now</button>
+        </div>
+        <div id="lastDecision" class="decision"></div>
+
+        <h3>Settings</h3>
+        <form id="settingsForm" class="settings">
+          <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
+          <label>Candles<select name="granularity">
+            <option value="300">5m</option><option value="900">15m</option><option value="3600">1h</option>
+            <option value="21600">6h</option><option value="86400">1d</option></select></label>
+          <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
+          <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
+          <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
+          <button type="submit">Save</button>
+        </form>
+
+        <h3>Manual trade</h3>
+        <form id="manualForm" class="manual">
+          <input id="buyAmount" type="number" min="1" step="any" placeholder="USD to buy" />
+          <button type="button" id="buyBtn" class="buy">Buy</button>
+          <input id="sellAmount" type="number" min="0" step="any" placeholder="BTC to sell" />
+          <button type="button" id="sellBtn" class="sell">Sell</button>
+        </form>
+        <button id="resetBtn" class="link">Reset local paper account</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>AI decisions</h2>
+      <div class="table-wrap"><table id="decisions"><thead><tr>
+        <th>Time</th><th>Price</th><th>Action</th><th>Conf.</th><th>Result</th><th>Reasoning</th><th>Source</th>
+      </tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <h2>Orders</h2>
+      <div class="table-wrap"><table id="orders"><thead><tr>
+        <th>Time</th><th>Side</th><th>Qty (BTC)</th><th>Price</th><th>Value</th><th>P&amp;L</th><th>Status</th><th>By</th>
+      </tr></thead><tbody></tbody></table></div>
+    </section>
+  </main>
+
+  <footer>Educational paper-trading demo. Not financial advice. AI decisions can be wrong.</footer>
+  <div id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
