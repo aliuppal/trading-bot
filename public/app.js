@@ -435,9 +435,24 @@ async function loadStatus() {
 
 /* ---------------- tables ---------------- */
 
+/**
+ * What a decision did to the trade: SHORT / LONG (opened), CLOSE SHORT / CLOSE LONG (closed), HOLD, ...
+ * Closing a short is a BUY order and closing a long a SELL order, so the raw action alone reads backwards.
+ */
+function decisionLabel(d) {
+  if (d.label) return d.label;
+  const note = d.note || '';
+  const closed = d.executed && (d.source === 'bracket' || /closed (short|long)|Closed (short|long)/.test(note));
+  if (closed) return d.action === 'BUY' ? 'CLOSE SHORT' : 'CLOSE LONG';
+  if (d.executed && /^(BUY|SELL)$/.test(d.action)) return d.action === 'SELL' ? 'SHORT' : 'LONG';
+  return d.action;
+}
+const labelClass = (l) => (l.startsWith('CLOSE') ? 'OPEN' : l === 'LONG' ? 'BUY' : l === 'SHORT' ? 'SELL' : l);
+
 function renderDecision(d) {
   if (!d) return '';
-  return `<div class="decision-head"><span class="pill ${esc(d.action)}">${esc(d.action)}</span>
+  const lbl = decisionLabel(d);
+  return `<div class="decision-head"><span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span>
     <span class="num">${d.confidence !== undefined ? `conf ${esc(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
     ${d.reasoning ? `<p>${esc(d.reasoning)}</p>` : ''}
     <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}${d.aiError ? ` · AI error: ${esc(d.aiError)}` : ''}</div>`;
@@ -451,7 +466,7 @@ async function loadDecisions() {
     $('lastDecision').innerHTML = renderDecision(last);
     $('decisions').querySelector('tbody').innerHTML = decisions.map((d) => `<tr>
       <td class="t">${fmtTime(d.time)}</td><td class="r">${usd(d.price)}</td>
-      <td><span class="pill ${esc(d.action)}">${esc(d.action)}</span></td>
+      <td><span class="pill ${esc(labelClass(decisionLabel(d)))}">${esc(decisionLabel(d))}</span></td>
       <td class="r">${d.confidence ?? '—'}</td>
       <td>${d.executed ? '<span class="ok">✓</span> ' : ''}${esc(d.note || '')}</td>
       <td class="reason">${esc(d.reasoning || '')}</td>
