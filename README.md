@@ -1,8 +1,8 @@
 # ₿ BTC AI Paper Trader
 
 A small web app that trades Bitcoin on a **paper (fake money) account**, using the
-**free AI models on [OpenRouter](https://openrouter.ai)** (or Google Gemini's free tier) to decide
-whether to BUY, SELL or HOLD.
+**Jev** (TypeSafe's decisions model on [OpenRouter](https://openrouter.ai)) to decide whether to
+BUY, SELL or HOLD. Free OpenRouter chat models and Google Gemini's free tier are also supported.
 
 ## How it works
 
@@ -10,9 +10,12 @@ Every *N* minutes (or when you click **Ask AI now**) the bot:
 
 1. Pulls BTC-USD candles from Coinbase's public API (Binance as fallback). No key needed.
 2. Calculates RSI, SMA 20/50, EMA 12/26, MACD and Bollinger Bands.
-3. Sends the indicators, the last 24 candles, your account balance and its recent
-   decisions to the AI, which replies with JSON:
-   `{ action, confidence, size_pct, reasoning }`.
+3. Sends the indicators, the last 24 closes and your account balance to **Jev** via
+   OpenRouter's decisions endpoint (`/api/alpha/decisions`). Jev answers a BUY/SELL/HOLD
+   choice with a probability for each option and scores the trade size; the probability of
+   the chosen action is used as the confidence. Each decision costs about $0.00002–0.00004
+   of OpenRouter credit. If Jev is unavailable, the bot falls back to OpenRouter's free
+   chat models (which return `{ action, confidence, size_pct, reasoning }` JSON).
 4. Applies risk rules before trading:
    - skip if confidence is below **Min confidence** (default 0.6)
    - each buy is at most **Max per trade %** of equity (default 10%)
@@ -50,8 +53,9 @@ it can't place live orders by accident.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AI_PROVIDER` | auto | `openrouter` or `gemini`; if empty, whichever key is set |
-| `OPENROUTER_API_KEY` | (none) | Key from openrouter.ai |
+| `AI_PROVIDER` | auto | `jev`, `openrouter` (free chat models) or `gemini`; if empty, `jev` when an OpenRouter key is set |
+| `OPENROUTER_API_KEY` | (none) | Key from openrouter.ai (used by `jev` and `openrouter`) |
+| `JEV_MODEL` | `typesafe/jev-1.13` | Jev decisions model id |
 | `OPENROUTER_MODEL` | `auto` | `auto` = use OpenRouter's current free models (falls back to the next one if rate-limited), or a specific model id |
 | `GEMINI_API_KEY` | (none) | Free key from Google AI Studio |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Any Gemini model on your plan |
@@ -73,7 +77,7 @@ request limits; an interval of 5–15 minutes stays well inside them.
 
 ```
 server.js              Express server + REST API
-src/ai.js              Prompt, OpenRouter / Gemini calls, rule-based fallback
+src/ai.js              Jev decisions call, OpenRouter / Gemini chat calls, rule-based fallback
 src/bot.js             Scheduler + risk rules (planTrade)
 src/indicators.js      RSI / SMA / EMA / MACD / Bollinger
 src/market.js          Coinbase / Binance public market data

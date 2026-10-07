@@ -1,4 +1,5 @@
-// Decision engine: asks an LLM (OpenRouter free models or Google Gemini) for BUY / SELL / HOLD.
+// Decision engine: asks Jev (TypeSafe's decisions model on OpenRouter), an OpenRouter chat model
+// or Google Gemini for BUY / SELL / HOLD.
 // Falls back to a simple rule-based strategy when no key is set or the API fails.
 
 const ACTIONS = ['BUY', 'SELL', 'HOLD'];
@@ -179,6 +180,91 @@ export async function askOpenRouter(prompt, { apiKey, model }, fetchImpl = fetch
   throw lastErr;
 }
 
+const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
+const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
+
+/** Flat state object for Jev: indicators, account and recent closes. */
+export function buildJevState({ indicators, account, recentCandles, granularity }) {
+  const { macd, bollinger, ...rest } = indicators;
+  return {
+    symbol: 'BTC/USD',
+    candle_minutes: granularity / 60,
+    ...rest,
+    macd: macd?.macd ?? null,
+    macd_signal: macd?.signal ?? null,
+    macd_histogram: macd?.histogram ?? null,
+    bb_upper: bollinger?.upper ?? null,
+    bb_middle: bollinger?.middle ?? null,
+    bb_lower: bollinger?.lower ?? null,
+    recent_closes: recentCandles.map((c) => Number(c.close.toFixed(2))),
+    cash_usd: Number(account.cash.toFixed(2)),
+    btc_held: account.btc,
+    btc_avg_entry: account.avgEntry || null,
+    equity_usd: Number(account.equity.toFixed(2)),
+  };
+}
+
+const JEV_QUESTIONS = {
+  action: {
+    type: 'choice',
+    instructions: 'Decide the trade for a disciplined Bitcoin swing trader managing a paper account. '
+      + 'Capital preservation matters more than activity: prefer HOLD when signals are mixed.',
+    criteria: {
+      BUY: 'Signals clearly favor price rising; open or add to a BTC position',
+      SELL: 'Signals clearly favor price falling; reduce or close the BTC position',
+      HOLD: 'Signals are mixed or weak; do nothing',
+    },
+  },
+  size: {
+    type: 'score',
+    instructions: 'If trading, what percent of equity (for BUY) or of the BTC position (for SELL) should be traded?',
+    criteria: SIZE_LEVELS.map((v) => `${v}%`),
+  },
+};
+
+/** Map a fractional score index (e.g. 1.18) onto SIZE_LEVELS by linear interpolation. */
+export function scoreToPct(score) {
+  const s = Math.min(SIZE_LEVELS.length - 1, Math.max(0, Number(score) || 0));
+  const lo = Math.floor(s);
+  const hi = Math.min(SIZE_LEVELS.length - 1, lo + 1);
+  return Number((SIZE_LEVELS[lo] + (SIZE_LEVELS[hi] - SIZE_LEVELS[lo]) * (s - lo)).toFixed(1));
+}
+
+export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
+  const res = await fetchImpl(JEV_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://github.com/aliuppal/trading-bot',
+      'X-Title': 'BTC AI Paper Trader',
+    },
+    body: JSON.stringify({ model, state: buildJevState(context), questions: JEV_QUESTIONS }),
+  });
+  if (!res.ok) {
+    const err = new Error(`Jev HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  if (data.error) throw new Error(`Jev: ${data.error.message || JSON.stringify(data.error)}`);
+  const a = data.answers?.action;
+  const action = String(a?.choice || '').toUpperCase();
+  if (!ACTIONS.includes(action)) throw new Error(`Jev returned no valid action: ${JSON.stringify(data).slice(0, 200)}`);
+  const probs = a.probabilities || {};
+  const confidence = Number(probs[action] ?? a.confidence ?? 0);
+  const sizePct = action === 'HOLD' ? 0 : scoreToPct(data.answers?.size?.score);
+  const odds = ACTIONS.map((k) => `${k} ${Math.round((probs[k] ?? 0) * 100)}%`).join(' · ');
+  return {
+    action,
+    confidence: Number(confidence.toFixed(2)),
+    sizePct,
+    reasoning: `Jev: ${odds} (model confidence ${a.confidence ?? 'n/a'}); suggested size ${sizePct}%.`,
+    model: data.model || model,
+    cost: data.usage?.cost,
+  };
+}
+
 /** Rule-based fallback so the site still works without an API key. */
 export function ruleBasedDecision(ind) {
   const { rsi_14: r, macd: m, sma_20, sma_50, price } = ind;
@@ -204,22 +290,37 @@ export function ruleBasedDecision(ind) {
   };
 }
 
-const PROVIDER_LABEL = { openrouter: 'OpenRouter', gemini: 'Gemini' };
+const PROVIDER_LABEL = { jev: 'Jev', openrouter: 'OpenRouter', gemini: 'Gemini' };
 
-/** ai: { provider: 'openrouter' | 'gemini' | 'none', apiKey, model } */
+/** ai: { provider: 'jev' | 'openrouter' | 'gemini' | 'none', apiKey, model } */
 export async function decide(context, ai, fetchImpl = fetch) {
   if (!ai.apiKey || !PROVIDER_LABEL[ai.provider]) {
     return { ...ruleBasedDecision(context.indicators), source: 'rules (no AI key)' };
+  }
+  const errors = [];
+  if (ai.provider === 'jev') {
+    try {
+      const { model, cost, ...d } = await askJev(context, ai, fetchImpl);
+      return { ...d, source: `jev:${model}`, cost };
+    } catch (err) {
+      errors.push(err.message);
+      if (err.status === 401 || err.status === 402) {
+        return { ...ruleBasedDecision(context.indicators), source: 'rules (Jev error)', error: errors.join(' | ') };
+      }
+      // Same OpenRouter key: fall back to the free chat models before the rules.
+      ai = { ...ai, provider: 'openrouter', model: 'auto' };
+    }
   }
   try {
     const prompt = buildPrompt(context);
     if (ai.provider === 'openrouter') {
       const { model, ...d } = await askOpenRouter(prompt, ai, fetchImpl);
-      return { ...d, source: `openrouter:${model}` };
+      return { ...d, source: `openrouter:${model}`, ...(errors.length && { error: errors.join(' | ') }) };
     }
     const d = await askGemini(prompt, ai, fetchImpl);
     return { ...d, source: `gemini:${ai.model}` };
   } catch (err) {
-    return { ...ruleBasedDecision(context.indicators), source: `rules (${PROVIDER_LABEL[ai.provider]} error)`, error: err.message };
+    errors.push(err.message);
+    return { ...ruleBasedDecision(context.indicators), source: `rules (${PROVIDER_LABEL[ai.provider]} error)`, error: errors.join(' | ') };
   }
 }

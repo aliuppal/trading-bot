@@ -118,6 +118,7 @@ export class TradingBot {
         reasoning: decision.reasoning,
         source: decision.source,
         aiError: decision.error,
+        aiCost: decision.cost,
         indicators,
         note: plan.note,
         executed: false,

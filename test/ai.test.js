@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDecision, decide, buildPrompt, ruleBasedDecision, resetFreeModelCache } from '../src/ai.js';
+import { parseDecision, decide, buildPrompt, ruleBasedDecision, resetFreeModelCache, scoreToPct, buildJevState } from '../src/ai.js';
 import { summarize } from '../src/indicators.js';
 import { makeCandles, geminiResponse } from './helpers.js';
 
@@ -132,4 +132,67 @@ test('listFreeModels keeps only text chat models and puts openrouter/free last',
   const ids = await listFreeModels(async () => json({ data }));
   assert.deepEqual(ids, ['vendor/big:free', 'vendor/small:free', 'openrouter/free']);
   resetFreeModelCache();
+});
+
+// Shape copied from a live /api/alpha/decisions response.
+const jevAnswer = (choice, probabilities, score) => json({
+  model: 'typesafe/jev-1.13-20260917',
+  answers: {
+    action: { type: 'choice', choice, probabilities, confidence: 0.74 },
+    size: { type: 'score', score, legend: {}, probabilities: {}, confidence: 0.2 },
+  },
+  usage: { input_tokens: 514, output_tokens: 54, cost: 0.000021588 },
+});
+
+test('scoreToPct interpolates between size levels', () => {
+  assert.equal(scoreToPct(0), 0);
+  assert.equal(scoreToPct(1.18), 5.9);
+  assert.equal(scoreToPct(3.5), 37.5);
+  assert.equal(scoreToPct(99), 100);
+});
+
+test('buildJevState flattens indicators and account', () => {
+  const st = buildJevState(ctx);
+  assert.equal(st.symbol, 'BTC/USD');
+  assert.equal(typeof st.macd_histogram, 'number');
+  assert.equal(st.recent_closes.length, 24);
+  assert.equal(st.cash_usd, 100000);
+});
+
+test('decide uses Jev decisions endpoint', async () => {
+  let call;
+  const fetchImpl = async (url, opts) => {
+    call = { url, body: JSON.parse(opts.body), auth: opts.headers.Authorization };
+    return jevAnswer('BUY', { BUY: 0.81, HOLD: 0.15, SELL: 0.04 }, 2);
+  };
+  const d = await decide(ctx, { provider: 'jev', apiKey: 'sk-or-x', model: 'typesafe/jev-1.13' }, fetchImpl);
+  assert.equal(call.url, 'https://openrouter.ai/api/alpha/decisions');
+  assert.equal(call.body.model, 'typesafe/jev-1.13');
+  assert.equal(call.body.questions.action.type, 'choice');
+  assert.equal(call.auth, 'Bearer sk-or-x');
+  assert.equal(d.action, 'BUY');
+  assert.equal(d.confidence, 0.81);
+  assert.equal(d.sizePct, 10);
+  assert.equal(d.source, 'jev:typesafe/jev-1.13-20260917');
+  assert.match(d.reasoning, /BUY 81%/);
+});
+
+test('Jev failure falls back to free OpenRouter chat models', async () => {
+  resetFreeModelCache();
+  const fetchImpl = async (url, opts = {}) => {
+    if (url.includes('/alpha/decisions')) return json({ error: { message: 'busy' } }, 503);
+    if (url.endsWith('/models')) return json(MODELS);
+    return chat({ action: 'HOLD', confidence: 0.5, size_pct: 0, reasoning: 'r' }, JSON.parse(opts.body).model);
+  };
+  const d = await decide(ctx, { provider: 'jev', apiKey: 'k', model: 'typesafe/jev-1.13' }, fetchImpl);
+  assert.equal(d.source, 'openrouter:vendor/big:free');
+  assert.match(d.error, /Jev HTTP 503/);
+});
+
+test('Jev bad key goes straight to rules', async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls++; return json({ error: { message: 'no auth' } }, 401); };
+  const d = await decide(ctx, { provider: 'jev', apiKey: 'bad', model: 'typesafe/jev-1.13' }, fetchImpl);
+  assert.equal(calls, 1);
+  assert.equal(d.source, 'rules (Jev error)');
 });

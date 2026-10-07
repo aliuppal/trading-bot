@@ -5,7 +5,8 @@ const num = (v, d) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? 
 function resolveAi() {
   const orKey = process.env.OPENROUTER_API_KEY || '';
   const gKey = process.env.GEMINI_API_KEY || '';
-  const provider = (process.env.AI_PROVIDER || (orKey ? 'openrouter' : gKey ? 'gemini' : 'none')).toLowerCase();
+  const provider = (process.env.AI_PROVIDER || (orKey ? 'jev' : gKey ? 'gemini' : 'none')).toLowerCase();
+  if (provider === 'jev') return { provider, apiKey: orKey, model: process.env.JEV_MODEL || 'typesafe/jev-1.13' };
   if (provider === 'openrouter') return { provider, apiKey: orKey, model: process.env.OPENROUTER_MODEL || 'auto' };
   if (provider === 'gemini') return { provider, apiKey: gKey, model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' };
   return { provider: 'none', apiKey: '', model: '' };
