@@ -407,6 +407,7 @@ function renderOpenTrade(t) {
     </div>
     <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
     <div class="ot-risk">Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
+    ${t.nextReviewAt ? `<div class="ot-risk">Next Jev review <b>${new Date(t.nextReviewAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></div>` : ''}
     ${t.setupReason ? `<div class="ot-reason">${esc(t.setupReason)}</div>` : ''}`;
 }
 
@@ -494,7 +495,17 @@ async function renderJevReason() {
   box.innerHTML = `<div class="decision-head"><span>Jev · <b>${esc(chartSymbol)}</b> <span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span></span>
     <span class="num">${d.confidence !== undefined ? `conf ${esc(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
     ${d.reasoning ? `<p>${esc(d.reasoning)}</p>` : ''}
-    <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}</div>`;
+    <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}</div>
+    ${nextReviewHtml()}`;
+}
+
+/** Next Jev review of the open trade on the charted symbol (local time). */
+function nextReviewHtml() {
+  const t = chartOpen();
+  if (!t?.nextReviewAt) return '';
+  const at = new Date(t.nextReviewAt);
+  const mins = Math.max(0, Math.round((at - Date.now()) / 60000));
+  return `<div class="sub next-review">Next Jev review <b>${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b> (${mins ? `in ${mins} min` : 'due now'})</div>`;
 }
 
 async function loadDecisions() {

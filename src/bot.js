@@ -281,7 +281,8 @@ export class TradingBot {
       swingToday: tradesToday(trades, this.now(), 'swing'),
       scalpToday: tradesToday(trades, this.now(), 'scalp'),
       openTrade: trades.find((t) => t.status === 'open') || null,
-      openTrades: trades.filter((t) => t.status === 'open'),
+      // with the time of the next Jev review
+      openTrades: trades.filter((t) => t.status === 'open').map((t) => ({ ...t, nextReviewAt: new Date(new Date(t.lastReviewAt || t.entryTime).getTime() + reviewMinutes(t) * 60000).toISOString() })),
       symbol: this.symbol,
       ai: this.ai.apiKey ? `${this.ai.provider}:${this.ai.model === 'auto' ? 'free models' : this.ai.model}` : 'rules (no AI key set)',
       broker: this.broker.name,
@@ -966,7 +967,7 @@ export class TradingBot {
           } else {
             entry.tradeId = open.id;
             entry.label = 'HOLD';
-            entry.note = `Jev review: keep ${open.side || 'long'} open (${decision.action}${confident ? '' : ', low confidence'})`;
+            entry.note = `Jev review: keep ${open.side || 'long'} open (${decision.action}${confident ? '' : ', low confidence'}) · next review ${nextReviewLabel(open)}`;
           }
         } else if (opposite && !reason && confident && decision.action === EXIT_ACTION[open.side || 'long']) {
           const t = await this.closeTrade(open, price, 'signal', candles);
