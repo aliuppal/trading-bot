@@ -38,7 +38,7 @@ export const config = {
     maxSwingPerDay: Math.min(10, num(process.env.MAX_SWING_PER_DAY, 5)),
     maxScalpPerDay: Math.min(10, num(process.env.MAX_SCALP_PER_DAY, 5)),
     // Trades open at the same time, over all symbols (max 1 per symbol)
-    maxOpenTrades: Math.min(6, Math.max(1, num(process.env.MAX_OPEN_TRADES, 2))),
+    maxOpenTrades: Math.min(6, Math.max(1, num(process.env.MAX_OPEN_TRADES, 4))),
     // IFVG formation: gap formed -> inverted within N candles (3-7)
     ifvgMaxAge: Math.min(7, Math.max(3, num(process.env.IFVG_MAX_AGE, 7))),
     // Entry needs a tap of a same-direction 1h/2h/4h FVG first
