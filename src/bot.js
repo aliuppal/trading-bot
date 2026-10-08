@@ -819,12 +819,22 @@ export class TradingBot {
         const b0 = bracketFor(sd, price, this.stopZone(setup), { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
         if (b0) {
           const blockers = pathBlockers(scan.zones || [], sd, price, b0.target);
+          setup.htfInPath = false;
           setup.clearPath = blockers.length === 0;
           const why = setup.clearPath ? 'clear path to TP'
-            : `path blocked by ${blockers.slice(0, 2).map((z) => `${z.tf} ${z.type} FVG ${Math.round(z.bottom).toLocaleString('en-US')}-${Math.round(z.top).toLocaleString('en-US')}`).join(', ')}`;
+            : `path blocked by ${blockers.slice(0, 2).map((z) => `${z.tf} ${z.type} FVG ${fmtPx(z.bottom)}-${fmtPx(z.top)}`).join(', ')}`;
           setup.qualityReasons = [...(setup.qualityReasons || []), why];
           // A+ needs a clear path; without it an untapped "A+" is not tradeable.
           if (setup.grade === 'A+' && !setup.clearPath) setup.grade = 'A';
+          // Hard rule: no trade with an opposing 30m / 1h / 2h / 4h FVG between entry and the target it would use.
+          const tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk)?.price ?? b0.target) : b0.target;
+          const htfBlock = pathBlockers(scan.zones || [], sd, price, tgt, ['30m', '1h', '2h', '4h']);
+          if (htfBlock.length) {
+            const z = htfBlock[0];
+            scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: ${z.tf} ${z.type} FVG ${fmtPx(z.bottom)}-${fmtPx(z.top)} sits between entry and TP ${fmtPx(tgt)}`;
+            scan.setup = null;
+            setup = null;
+          }
         }
       }
       if (setup && !setup.htf && !setup.sweep && setup.grade !== 'A+' && s.requireHtfTap !== false) {

@@ -143,3 +143,12 @@ test('session filter windows (UTC)', async () => {
   assert.equal(inSession(Date.UTC(2026, 9, 8, 3, 0)), false); // Asia
   assert.equal(inSession(Date.UTC(2026, 9, 8, 20, 0)), false);
 });
+
+test('opposing HTF FVG between entry and target blocks the path (30m-4h)', async () => {
+  const { pathBlockers } = await import('../src/strategy.js');
+  const zones = [{ tf: '2h', type: 'bullish', top: 114.5, bottom: 113.2 }, { tf: '2h', type: 'bearish', top: 120, bottom: 119 }];
+  const htf = ['30m', '1h', '2h', '4h'];
+  assert.equal(pathBlockers(zones, 'short', 115.5, 113, htf).length, 1, 'bullish 2h FVG under a short');
+  assert.equal(pathBlockers(zones, 'short', 115.5, 114.8, htf).length, 0, 'target above the gap');
+  assert.equal(pathBlockers(zones, 'long', 115.5, 121, htf).length, 1, 'bearish 2h FVG above a long');
+});
