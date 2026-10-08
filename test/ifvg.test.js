@@ -100,3 +100,13 @@ test('HTF FVG tap counts only on the first touch (unmitigated)', async () => {
   assert.equal(findHtfTap(tapAt(6 * H), [zone], 'bullish'), null, 'later re-tap of a mitigated FVG: rejected');
   assert.ok(findHtfTap(tapAt(6 * H), [{ ...zone, firstTouchEnd: null }], 'bullish'));
 });
+
+test('brackets keep small-price decimals (XRP 1.42)', async () => {
+  const { bracketLong, bracketShort } = await import('../src/ifvg.js');
+  const b = bracketLong(1.4205, { top: 1.4195, bottom: 1.4170 }, { rr: 1.5 });
+  assert.ok(b.risk > 0);
+  assert.ok(b.stop < 1.4205 && b.target > 1.4205);
+  assert.notEqual(b.stop, b.target);
+  const s = bracketShort(1.42, { top: 1.4235, bottom: 1.4215 });
+  assert.ok(s.stop > 1.42 && s.target < 1.42);
+});

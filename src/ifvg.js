@@ -121,7 +121,8 @@ export function latestSetup(candles, { maxAge = 2, maxGapAge = 7, minGapPct = 0.
  */
 const clampRisk = (risk, entry, { minRiskPct = 0.15, maxRiskPct = 3 }) =>
   Math.min(Math.max(risk, (entry * minRiskPct) / 100), (entry * maxRiskPct) / 100);
-const round2 = (v) => Number(v.toFixed(2));
+// 8 significant digits: BTC 83,212.89 · XRP 1.4203712 (2 decimals would collapse an XRP bracket onto the entry)
+const round2 = (v) => Number(Number(v).toPrecision(8));
 
 // rr: reward / risk multiple for the target (1 = 1:1, 3 = 1:3).
 export function bracketLong(entry, zone, { bufferPct = 0.05, rr = 1, ...lim } = {}) {

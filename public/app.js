@@ -597,7 +597,7 @@ async function loadTrades() {
       <td class="r">${px(t.entryPrice)}</td><td class="r down">${px(t.stop)}</td><td class="r up">${px(t.target)}</td>
       <td class="r">${(t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)) ? usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null))) : '—'}</td>
       <td class="r">${t.exitPrice ? px(t.exitPrice) : '—'}</td>
-      <td class="r">${t.r !== undefined ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
+      <td class="r">${t.r != null ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
       <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>` : '—'}</td>
       <td class="src">${esc(t.source || '')}</td>
       <td class="reason">${esc(t.setupReason || '')}</td></tr>`).join('');

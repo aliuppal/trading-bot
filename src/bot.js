@@ -193,11 +193,12 @@ export function describeSetup(setup, side) {
   return parts.join(' · ').replace(' · -> ', ' -> ');
 }
 
+const sig = (v) => Number(Number(v).toPrecision(8));
 const zoneSummary = (z) => z && {
-  id: z.id, direction: z.direction, top: Number(z.top.toFixed(2)), bottom: Number(z.bottom.toFixed(2)),
+  id: z.id, direction: z.direction, top: sig(z.top), bottom: sig(z.bottom),
   formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, grade: z.grade, qualityReasons: z.qualityReasons, clearPath: z.clearPath, granularity: z.granularity, category: z.category, displacement: z.displacement,
   ...(z.htf && {
-    htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
+    htf: { tf: z.htf.tf, type: z.htf.type, top: sig(z.htf.top), bottom: sig(z.htf.bottom), tappedAt: z.htf.tappedAt },
   }),
   ...(z.sweep && { sweep: z.sweep }),
   ...(z.smt != null && { smt: z.smt }), ...(z.gapAtr != null && { gapAtr: z.gapAtr }), ...(z.bias && { bias: z.bias, withBias: z.withBias }),
@@ -578,7 +579,8 @@ export class TradingBot {
     let margin, leverage, size, sizing = '';
     if ((st.sizingMode ?? 'percent') === 'risk') {
       // Risk-based: lose about riskPerTradeUsd if the stop is hit.
-      const b0 = bracketFor(side, price, setup, { rr: st.riskReward ?? 1, minRiskPct: st.minStopPct ?? 0.15 });
+      const b0 = bracketFor(side, price, this.stopZone(setup), { rr: st.riskReward ?? 1, minRiskPct: st.minStopPct ?? 0.15 });
+      if (!(b0?.risk > 0)) return { note: `${label} skipped: stop distance is zero` };
       const rs = riskSize({
         riskUsd: st.riskPerTradeUsd ?? 50, stopDist: b0.risk, price, cash: account.cash,
         levPick: decision.leverage, maxLev: st.maxLeverage ?? 5, canLever: Boolean(this.broker.supportsLeverage),
@@ -605,6 +607,7 @@ export class TradingBot {
     const minRiskPct = this.state.settings.minStopPct ?? 0.15;
     const sz = this.stopZone(setup);
     const b = bracketFor(side, entryPrice, sz, { rr, minRiskPct }) || bracketFor(side, price, sz, { rr, minRiskPct });
+    if (!(b?.risk > 0)) throw new Error(`${this.symbol}: bracket has no stop distance (entry ${entryPrice}), position opened without SL/TP`);
     // Target at liquidity: the nearest level (LRLR / equal highs-lows / PDH-PDL ...) 0.75R-5R away (else the fixed R:R target).
     let targetLevel = null;
     if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
