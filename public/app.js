@@ -418,7 +418,7 @@ async function loadStatus() {
     $('aiBadge').textContent = `AI: ${s.ai}`;
     $('brokerBadge').textContent = `Broker: ${s.broker}`;
     $('ruleLev').textContent = s.broker === 'binance' ? `Jev decides, max ${s.settings.maxLeverage ?? 5}x` : '1x (simulator)';
-    $('ruleInv').textContent = `gap → inversion within ${s.settings.ifvgMaxAge ?? 7} candles, close ≥20% through it, entry ≤2 candles after${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
+    $('ruleInv').textContent = `counted from the FIRST FVG of the series (its middle candle = 0) to the candle that closes through the last one: within ${s.settings.ifvgMaxAge ?? 7} candles, close ≥20% through it, entry ≤2 candles after${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
     const lq = s.liquidity;
     $('ruleLiq').textContent = lq ? `draw ${lq.draw ?? 'unclear'}${lq.lrlr ? ` · LRLR ${lq.lrlr.side}` : ''}${lq.above?.[0] ? ` · ↑ ${lq.above[0].type} ${pxPlain(lq.above[0].price)}` : ''}${lq.below?.[0] ? ` · ↓ ${lq.below[0].type} ${pxPlain(lq.below[0].price)}` : ''}` : 'scanning…';
     $('ruleTarget').textContent = s.settings.targetMode === 'liquidity' ? 'liquidity: nearest swing low (short) / swing high (long), LRLR, equal highs-lows 0.75R-5R, else fixed R:R' : `fixed 1 : ${s.settings.riskReward ?? 1}`;

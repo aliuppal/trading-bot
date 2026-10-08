@@ -213,7 +213,9 @@ export const ENTRY_MODELS = 'SWING: tap of a 30m/1h/2h/4h FVG, then an IFVG on 1
   + '(Within each, a lower timeframe waits if a higher one is forming.) '
   + 'IFVG = gap inverted within 3-7 candles by a decisive close (>= 20% through, body across). '
   + 'Context before the IFVG: first tap of an unmitigated FVG, OR a liquidity sweep (ITL swept before a long, ITH swept before a short). '
-  + 'A+: perfect IFVG (<= 5 candles) + displacement + draw on liquidity, or context + displacement + LRLR in the trade direction.';
+  + 'IFVG formation is counted over the whole series of same-direction FVGs: from the middle candle of the FIRST FVG (count 0) '
+  + 'to the candle that closes through the last of them (e.g. FVG #1 at candle 3, FVG #2 at candle 5, inversion at candle 8 = 5 candles). '
+  + 'A+: perfect IFVG (<= 5 candles, counted from the first FVG) + displacement + draw on liquidity, or context + displacement + LRLR in the trade direction.';
 
 /** Map a fractional score index onto LEVERAGE_LEVELS (rounded to the nearest level). */
 export function scoreToLeverage(score) {
@@ -251,6 +253,7 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
     entry_models: ENTRY_MODELS,
+    ifvg_formation: ifvg?.formationCandles != null ? `${ifvg.formationCandles} candles from the first of ${ifvg.seriesFvgs || 1} FVG${(ifvg.seriesFvgs || 1) > 1 ? 's' : ''} to the inversion` : null,
     setup_grade: ifvg?.grade ?? null, // A+ = perfect IFVG + displacement + toward liquidity
     setup_quality: ifvg?.qualityReasons?.length ? ifvg.qualityReasons.join(', ') : null,
     ...(review && { review_minutes_open: review.minutesOpen, review_unrealized_r: review.unrealizedR }),
@@ -293,7 +296,7 @@ const JEV_QUESTIONS = {
       + 'An LRLR (low-resistance run of stepped swings) all the way to the target (lrlr_to_tp) is very important: it strongly favors the trade. '
       + 'Use the liquidity levels: favor trades toward the draw on liquidity (liquidity_above for longs, liquidity_below for shorts, '
       + 'especially a low-resistance run, lrlr) and avoid trades whose path runs straight into nearby opposing liquidity. '
-      + 'setup_grade A+ means a perfect IFVG (gap inverted within 3-5 candles) with an aggressive displacement candle, '
+      + 'setup_grade A+ means a perfect IFVG (ifvg_formation: inverted within 3-5 candles counted from the first FVG of the series) with an aggressive displacement candle, '
       + 'moving toward liquidity (often with an LRLR that way): these deserve high conviction.',
     criteria: {
       BUY: 'A bullish IFVG is holding as support and price should reach the target above before the stop (go long, or close an open short)',
