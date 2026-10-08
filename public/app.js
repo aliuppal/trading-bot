@@ -598,7 +598,7 @@ async function loadTrades() {
       <td class="r">${(t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)) ? usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null))) : '—'}</td>
       <td class="r">${t.exitPrice ? px(t.exitPrice) : '—'}</td>
       <td class="r">${t.r != null ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
-      <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>` : '—'}</td>
+      <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>${t.fees != null ? `<div class="src" title="Binance realized profit before fees, and the entry + exit trading fees">gross ${signedUsd(t.grossPnl)} · fees ${usd(t.fees)}</div>` : ''}` : '—'}</td>
       <td class="src">${esc(t.source || '')}</td>
       <td class="reason">${esc(t.setupReason || '')}</td></tr>`).join('');
     // thumbnails for the most recent trades

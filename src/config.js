@@ -33,10 +33,10 @@ export const config = {
     minConfidence: num(process.env.MIN_CONFIDENCE, 0.6),
     maxPositionPct: num(process.env.MAX_POSITION_PCT, 50),
     maxTradePct: num(process.env.MAX_TRADE_PCT, 10),
-    maxTradesPerDay: Math.min(10, num(process.env.MAX_TRADES_PER_DAY, 10)),
+    maxTradesPerDay: Math.min(100, num(process.env.MAX_TRADES_PER_DAY, 10)),
     // Per-category daily limits (both also count toward maxTradesPerDay)
-    maxSwingPerDay: Math.min(10, num(process.env.MAX_SWING_PER_DAY, 5)),
-    maxScalpPerDay: Math.min(10, num(process.env.MAX_SCALP_PER_DAY, 5)),
+    maxSwingPerDay: Math.min(50, num(process.env.MAX_SWING_PER_DAY, 5)),
+    maxScalpPerDay: Math.min(50, num(process.env.MAX_SCALP_PER_DAY, 5)),
     // Trades open at the same time, over all symbols (max 1 per symbol)
     maxOpenTrades: Math.min(6, Math.max(1, num(process.env.MAX_OPEN_TRADES, 4))),
     // IFVG formation: gap formed -> inverted within N candles (3-7)

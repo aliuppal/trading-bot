@@ -154,7 +154,7 @@ export class BinanceFuturesBroker {
           return {
             qty: Number(qty.toFixed(8)),
             quote: Number(quote.toFixed(4)),
-            price: Number((quote / qty).toFixed(2)),
+            price: Number((quote / qty).toPrecision(10)), // exact average fill (XRP / LINK need more than 2 decimals)
             commission: Number(rows.reduce((a, r) => a + Number(r.commission), 0).toFixed(6)),
             realizedPnl: Number(rows.reduce((a, r) => a + Number(r.realizedPnl), 0).toFixed(6)),
           };

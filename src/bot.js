@@ -149,6 +149,9 @@ export function partialFor(settings, liquidity, side, entry, b) {
   return lv ? { partialPct: pct, partialLevel: lv.price } : {};
 }
 
+/** Result by the net P&L after fees (older records marked a fee-negative target hit as a win). */
+const netStatus = (t) => (t.status === 'win' && t.pnl < 0 && !t.partial ? { ...t, status: 'loss' } : t);
+
 const SIDE_FOR = { bullish: 'long', bearish: 'short' };
 const ENTRY_ACTION = { long: 'BUY', short: 'SELL' };
 const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
@@ -306,7 +309,7 @@ export class TradingBot {
 
   /** Trades of every symbol (daily limits and the open-trade cap are shared). */
   async allTrades(limit = MAX_TRADES_KEPT * 3) {
-    return (await this.kv.get('trades', [])).slice(0, limit);
+    return (await this.kv.get('trades', [])).slice(0, limit).map(netStatus);
   }
 
   shots(id) {
@@ -362,9 +365,9 @@ export class TradingBot {
     s.minConfidence = Math.min(1, Math.max(0, s.minConfidence));
     s.maxPositionPct = Math.min(100, Math.max(0, s.maxPositionPct));
     s.maxTradePct = Math.min(100, Math.max(0, s.maxTradePct));
-    s.maxTradesPerDay = Math.min(10, Math.max(0, Math.round(s.maxTradesPerDay)));
-    s.maxSwingPerDay = Math.min(10, Math.max(0, Math.round(s.maxSwingPerDay ?? 5)));
-    s.maxScalpPerDay = Math.min(10, Math.max(0, Math.round(s.maxScalpPerDay ?? 5)));
+    s.maxTradesPerDay = Math.min(100, Math.max(0, Math.round(s.maxTradesPerDay)));
+    s.maxSwingPerDay = Math.min(50, Math.max(0, Math.round(s.maxSwingPerDay ?? 5)));
+    s.maxScalpPerDay = Math.min(50, Math.max(0, Math.round(s.maxScalpPerDay ?? 5)));
     s.maxTradesPerDay = s.maxSwingPerDay + s.maxScalpPerDay; // total per day = swing + scalp limits
     s.maxOpenTrades = Math.min(6, Math.max(1, Math.round(s.maxOpenTrades ?? 2))); // trades open at once, all symbols
     s.riskReward = Math.min(10, Math.max(0.5, Number(s.riskReward ?? 1)));
@@ -546,9 +549,14 @@ export class TradingBot {
     const dir = short ? -1 : 1;
     const pt = trade.partial;
     if (pt) pnl += pt.pnl; // the part already taken off at internal liquidity
+    if (trade.trimPnl) pnl += trade.trimPnl; // size trimmed after entry slippage
+    const fees = (trade.entryFee || 0) * (qty / trade.qty) + fee;
     Object.assign(trade, {
-      status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : reason === 'breakeven' ? (pt && pt.pnl > 0 ? 'win' : 'breakeven')
-        : Math.abs(pnl) < 0.005 ? 'breakeven' : pnl > 0 ? 'win' : 'loss', // 0 P&L is breakeven, not a win
+      // by the net result after fees, like the account balance: a target hit that fees turned negative is a loss
+      // (a stop moved to the entry stays breakeven: only fees lost)
+      status: reason === 'breakeven' ? (pt && pnl > 0 ? 'win' : 'breakeven') : Math.abs(pnl) < 0.005 ? 'breakeven' : pnl > 0 ? 'win' : 'loss',
+      fees: Number(fees.toFixed(2)),
+      grossPnl: Number((pnl + fees).toFixed(2)),
       exitTime: nowIso,
       exitPrice,
       exitReason: reason,
@@ -574,6 +582,9 @@ export class TradingBot {
 
   async openTrade({ side, setup, decision, account, price, candles, liquidity, zones = [] }) {
     const label = side === 'short' ? 'SHORT' : 'BUY';
+    // size on the live price, not the last candle close (a stale price under-sizes the stop distance)
+    const live = Number(await this.market.getPrice?.().catch(() => null));
+    if (live > 0) price = live;
     if (!bracketFor(side, price, setup)) return { note: `${label} skipped: price is on the wrong side of the IFVG, no valid stop` };
     const st = this.state.settings;
     let margin, leverage, size, sizing = '';
@@ -601,13 +612,40 @@ export class TradingBot {
       : await this.broker.placeOrder({ side: 'buy', notional: size, price, source: 'ai', leverage });
     const entryPrice = Number(order.price) || price;
     // Position value = what actually filled (qty x price); the requested size can differ after quantity rounding.
-    const qty = Number(order.qty) || ((Number(order.notional) || size) * 0.999) / entryPrice;
-    const notional = this.broker.name === 'local' ? Number(order.notional ?? size) : Number((qty * entryPrice).toFixed(2));
+    let qty = Number(order.qty) || ((Number(order.notional) || size) * 0.999) / entryPrice;
+    let notional = this.broker.name === 'local' ? Number(order.notional ?? size) : Number((qty * entryPrice).toFixed(2));
+    let entryFee = order.fee || 0;
+    let trimPnl = 0;
     const rr = this.state.settings.riskReward ?? 1;
     const minRiskPct = this.state.settings.minStopPct ?? 0.15;
     const sz = this.stopZone(setup);
     const b = bracketFor(side, entryPrice, sz, { rr, minRiskPct }) || bracketFor(side, price, sz, { rr, minRiskPct });
     if (!(b?.risk > 0)) throw new Error(`${this.symbol}: bracket has no stop distance (entry ${entryPrice}), position opened without SL/TP`);
+    // Slippage guard (risk sizing): the fill moved away from the stop, so the $ risk grew. Trim the extra size right away.
+    let trimmed = '';
+    if ((st.sizingMode ?? 'percent') === 'risk') {
+      const want = st.riskPerTradeUsd ?? 50;
+      const dist = Math.abs(entryPrice - b.stop);
+      const keep = want / dist;
+      if (qty * dist > want * 1.2 && keep < qty) {
+        let extra = qty - keep;
+        if (this.broker.roundQty) extra = await this.broker.roundQty(extra);
+        if (extra > 0 && extra < qty) {
+          try {
+            const o2 = side === 'short'
+              ? await this.broker.coverShort({ qty: extra, price: entryPrice, source: 'ai', reason: 'risk trim' })
+              : await this.broker.placeOrder({ side: 'sell', qty: extra, price: entryPrice, source: 'ai', reason: 'risk trim' });
+            const q2 = Number(o2?.qty) || extra;
+            const f = q2 / qty;
+            trimPnl = Number((o2?.actualFill ? o2.realizedPnl - entryFee * f - (o2.fee || 0) : -(entryFee * f) - (o2?.fee || 0)).toFixed(2));
+            trimmed = ` · trimmed ${Number(q2.toPrecision(6))} after slippage (risk was $${(qty * dist).toFixed(2)})`;
+            qty -= q2;
+            notional = Number((notional * (1 - f)).toFixed(2));
+            entryFee *= 1 - f;
+          } catch (e) { trimmed = ` · trim failed: ${e.message}`; }
+        }
+      }
+    }
     // Target at liquidity: the nearest level (LRLR / equal highs-lows / PDH-PDL ...) 0.75R-5R away (else the fixed R:R target).
     let targetLevel = null;
     if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
@@ -620,7 +658,7 @@ export class TradingBot {
     // A 30m-4h FVG inside the bracket (between entry and target) is where price reacts first: target its near edge.
     const hz = htfTargetInBracket(zones, side, entryPrice, b.target, b.risk);
     if (hz) { b.target = hz.price; b.rr = hz.r; targetLevel = `${hz.zone.tf} ${hz.zone.type} FVG ${fmtPx(hz.price)} (HTF in bracket)`; }
-    const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}` };
+    const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}${trimmed}` };
     const trade = {
       id: `T${this.now()}-${this.symbol}`,
       symbol: this.symbol,
@@ -630,7 +668,8 @@ export class TradingBot {
       entryPrice,
       qty,
       notional,
-      entryFee: order.fee || 0,
+      entryFee,
+      ...(trimPnl ? { trimPnl } : {}),
       granularity: setup.granularity || this.state.settings.granularity,
       category: setup.category || 'swing',
       broker: this.broker.name,
