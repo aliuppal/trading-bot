@@ -58,9 +58,16 @@ export class BinanceFuturesBroker {
   /** Set the symbol's leverage (only calls Binance when it changes). */
   async setLeverage(leverage) {
     const lev = Math.max(1, Math.round(leverage || 1));
-    if (lev === this.currentLeverage) return;
-    await this.req('POST', '/fapi/v1/leverage', { symbol: this.symbol, leverage: lev });
-    this.currentLeverage = lev;
+    if (lev === this.currentLeverage) return lev;
+    // each symbol has its own maximum (BTC 125x, most alts 50-75x): step down until Binance accepts
+    for (const l of [lev, ...[100, 75, 50, 25, 20, 10, 5, 3, 2, 1].filter((x) => x < lev)]) {
+      try {
+        await this.req('POST', '/fapi/v1/leverage', { symbol: this.symbol, leverage: l });
+        this.currentLeverage = l;
+        return l;
+      } catch (e) { if (l === 1) throw e; }
+    }
+    return this.currentLeverage;
   }
 
   /** Price rounded to the symbol's tick size (e.g. 0.1 BTC, 0.0001 XRP), as a string. */
@@ -136,7 +143,7 @@ export class BinanceFuturesBroker {
       status: String(o.status || 'NEW').toLowerCase(),
       source,
       ...(reason && { reason }),
-      ...(leverage && { leverage }),
+      ...(leverage && { leverage: this.currentLeverage || leverage }),
     };
   }
 

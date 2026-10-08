@@ -62,7 +62,7 @@ export const config = {
     // Move the stop to the entry once price reaches +N R (0 = off)
     breakevenAtR: num(process.env.BREAKEVEN_AT_R, 0),
     // Jev picks 1-10x leverage per trade (Binance only); never above this cap
-    maxLeverage: Math.min(20, Math.max(1, num(process.env.MAX_LEVERAGE, 5))),
+    maxLeverage: Math.min(125, Math.max(1, num(process.env.MAX_LEVERAGE, 5))),
     autoStart: process.env.AUTO_START !== 'false',
   },
   // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).

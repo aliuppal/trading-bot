@@ -205,7 +205,7 @@ export async function askOpenRouter(prompt, { apiKey, model }, fetchImpl = fetch
 
 const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const SIZE_LEVELS = [0, 5, 10, 25, 50, 100];
-export const LEVERAGE_LEVELS = [1, 2, 3, 5, 10];
+export const LEVERAGE_LEVELS = [1, 2, 3, 5, 10, 20, 50, 75, 100, 125];
 
 /** The entry models the bot scans, described for Jev. */
 export const ENTRY_MODELS = 'SWING: tap of a 30m/1h/2h/4h FVG, then an IFVG on 15m (preferred) > 5m. '

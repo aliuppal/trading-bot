@@ -48,7 +48,9 @@ export function entryNotional(sizePct, account, settings) {
 export function riskSize({ riskUsd, stopDist, price, cash, levPick = 1, maxLev = 1, canLever = false }) {
   let qty = riskUsd / stopDist;
   let notional = qty * price;
-  const maxL = canLever ? Math.max(1, maxLev) : 1;
+  // liquidation must sit well beyond the stop: at most ~50% of the margin may be lost at the stop
+  const safeLev = Math.max(1, Math.floor(0.5 / (stopDist / price)));
+  const maxL = canLever ? Math.max(1, Math.min(maxLev, safeLev)) : 1;
   let lev = canLever ? Math.max(1, Math.min(Math.round(levPick || 1), maxL)) : 1;
   const usable = cash * 0.95;
   if (notional / lev > usable) lev = Math.min(maxL, Math.ceil(notional / usable));
@@ -374,7 +376,7 @@ export class TradingBot {
     // Breakeven trigger (in R) must sit before the target; 0 = off.
     s.breakevenAtR = Math.max(0, Number(s.breakevenAtR ?? 0));
     if (s.breakevenAtR >= s.riskReward) s.breakevenAtR = 0;
-    s.maxLeverage = Math.min(20, Math.max(1, Math.round(s.maxLeverage ?? 5)));
+    s.maxLeverage = Math.min(125, Math.max(1, Math.round(s.maxLeverage ?? 5))); // Binance caps each symbol lower (BTC 125x, alts 50-75x)
     s.minStopPct = Math.min(2, Math.max(0.05, Number(s.minStopPct ?? 0.15))); // smallest stop distance, % of price
     await this.save();
     return s;
@@ -610,6 +612,7 @@ export class TradingBot {
     const order = side === 'short'
       ? await this.broker.openShort({ notional: size, price, source: 'ai', leverage })
       : await this.broker.placeOrder({ side: 'buy', notional: size, price, source: 'ai', leverage });
+    if (Number(order.leverage) > 0) leverage = Number(order.leverage); // what the exchange actually allowed for this symbol
     const entryPrice = Number(order.price) || price;
     // Position value = what actually filled (qty x price); the requested size can differ after quantity rounding.
     let qty = Number(order.qty) || ((Number(order.notional) || size) * 0.999) / entryPrice;

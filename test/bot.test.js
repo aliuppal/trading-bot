@@ -612,3 +612,12 @@ test('swing stop widens the stop zone to the recent swing high / low', async () 
   assert.equal(bot.stopZone(st).top, 102.5);
   assert.equal(bot.stopZone({ direction: 'bullish', top: 101, bottom: 100, swingStop: 99 }).bottom, 99);
 });
+
+test('risk sizing never picks a leverage whose liquidation sits inside the stop', async () => {
+  const { riskSize } = await import('../src/bot.js');
+  // stop 1% away: at most 50x even though 125x is allowed
+  const r = riskSize({ riskUsd: 50, stopDist: 1, price: 100, cash: 50, levPick: 125, maxLev: 125, canLever: true });
+  assert.ok(r.leverage <= 50);
+  const r2 = riskSize({ riskUsd: 50, stopDist: 0.2, price: 100, cash: 1000, levPick: 125, maxLev: 125, canLever: true });
+  assert.ok(r2.leverage <= 125 && r2.leverage >= 1);
+});
