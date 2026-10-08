@@ -205,7 +205,7 @@ const zoneSummary = (z) => z && {
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: sig(z.htf.top), bottom: sig(z.htf.bottom), tappedAt: z.htf.tappedAt },
   }),
-  ...(z.sweep && { sweep: z.sweep }),
+  ...(z.sweep && { sweep: z.sweep }), ...(z.lrlrToTp != null && { lrlrToTp: z.lrlrToTp }),
   ...(z.smt != null && { smt: z.smt }), ...(z.gapAtr != null && { gapAtr: z.gapAtr }), ...(z.bias && { bias: z.bias, withBias: z.withBias }),
 };
 
@@ -832,7 +832,18 @@ export class TradingBot {
           // and no recent long-wick rejection candle (15m and the entry timeframe) between entry and target
           const m15 = await this.market.getCandles(900, 120).catch(() => []);
           const wicks = [...wickBlockers(m15, sd, price, tgt, { lookback: 48 }), ...(scan.granularity !== 900 ? wickBlockers(scan.candles || [], sd, price, tgt, { lookback: 60 }) : [])];
-          if (!htfBlock.length && wicks.length) {
+          // exception: strong liquidity (equal lows for a short, equal highs for a long) at or before the target pulls price through the wick
+          const eqType = sd === 'short' ? 'EQL' : 'EQH';
+          const lvls = sd === 'short' ? liquidity?.below || [] : liquidity?.above || [];
+          const eq = lvls.find((l) => l.type.split('+').includes(eqType) && (sd === 'short' ? l.price < price && l.price >= tgt * 0.9995 : l.price > price && l.price <= tgt * 1.0005));
+          // LRLR in the trade direction with its stepped swings between entry and TP: a low-resistance run to the target
+          const toward = sd === 'short' ? 'below' : 'above';
+          const run = liquidity?.lrlr?.side === toward ? liquidity.lrlr.prices.filter((p) => (sd === 'short' ? p < price && p >= tgt * 0.9995 : p > price && p <= tgt * 1.0005)) : [];
+          setup.lrlrToTp = run.length >= 2;
+          if (setup.lrlrToTp) setup.qualityReasons = [...(setup.qualityReasons || []), `LRLR to TP (${run.length} stepped swings)`];
+          if (wicks.length && !eq && setup.lrlrToTp) setup.qualityReasons.push('long wick in the path ignored: LRLR runs to TP');
+          if (wicks.length && eq) setup.qualityReasons = [...(setup.qualityReasons || []), `long wick in the path ignored: ${eqType} ${fmtPx(eq.price)} draws price through it`];
+          if (!htfBlock.length && wicks.length && !eq && !setup.lrlrToTp) {
             const w = wicks.sort((x, y) => y.time - x.time)[0];
             const hhmm2 = new Date(w.time).toISOString().slice(11, 16);
             scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: long-wick rejection candle at ${hhmm2} UTC (${fmtPx(w.wickFrom)}-${fmtPx(w.wickTo)}) between entry and TP ${fmtPx(tgt)}`;

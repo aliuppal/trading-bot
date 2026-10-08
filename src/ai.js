@@ -242,6 +242,7 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     target_mode: targetMode === 'liquidity' ? (targets?.length ? 'Jev picks the liquidity target (target question)' : 'nearest liquidity 0.75R-5R away') : `fixed 1:${riskReward}`,
     target_options: targets?.length ? targetCriteria(targets) : null,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} unmitigated FVG tapped (first touch, ${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
+    lrlr_to_tp: ifvg?.lrlrToTp == null ? 'n/a' : ifvg.lrlrToTp ? 'yes: a low-resistance run of stepped swings lies between entry and target (very important, strongly favors the trade)' : 'no',
     liquidity_sweep: ifvg?.sweep ? `${ifvg.sweep.tf} ${ifvg.sweep.type} ${ifvg.sweep.price} swept, price closed back` : 'none',
     smt_divergence: ifvg?.smt == null ? 'n/a' : ifvg.smt ? 'yes: the correlated market (BTC/ETH) did not take the same liquidity' : 'no: the correlated market swept too',
     htf_bias_4h: ifvg?.bias ? `${ifvg.bias}${ifvg.withBias === false ? ' (setup is against it)' : ifvg.withBias ? ' (setup is with it)' : ''}` : 'unclear',
@@ -287,7 +288,9 @@ const JEV_QUESTIONS = {
       + 'At most max_trades_per_day trades per day; that is a cap, not a target: unused trades are fine and the count resets each UTC day, so never force a trade. '
       + 'Only take the setup when the IFVG and momentum agree; otherwise HOLD and wait for a clean setup to form. '
       + 'Never take a trade with an opposing 30m/1h/2h/4h FVG between entry and target (support below a short, resistance above a long): HOLD. '
-      + 'Avoid trades with a recent long-wick rejection candle between entry and target (a long lower wick under a short, a long upper wick above a long). '
+      + 'Avoid trades with a recent long-wick rejection candle between entry and target (a long lower wick under a short, a long upper wick above a long), '
+      + 'unless strong liquidity (equal lows / equal highs) or an LRLR sits between entry and target and should pull price through the wick. '
+      + 'An LRLR (low-resistance run of stepped swings) all the way to the target (lrlr_to_tp) is very important: it strongly favors the trade. '
       + 'Use the liquidity levels: favor trades toward the draw on liquidity (liquidity_above for longs, liquidity_below for shorts, '
       + 'especially a low-resistance run, lrlr) and avoid trades whose path runs straight into nearby opposing liquidity. '
       + 'setup_grade A+ means a perfect IFVG (gap inverted within 3-5 candles) with an aggressive displacement candle, '
