@@ -384,3 +384,5 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 /* per-symbol last scan: one full line each */
 .meter-split:has(.sym-scan) { display: grid; gap: 2px; }
 .sym-scan { display: block; white-space: normal; overflow: visible; line-height: 16px; }
+
+.jev-table .jev-bot { font-size: 12px; min-width: 180px; white-space: normal; color: var(--text-2); }

@@ -7,6 +7,7 @@
 //   jev:        real Jev decisions (needs OPENROUTER_API_KEY); entries and reviews cost OpenRouter credit
 import { TradingBot } from '../src/bot.js';
 import { LocalBroker } from '../src/brokers/local.js';
+import fs from 'node:fs';
 import { aggregate } from '../src/ifvg.js';
 
 // Named options: --days=3 --mode=mechanical|jev --rr=1 --be=0 --fee=0.1 --minstop=0.15 --only=clear|aplus|scalp|swing|long|short --nosignal --quiet
@@ -19,6 +20,13 @@ const FEE = Number(opt.fee ?? 0.1); // % per side
 const MINSTOP = Number(opt.minstop || 0.15); // smallest stop distance, % of price
 const ONLY = String(opt.only || '').split(',').filter(Boolean);
 const NOSIGNAL = Boolean(opt.nosignal);
+// strategy experiments (all off by default): --stop=swing --exit=displacement --gapatr=0.5 --sweep --smt=require --partial=50 --session --disp --target=liquidity --label=name
+const EXP = {
+  stopMode: opt.stop || 'zone', earlyExit: opt.exit || 'jev', minGapAtr: Number(opt.gapatr || 0), requireSweep: Boolean(opt.sweep),
+  smt: opt.smt || 'off', partialPct: Number(opt.partial || 0), sessionFilter: Boolean(opt.session), requireDisplacement: Boolean(opt.disp),
+  targetMode: opt.target || 'rr',
+};
+const CACHE = opt.cache || null;
 const MIN = 60000;
 
 class MemKV {
@@ -38,11 +46,11 @@ async function getJson(url) {
 }
 
 /** Coinbase candles in [start, end), paginated 300 at a time, oldest first. */
-async function fetchRange(gran, start, end) {
+async function fetchRange(gran, start, end, product = 'BTC-USD') {
   const out = new Map();
   for (let t = start; t < end; t += gran * 1000 * 300) {
     const e = Math.min(end, t + gran * 1000 * 300);
-    const rows = await getJson(`https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=${gran}&start=${new Date(t).toISOString()}&end=${new Date(e).toISOString()}`);
+    const rows = await getJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${gran}&start=${new Date(t).toISOString()}&end=${new Date(e).toISOString()}`);
     for (const [ts, low, high, open, close, volume] of rows) out.set(ts * 1000, { time: ts * 1000, open, high, low, close, volume });
     await new Promise((r) => setTimeout(r, 120));
   }
@@ -66,16 +74,23 @@ function partial(m1, bucketStart, now) {
 }
 
 async function main() {
-  const end = Math.floor(Date.now() / MIN) * MIN - MIN;
+  const end = opt.end ? Number(opt.end) : Math.floor(Date.now() / MIN) * MIN - MIN;
   const start = end - DAYS * 86400000;
   console.log(`Loading candles: ${new Date(start).toISOString()} -> ${new Date(end).toISOString()} (${DAYS} days)...`);
-  const series = {
-    60: await fetchRange(60, start - 320 * MIN, end + MIN),
-    300: await fetchRange(300, start - 320 * 5 * MIN, end + MIN),
-    900: await fetchRange(900, start - 320 * 15 * MIN, end + MIN),
-    3600: await fetchRange(3600, start - 320 * 60 * MIN, end + MIN),
-    86400: await fetchRange(86400, start - 35 * 86400000, end + MIN),
-  };
+  let series, pairSeries;
+  if (CACHE && fs.existsSync(CACHE)) ({ series, pairSeries } = JSON.parse(fs.readFileSync(CACHE, 'utf8')));
+  else {
+    series = {
+      60: await fetchRange(60, start - 320 * MIN, end + MIN),
+      300: await fetchRange(300, start - 320 * 5 * MIN, end + MIN),
+      900: await fetchRange(900, start - 320 * 15 * MIN, end + MIN),
+      3600: await fetchRange(3600, start - 320 * 60 * MIN, end + MIN),
+      86400: await fetchRange(86400, start - 35 * 86400000, end + MIN),
+    };
+    // ETH for SMT (5m / 15m sweeps)
+    pairSeries = { 300: await fetchRange(300, start - 320 * 5 * MIN, end + MIN, 'ETH-USD'), 900: await fetchRange(900, start - 320 * 15 * MIN, end + MIN, 'ETH-USD') };
+    if (CACHE) fs.writeFileSync(CACHE, JSON.stringify({ series, pairSeries }));
+  }
   series[120] = aggregate(series[60], 120);
   series[180] = aggregate(series[60], 180);
   series[1800] = aggregate(series[900], 1800);
@@ -94,6 +109,9 @@ async function main() {
       return p && p.time > (closed.at(-1)?.time ?? 0) ? [...closed, p] : closed;
     },
     getPrice: async () => series[60][lastAtOrBefore(series[60], now - MIN)].close,
+  };
+  const pairMarket = {
+    getCandles: async (g, n = 200) => { const arr = pairSeries[g] || []; const i = lastAtOrBefore(arr, now - g * 1000); return arr.slice(Math.max(0, i - n + 1), i + 1); },
   };
 
   // Stand-in for Jev in mechanical mode: agree with the setup direction, keep open trades on review.
@@ -124,14 +142,14 @@ async function main() {
   const broker = new LocalBroker({ kv, startingCash: 5000, getPrice: market.getPrice, feeRate: FEE / 100 });
   const settings = {
     intervalMinutes: 1, granularity: 300, minConfidence: 0.6, maxPositionPct: 50, maxTradePct: 10,
-    maxTradesPerDay: 10, maxSwingPerDay: 5, maxScalpPerDay: 5, ifvgMaxAge: 7, requireHtfTap: true,
-    entryTimeframes: 'all', scalpEnabled: true, requireDisplacement: false, targetMode: 'rr', riskReward: RR, breakevenAtR: BE, minStopPct: MINSTOP, maxLeverage: 5,
+    maxTradesPerDay: 20, maxSwingPerDay: 10, maxScalpPerDay: 10, ifvgMaxAge: 7, requireHtfTap: true,
+    entryTimeframes: 'all', scalpEnabled: true, swingEnabled: true, ...EXP, riskReward: RR, breakevenAtR: BE, minStopPct: MINSTOP, maxLeverage: 5,
   };
   const ai = MODE === 'jev'
     ? { provider: 'jev', apiKey: process.env.OPENROUTER_API_KEY, model: 'typesafe/jev-1.13' }
     : { provider: 'jev', apiKey: 'mechanical', model: 'mechanical' };
   if (MODE === 'jev' && !ai.apiKey) throw new Error('OPENROUTER_API_KEY is required for mode=jev');
-  const bot = new TradingBot({ broker, market, ai, settings, kv, autoStart: true, now: () => now, fetchImpl: MODE === 'jev' ? realFetch : mechanical });
+  const bot = new TradingBot({ broker, market, ai, settings, kv, autoStart: true, now: () => now, fetchImpl: MODE === 'jev' ? realFetch : mechanical, pairMarket });
 
   const t0 = Date.now();
   let steps = 0, lastDay = '';
@@ -167,6 +185,17 @@ async function main() {
   for (const side of ['long', 'short']) console.log(`  ${side.padEnd(6)}  ${stat(closed.filter((t) => t.side === side))}`);
   console.log('By day (UTC, exit date):');
   for (const d of [...new Set(closed.map((t) => t.exitTime.slice(0, 10)))]) console.log(`  ${d}  ${stat(closed.filter((t) => t.exitTime.slice(0, 10) === d))}`);
+  console.log('By 4h bias:');
+  console.log(`  with    ${stat(closed.filter((t) => t.ifvg?.withBias === true))}`);
+  console.log(`  against ${stat(closed.filter((t) => t.ifvg?.withBias === false))}`);
+  console.log('By context:');
+  console.log(`  sweep   ${stat(closed.filter((t) => t.ifvg?.sweep))}`);
+  console.log(`  SMT     ${stat(closed.filter((t) => t.ifvg?.smt === true))}`);
+  console.log(`  disp    ${stat(closed.filter((t) => t.ifvg?.displacement))}`);
+  console.log(`  partial ${stat(closed.filter((t) => t.partial))}`);
+  const R_ = closed.reduce((a, t) => a + (t.r || 0), 0);
+  const w = closed.filter((t) => t.status === 'win').length, l = closed.filter((t) => t.status === 'loss').length;
+  console.log(`RESULT ${opt.label || 'run'} | trades ${closed.length} | win ${w + l ? Math.round((w / (w + l)) * 100) : 0}% | netR ${R_.toFixed(2)} | avgR ${(closed.length ? R_ / closed.length : 0).toFixed(2)}`);
   const asked = decisions.filter((d) => d.confidence !== undefined && d.source !== 'bracket');
   console.log(`\nSetups decided by ${MODE === 'jev' ? 'Jev' : 'the stand-in'}: ${asked.length} · executed: ${asked.filter((d) => d.executed).length}`);
 }

@@ -222,6 +222,12 @@ export function scoreToLeverage(score) {
 }
 
 /** Flat state object for Jev: indicators, account and recent closes. */
+/** UTC session name for Jev. */
+function sessionName(t) {
+  const d = new Date(t); const m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return m >= 420 && m < 600 ? 'London open' : m >= 750 && m < 960 ? 'New York open / morning' : m < 420 ? 'Asia' : 'off-session';
+}
+
 export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr', targets }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
@@ -237,6 +243,10 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     target_options: targets?.length ? targetCriteria(targets) : null,
     htf_fvg_tap: ifvg?.htf ? `${ifvg.htf.tf} ${ifvg.htf.type} unmitigated FVG tapped (first touch, ${ifvg.htf.bottom}-${ifvg.htf.top})` : 'none',
     liquidity_sweep: ifvg?.sweep ? `${ifvg.sweep.tf} ${ifvg.sweep.type} ${ifvg.sweep.price} swept, price closed back` : 'none',
+    smt_divergence: ifvg?.smt == null ? 'n/a' : ifvg.smt ? 'yes: the correlated market (BTC/ETH) did not take the same liquidity' : 'no: the correlated market swept too',
+    htf_bias_4h: ifvg?.bias ? `${ifvg.bias}${ifvg.withBias === false ? ' (setup is against it)' : ifvg.withBias ? ' (setup is with it)' : ''}` : 'unclear',
+    gap_size_atr: ifvg?.gapAtr ?? null,
+    session: sessionName(Date.now()),
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
     entry_models: ENTRY_MODELS,

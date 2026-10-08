@@ -1,7 +1,7 @@
 import { decide, askJev } from './ai.js';
 import { summarize } from './indicators.js';
 import { bracketFor } from './ifvg.js';
-import { scanSetups, pathBlockers } from './strategy.js';
+import { inSession, scanSetups, pathBlockers } from './strategy.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
 import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } from './liquidity.js';
@@ -102,7 +102,10 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
   const stopHit = (lo, hi, stop) => (short ? hi >= stop : lo <= stop);
   const targetHit = (lo, hi) => (short ? lo <= trade.target : hi >= trade.target);
   const reached = (lo, hi) => beLevel !== null && (short ? lo <= beLevel : hi >= beLevel);
-  const moved = () => (trade.breakeven ? {} : beAt !== null ? { breakevenAt: beAt } : {});
+  let pLevel = trade.partialLevel && !trade.partial ? trade.partialLevel : null;
+  let partialAt = null;
+  const partialHit = (lo, hi) => pLevel !== null && (short ? lo <= pLevel : hi >= pLevel);
+  const moved = () => ({ ...(trade.breakeven ? {} : beAt !== null ? { breakevenAt: beAt } : {}), ...(partialAt !== null ? { partialAt } : {}) });
   const exit = (stop) => ({ exitPrice: stop, reason: stop === trade.entryPrice && beAt !== null ? 'breakeven' : 'stop', ...moved() });
   const entryT = new Date(trade.entryTime).getTime();
   const steps = candles.filter((c) => c.time > entryT).map((c) => ({ t: c.time, lo: c.low, hi: c.high }));
@@ -112,8 +115,11 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
     if (stopHit(lo, hi, stop)) return exit(stop);
     if (targetHit(lo, hi)) return { exitPrice: trade.target, reason: 'target', ...moved() };
     if (reached(lo, hi)) { beAt = t; beLevel = null; }
+    // first internal liquidity: part of the position is taken off and the stop goes to the entry
+    if (partialHit(lo, hi)) { partialAt = t; pLevel = null; if (beAt === null) beAt = t; beLevel = null; }
   }
-  return beAt !== null && !trade.breakeven ? { breakevenAt: beAt } : null;
+  const m = moved();
+  return Object.keys(m).length ? m : null;
 }
 
 /** Minutes between Jev reviews of an open trade: 10 for 1m scalps, 30 for 3m / 5m entries, 60 for 15m entries. */
@@ -132,6 +138,15 @@ export function reviewDue(trade, now = Date.now()) {
 function nextReviewLabel(trade) {
   const t = new Date(new Date(trade.lastReviewAt || trade.entryTime).getTime() + reviewMinutes(trade) * 60000);
   return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')} UTC`;
+}
+
+/** partialPct > 0: the first internal liquidity level between entry and target (>= 0.5R, short of the target). */
+export function partialFor(settings, liquidity, side, entry, b) {
+  const pct = Number(settings.partialPct) || 0;
+  if (!pct || !liquidity || !b?.risk) return {};
+  const lv = liquidityTargets(liquidity, side, entry, b.risk, { minR: 0.5, maxR: 20, max: 10 })
+    .find((t) => (side === 'short' ? t.price > b.target : t.price < b.target) && Math.abs(t.price - b.target) / b.risk >= 0.25);
+  return lv ? { partialPct: pct, partialLevel: lv.price } : {};
 }
 
 const SIDE_FOR = { bullish: 'long', bearish: 'short' };
@@ -185,6 +200,7 @@ const zoneSummary = (z) => z && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: Number(z.htf.top.toFixed(2)), bottom: Number(z.htf.bottom.toFixed(2)), tappedAt: z.htf.tappedAt },
   }),
   ...(z.sweep && { sweep: z.sweep }),
+  ...(z.smt != null && { smt: z.smt }), ...(z.gapAtr != null && { gapAtr: z.gapAtr }), ...(z.bias && { bias: z.bias, withBias: z.withBias }),
 };
 
 export class TradingBot {
@@ -196,7 +212,8 @@ export class TradingBot {
    * symbol: the market this bot trades (one bot per symbol). The primary bot (BTCUSDC) owns the shared settings
    * (stored under "bot"); the others keep their own state under "bot_<SYMBOL>" and read the shared settings.
    */
-  constructor({ broker, market, ai, settings, kv, autoStart = true, fetchImpl = fetch, now = () => Date.now(), fallbackBroker = null, symbol = 'BTCUSDC', primary = true }) {
+  constructor({ broker, market, ai, settings, kv, autoStart = true, fetchImpl = fetch, now = () => Date.now(), fallbackBroker = null, symbol = 'BTCUSDC', primary = true, pairMarket = null }) {
+    this.pairMarket = pairMarket; // correlated market for SMT (BTC <-> ETH)
     this.symbol = symbol;
     this.primary = primary;
     this.broker = broker;
@@ -213,6 +230,12 @@ export class TradingBot {
   }
 
   get settings() { return this.state.settings; }
+
+  /** Stop zone: the IFVG, widened to the recent swing high / low when stopMode = swing. */
+  stopZone(setup) {
+    if (this.state.settings.stopMode !== 'swing' || !Number.isFinite(setup?.swingStop)) return setup;
+    return setup.direction === 'bearish' ? { ...setup, top: Math.max(setup.top, setup.swingStop) } : { ...setup, bottom: Math.min(setup.bottom, setup.swingStop) };
+  }
 
   /** Reload persisted state (needed per request on serverless, where instances don't share memory). */
   async load() {
@@ -323,6 +346,12 @@ export class TradingBot {
     if (['rr', 'liquidity'].includes(patch.targetMode)) s.targetMode = patch.targetMode;
     if (['percent', 'risk'].includes(patch.sizingMode)) s.sizingMode = patch.sizingMode;
     s.riskPerTradeUsd = Math.min(100000, Math.max(1, Number(s.riskPerTradeUsd ?? 50)));
+    if (['zone', 'swing'].includes(patch.stopMode)) s.stopMode = patch.stopMode;
+    if (['jev', 'displacement'].includes(patch.earlyExit)) s.earlyExit = patch.earlyExit;
+    if (['off', 'info', 'require'].includes(patch.smt)) s.smt = patch.smt;
+    for (const k of ['requireSweep', 'sessionFilter']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
+    for (const k of ['minGapAtr', 'partialPct']) if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Math.max(0, Number(patch[k]));
+    s.partialPct = Math.min(90, s.partialPct || 0);
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
     // Swing / scalp on-off switches (a disabled type is not scanned at all)
     for (const k of ['swingEnabled', 'scalpEnabled']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
@@ -391,7 +420,8 @@ export class TradingBot {
     }
     const hit = checkBracket(open, candles, price, this.now());
     if (!hit) return null;
-    if (hit.breakevenAt) await this.moveToBreakeven(open, hit.breakevenAt);
+    if (hit.partialAt && !open.partial) await this.takePartial(open, hit.partialAt, candles);
+    if (hit.breakevenAt && !open.breakeven) await this.moveToBreakeven(open, hit.breakevenAt);
     if (!hit.reason) return null;
     return this.closeTrade(open, hit.exitPrice, hit.reason, candles);
   }
@@ -405,6 +435,7 @@ export class TradingBot {
     const stillOpen = open.side === 'short' ? amt < 0 : amt > 0;
     if (stillOpen) {
       const hit = checkBracket(open, candles, price, this.now());
+      if (hit?.partialAt && !open.partial) await this.takePartial(open, hit.partialAt, candles);
       if (hit?.breakevenAt && !open.breakeven) {
         open.stopAlgoId = await this.broker.moveStop(open, open.entryPrice);
         await this.moveToBreakeven(open, hit.breakevenAt);
@@ -421,6 +452,39 @@ export class TradingBot {
       if (f) order = { id: fired.s.actualOrderId, price: f.price, qty: f.qty, fee: f.commission, realizedPnl: f.realizedPnl, actualFill: true };
     }
     return this.closeTrade(open, order?.price ?? price, fired ? fired.reason : 'manual', candles, { order });
+  }
+
+  /** First internal liquidity reached: close partialPct % of the position at market (the bracket keeps the rest). */
+  async takePartial(trade, at) {
+    const short = trade.side === 'short';
+    const part = Math.min(0.9, Math.max(0.1, (trade.partialPct || 50) / 100));
+    const level = trade.partialLevel;
+    let qty = trade.qty * part;
+    if (this.broker.roundQty) qty = await this.broker.roundQty(qty);
+    if (!(qty > 0) || qty >= trade.qty) return;
+    let order;
+    try {
+      order = short ? await this.broker.coverShort({ qty, price: level, source: 'ai', reason: 'partial' })
+        : await this.broker.placeOrder({ side: 'sell', qty, price: level, source: 'ai', reason: 'partial' });
+    } catch (e) { await this.log({ time: new Date(this.now()).toISOString(), action: 'HOLD', source: 'bracket', executed: false, tradeId: trade.id, note: `Partial at ${level} failed: ${e.message}` }); return; }
+    const fill = Number(order?.price) || level;
+    const q = Number(order?.qty) || qty;
+    const f = q / trade.qty;
+    const pnl = order?.actualFill
+      ? order.realizedPnl - (trade.entryFee || 0) * f - (order.fee || 0)
+      : (short ? trade.entryPrice - fill : fill - trade.entryPrice) * q - (trade.entryFee || 0) * f - (order?.fee || 0);
+    const risk = Math.abs(trade.entryPrice - (trade.initialStop ?? trade.stop));
+    trade.partial = { time: new Date(at).toISOString(), price: fill, qty: q, fraction: Number(f.toFixed(4)), pnl: Number(pnl.toFixed(2)), r: Number((((short ? -1 : 1) * (fill - trade.entryPrice)) / risk).toFixed(2)) };
+    trade.qty -= q;
+    trade.notional = Number((trade.notional * (1 - f)).toFixed(2));
+    trade.entryFee = (trade.entryFee || 0) * (1 - f);
+    const trades = await this.trades();
+    const i = trades.findIndex((t) => t.id === trade.id);
+    if (i >= 0) { trades[i] = trade; await this.kv.set('trades', trades); }
+    await this.log({
+      time: new Date(this.now()).toISOString(), price: fill, action: short ? 'BUY' : 'SELL', label: short ? 'PARTIAL SHORT' : 'PARTIAL LONG', source: 'bracket', executed: true, tradeId: trade.id,
+      note: `Took ${Math.round(f * 100)}% off at first internal liquidity ${fill} (+${trade.partial.r}R, $${trade.partial.pnl}) · stop to breakeven`,
+    });
   }
 
   /** The trade reached its breakeven level: from here on its stop sits at the entry. */
@@ -479,15 +543,17 @@ export class TradingBot {
       pnl = (short ? trade.entryPrice - exitPrice : exitPrice - trade.entryPrice) * trade.qty;
     }
     const dir = short ? -1 : 1;
+    const pt = trade.partial;
+    if (pt) pnl += pt.pnl; // the part already taken off at internal liquidity
     Object.assign(trade, {
-      status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : reason === 'breakeven' ? 'breakeven'
+      status: reason === 'target' ? 'win' : reason === 'stop' ? 'loss' : reason === 'breakeven' ? (pt && pt.pnl > 0 ? 'win' : 'breakeven')
         : Math.abs(pnl) < 0.005 ? 'breakeven' : pnl > 0 ? 'win' : 'loss', // 0 P&L is breakeven, not a win
       exitTime: nowIso,
       exitPrice,
       exitReason: reason,
       ...(order?.id && { exitOrderId: String(order.id) }),
       pnl: Number(pnl.toFixed(2)),
-      r: Number(((dir * (exitPrice - trade.entryPrice)) / Math.abs(trade.entryPrice - (trade.initialStop ?? trade.stop))).toFixed(2)),
+      r: Number((((dir * (exitPrice - trade.entryPrice)) / Math.abs(trade.entryPrice - (trade.initialStop ?? trade.stop))) * (pt ? 1 - pt.fraction : 1) + (pt ? pt.r * pt.fraction : 0)).toFixed(2)),
       ...(note && { note }),
     });
     const trades = await this.trades();
@@ -537,7 +603,8 @@ export class TradingBot {
     const notional = this.broker.name === 'local' ? Number(order.notional ?? size) : Number((qty * entryPrice).toFixed(2));
     const rr = this.state.settings.riskReward ?? 1;
     const minRiskPct = this.state.settings.minStopPct ?? 0.15;
-    const b = bracketFor(side, entryPrice, setup, { rr, minRiskPct }) || bracketFor(side, price, setup, { rr, minRiskPct });
+    const sz = this.stopZone(setup);
+    const b = bracketFor(side, entryPrice, sz, { rr, minRiskPct }) || bracketFor(side, price, sz, { rr, minRiskPct });
     // Target at liquidity: the nearest level (LRLR / equal highs-lows / PDH-PDL ...) 0.75R-5R away (else the fixed R:R target).
     let targetLevel = null;
     if ((this.state.settings.targetMode ?? 'rr') === 'liquidity') {
@@ -571,6 +638,7 @@ export class TradingBot {
       rr: b.rr,
       ...(targetLevel && { targetLevel }),
       breakevenAtR: this.state.settings.breakevenAtR || 0,
+      ...partialFor(this.state.settings, liquidity, side, entryPrice, b),
       target: b.target,
       risk: b.risk,
       riskUsd: Number((Math.abs(entryPrice - b.stop) * qty).toFixed(2)), // $ lost if the stop is hit (before fees)
@@ -637,7 +705,7 @@ export class TradingBot {
   /** What Jev thinks about this symbol right now: BUY / SELL / HOLD odds and model confidence. Read-only. */
   async jevView() {
     const s = this.state.settings;
-    const scan = await scanSetups(this.market, s, this.now());
+    const scan = await scanSetups(this.market, s, this.now(), { pairMarket: this.pairMarket });
     const indicators = summarize(scan.candles);
     const open = (await this.trades()).find((t) => t.status === 'open');
     const st = scan.setup;
@@ -653,7 +721,21 @@ export class TradingBot {
       liquidity: scan.liquidity, targetMode: s.targetMode ?? 'rr', maxTradesPerDay: s.maxTradesPerDay,
       openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
     }, this.ai, this.fetch);
-    return { ...base, action: d.action, confidence: d.confidence, odds: d.odds, modelConfidence: d.modelConfidence, sizePct: d.sizePct, leverage: d.leverage };
+    // what the bot does with this answer (entries need Jev's BUY / SELL to match the IFVG setup)
+    const all = await this.allTrades();
+    const openAll = all.filter((t) => t.status === 'open').length;
+    const cap = s.maxOpenTrades ?? 2;
+    const want = st ? SIDE_FOR[st.direction] : null;
+    let botAction;
+    if (open) botAction = d.action === EXIT_ACTION[open.side || 'long']
+      ? (d.confidence >= s.minConfidence ? `Jev is against the open ${open.side}: closes on the next review / opposite IFVG` : `Jev leans against the open ${open.side} (below ${s.minConfidence})`)
+      : `managing the open ${open.side}`;
+    else if (!st) botAction = d.action === 'HOLD' ? 'waiting for a setup' : `no IFVG setup: Jev ${d.action} alone does not open a trade`;
+    else if (d.action !== ENTRY_ACTION[want]) botAction = `Jev ${d.action} does not match the ${st.direction} setup: no entry`;
+    else if (d.confidence < s.minConfidence) botAction = `confidence below ${s.minConfidence}: no entry`;
+    else if (openAll >= cap) botAction = `${want.toUpperCase()} aligned, waiting for a free slot (${openAll}/${cap} open)`;
+    else botAction = `${want.toUpperCase()} aligned: the bot enters on its next scan`;
+    return { ...base, action: d.action, confidence: d.confidence, odds: d.odds, modelConfidence: d.modelConfidence, sizePct: d.sizePct, leverage: d.leverage, botAction };
   }
 
   async runOnceUnlocked({ manual = false } = {}) {
@@ -677,7 +759,7 @@ export class TradingBot {
       const scalpLeft = tradesToday(before, this.now(), 'scalp') < (s.maxScalpPerDay ?? 5);
       const scan = await scanSetups(this.market, {
         ...s, swingEnabled: s.swingEnabled !== false && swingLeft, scalpEnabled: s.scalpEnabled !== false && scalpLeft,
-      }, this.now());
+      }, this.now(), { pairMarket: this.pairMarket });
       let { setup } = scan;
       const { candles } = scan;
       const indicators = summarize(candles);
@@ -689,7 +771,7 @@ export class TradingBot {
       // Clear path: no opposing 3m/5m/15m FVG between entry and the (fixed R:R) target.
       if (setup) {
         const sd = SIDE_FOR[setup.direction];
-        const b0 = bracketFor(sd, price, setup, { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
+        const b0 = bracketFor(sd, price, this.stopZone(setup), { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
         if (b0) {
           const blockers = pathBlockers(scan.zones || [], sd, price, b0.target);
           setup.clearPath = blockers.length === 0;
@@ -716,15 +798,18 @@ export class TradingBot {
       const want = setup ? SIDE_FOR[setup.direction] : null; // trade direction the setup offers
       const canShort = typeof this.broker.openShort === 'function';
       // An opposite IFVG while a trade is open is a chance to close it early.
-      const opposite = Boolean(open && want && want !== (open.side || 'long') && !asked);
+      // earlyExit = displacement: only an opposite IFVG with a displacement candle may close a trade early, no timed reviews
+      const strictExit = s.earlyExit === 'displacement';
+      const opposite = Boolean(open && want && want !== (open.side || 'long') && !asked && (!strictExit || setup.displacement));
       // Periodic risk review of the open trade: every 20 min (5m entries) / 60 min (15m entries).
-      const review = Boolean(open && !opposite && reviewDue(open, this.now()));
+      const review = Boolean(open && !opposite && !strictExit && reviewDue(open, this.now()));
 
       let reason = null; // why the AI is not consulted / an entry can't be taken
       if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
       else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
       else if (!open && !swingLeft && !scalpLeft) reason = `Daily swing (${s.maxSwingPerDay ?? 5}) and scalp (${s.maxScalpPerDay ?? 5}) limits reached`;
       else if (!open && !setup) reason = `${!swingLeft ? 'Swing limit reached · ' : ''}${!scalpLeft ? 'Scalp limit reached · ' : ''}${scan.note ? `No setup · ${scan.note}` : 'No fresh IFVG setup'}`;
+      else if (!open && s.sessionFilter && !inSession(this.now())) reason = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG outside the London / New York session`;
       // open-trade cap: keep scanning, only the entry waits for a free slot
       else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG found · waiting for a free slot (max ${s.maxOpenTrades ?? 2} trades at a time)`;
       else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';
@@ -740,7 +825,7 @@ export class TradingBot {
         // Liquidity targets Jev can choose from (target mode = liquidity, new entries only)
         let targets = [];
         if (setup && !open && (s.targetMode ?? 'rr') === 'liquidity') {
-          const tb = bracketFor(want, price, setup, { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
+          const tb = bracketFor(want, price, this.stopZone(setup), { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
           if (tb) targets = liquidityTargets(liquidity, want, price, tb.risk);
         }
         const decision = await decide(
@@ -818,7 +903,9 @@ export class TradingBot {
         } else {
           entry.note = reason
             ? `${decision.action} not taken: ${reason}`
-            : `${decision.action} does not match the ${setup?.direction || 'missing'} IFVG setup`;
+            : open && decision.action === EXIT_ACTION[open.side || 'long']
+            ? `Jev ${decision.action} ${decision.confidence} against the open ${open.side || 'long'}, below the ${s.minConfidence} minimum to close it`
+            : setup ? `Jev ${decision.action} does not match the ${setup.direction} IFVG setup` : `Jev ${decision.action}, but there is no IFVG setup to enter`;
         }
       }
     } catch (err) {

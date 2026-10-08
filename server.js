@@ -37,9 +37,12 @@ if (config.broker === 'binance') {
   for (const sym of config.binance.symbols.filter((x) => x !== bot.symbol)) {
     const m = coinbase.binanceMarket({ ...config.binance, symbol: sym });
     const br = new BinanceFuturesBroker({ ...config.binance, symbol: sym, getPrice: m.getPrice });
-    bots.push(new TradingBot({ broker: br, market: m, ai: config.ai, settings: config.bot, kv, autoStart: config.bot.autoStart, symbol: sym, primary: false }));
     markets[sym] = m;
+    // SMT pair: ETH for BTC, BTC for everything else
+    bots.push(new TradingBot({ broker: br, market: m, ai: config.ai, settings: config.bot, kv, autoStart: config.bot.autoStart, symbol: sym, primary: false, pairMarket: market }));
   }
+  const eth = Object.keys(markets).find((k) => k.startsWith('ETH'));
+  if (eth) bot.pairMarket = markets[eth];
 }
 const botFor = (sym) => bots.find((b) => b.symbol === sym) || bot;
 /** One locked pass over every symbol (stops / targets, scans, Jev). */

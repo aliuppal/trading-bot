@@ -589,3 +589,26 @@ test('HTF FVG inside the bracket becomes the target (near edge)', async () => {
   const l = htfTargetInBracket([{ tf: '30m', type: 'bearish', top: 101.5, bottom: 101 }], 'long', 100, 103, 1);
   assert.equal(l.price, 101);
 });
+
+test('partial profit: first internal liquidity takes part off and moves the stop to entry', async () => {
+  const { checkBracket, partialFor } = await import('../src/bot.js');
+  const t = { side: 'long', entryTime: new Date(0).toISOString(), entryPrice: 100, stop: 98, initialStop: 98, target: 106, partialLevel: 102, partialPct: 50 };
+  const c = [{ time: 60000, low: 99.5, high: 102.5 }, { time: 120000, low: 99.9, high: 101 }];
+  const hit = checkBracket(t, c, 101, 180000);
+  assert.equal(hit.partialAt, 60000);
+  assert.equal(hit.breakevenAt, 60000);
+  const after = checkBracket({ ...t, partial: { r: 1 }, breakeven: true, breakevenAt: new Date(60000).toISOString(), stop: 100 }, [{ time: 120000, low: 99.9, high: 101 }], 101, 180000);
+  assert.equal(after.reason, 'breakeven');
+  const liq = { above: [{ type: 'SWH', price: 102 }, { type: 'PDH', price: 106 }], below: [], lrlr: null };
+  assert.deepEqual(partialFor({ partialPct: 50 }, liq, 'long', 100, { risk: 2, target: 106 }), { partialPct: 50, partialLevel: 102 });
+  assert.deepEqual(partialFor({ partialPct: 0 }, liq, 'long', 100, { risk: 2, target: 106 }), {});
+});
+
+test('swing stop widens the stop zone to the recent swing high / low', async () => {
+  const { bot } = setup({ kv: new MemKV() });
+  const st = { direction: 'bearish', top: 101, bottom: 100, swingStop: 102.5 };
+  assert.equal(bot.stopZone(st).top, 101, 'zone mode by default');
+  await bot.updateSettings({ stopMode: 'swing' });
+  assert.equal(bot.stopZone(st).top, 102.5);
+  assert.equal(bot.stopZone({ direction: 'bullish', top: 101, bottom: 100, swingStop: 99 }).bottom, 99);
+});

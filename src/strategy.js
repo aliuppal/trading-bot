@@ -62,6 +62,61 @@ const TAP_WINDOW_MINUTES = { swing: 180, scalp: 60 }; // how recent the zone tap
 const SWEEP_TF = { swing: 900, scalp: 300 };
 export const tfLabel = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 
+/** ATR(14) of the candles. */
+export function atr14(c) {
+  if (c.length < 15) return null;
+  let s = 0;
+  for (let i = c.length - 14; i < c.length; i++) s += Math.max(c[i].high - c[i].low, Math.abs(c[i].high - c[i - 1].close), Math.abs(c[i].low - c[i - 1].close));
+  return s / 14;
+}
+
+/** Did the pair simply trade through its recent low (bullish) / high (bearish) in the window (no clean sweep but still taken)? */
+function tookOut(c, direction, since) {
+  const before = c.filter((x) => x.time < since).slice(-24);
+  const after = c.filter((x) => x.time >= since);
+  if (!before.length || !after.length) return false;
+  return direction === 'bullish' ? Math.min(...after.map((x) => x.low)) < Math.min(...before.map((x) => x.low))
+    : Math.max(...after.map((x) => x.high)) > Math.max(...before.map((x) => x.high));
+}
+
+/**
+ * 4h bias from structure: the direction of the last 4h close beyond a 4h swing high (bullish) or swing low (bearish).
+ * Information for Jev only (not a filter).
+ */
+export async function htfBias(market) {
+  const c = await market.getCandles(14400, 120);
+  if (!c?.length || c.length < 20) return null;
+  let bias = null;
+  for (let i = 4; i < c.length; i++) {
+    const past = c.slice(0, i - 2);
+    const sw = swingsOf(past);
+    const lastHigh = sw.highs.at(-1), lastLow = sw.lows.at(-1);
+    if (lastHigh && c[i].close > lastHigh) bias = 'bullish';
+    else if (lastLow && c[i].close < lastLow) bias = 'bearish';
+  }
+  return bias;
+}
+function swingsOf(c, n = 2) {
+  const highs = [], lows = [];
+  for (let i = n; i < c.length - n; i++) {
+    let hi = true, lo = true;
+    for (let k = 1; k <= n; k++) {
+      if (c[i - k].high >= c[i].high || c[i + k].high > c[i].high) hi = false;
+      if (c[i - k].low <= c[i].low || c[i + k].low < c[i].low) lo = false;
+    }
+    if (hi) highs.push(c[i].high);
+    if (lo) lows.push(c[i].low);
+  }
+  return { highs, lows };
+}
+
+/** London open 07:00-10:00 UTC and New York open / morning 12:30-16:00 UTC. */
+export function inSession(t) {
+  const d = new Date(t);
+  const m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return (m >= 420 && m < 600) || (m >= 750 && m < 960);
+}
+
 /** Caches candles for one scan so each timeframe is fetched once. */
 function cachedMarket(market) {
   const cache = new Map();
@@ -79,7 +134,7 @@ export async function loadHtfZones(market, tfs = Object.keys(ZONE_TFS)) {
 }
 
 /** Evaluate one entry timeframe: confirmed IFVG + tap of an allowed zone, and what is forming right now. */
-async function evaluate(market, g, category, zones, settings, now, liquidity) {
+async function evaluate(market, g, category, zones, settings, now, liquidity, opts = {}) {
   const candles = await market.getCandles(g, 200);
   const r = { candles, note: null, setup: null };
   const lookback = settings.ifvgMaxAge ?? 7;
@@ -101,14 +156,32 @@ async function evaluate(market, g, category, zones, settings, now, liquidity) {
   const sweepTf = SWEEP_TF[category];
   sweep = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction, since);
   if (sweep) sweep = { ...sweep, tf: tfLabel(sweepTf) };
+  // SMT: the correlated market (BTC <-> ETH) did NOT take the same liquidity
+  let smt = null;
+  if (sweep && opts.pairMarket) {
+    const pair = closedCandles(await opts.pairMarket.getCandles(sweepTf, 200), sweepTf, now);
+    smt = pair.length > 20 ? !findSweep(pair, s.direction, since) && !tookOut(pair, s.direction, since) : null;
+  }
   const quality = gradeSetup(s, liquidity, Boolean(htf || sweep));
-  if (sweep) quality.qualityReasons.unshift(`swept ${sweep.tf} ${sweep.type} ${Number(sweep.price.toPrecision(6))}`);
+  if (sweep) quality.qualityReasons.unshift(`swept ${sweep.tf} ${sweep.type} ${Number(sweep.price.toPrecision(6))}${smt ? ' with SMT' : ''}`);
+  const atr = atr14(closed);
+  const gapAtr = atr ? Number(((s.top - s.bottom) / atr).toFixed(2)) : null;
+  if (settings.minGapAtr > 0 && gapAtr !== null && gapAtr < settings.minGapAtr) {
+    r.note = `${tag}: ${s.direction} IFVG gap ${gapAtr}x ATR, below ${settings.minGapAtr}x`;
+    return r;
+  }
+  if (settings.requireSweep && !sweep) { r.note = `${tag}: ${s.direction} IFVG, no ${s.direction === 'bullish' ? 'ITL' : 'ITH'} sweep before it`; return r; }
+  if (settings.smt === 'require' && sweep && smt === false) { r.note = `${tag}: ${s.direction} IFVG after a sweep, but no SMT (pair swept too)`; return r; }
+  // recent swing high (short) / low (long) around the setup: the swing stop level
+  const from = Math.max(0, (s.formedIndex ?? closed.length - 8) - 5);
+  const win = closed.slice(from);
+  const swingStop = s.direction === 'bearish' ? Math.max(...win.map((c) => c.high)) : Math.min(...win.map((c) => c.low));
   // A+ (perfect IFVG + displacement + toward liquidity) is tradeable without either.
   if (settings.requireHtfTap !== false && !htf && !sweep && quality.grade !== 'A+') {
     r.note = `${tag}: ${s.direction} IFVG, no unmitigated ${allowed.join('/')} FVG tap and no ${s.direction === 'bullish' ? 'ITL' : 'ITH'} sweep`;
     return r;
   }
-  r.setup = { ...s, id: `${g}:${s.id}`, granularity: g, category, htf, sweep, ...quality };
+  r.setup = { ...s, id: `${g}:${s.id}`, granularity: g, category, htf, sweep, smt, gapAtr, swingStop, ...quality };
   return r;
 }
 
@@ -120,11 +193,14 @@ async function evaluate(market, g, category, zones, settings, now, liquidity) {
 export async function scanSetups(rawMarket, settings, now = Date.now(), opts = {}) {
   const market = cachedMarket(rawMarket);
   const liquidity = opts.liquidity !== undefined ? opts.liquidity : await liquidityLevels(market, now).catch(() => null);
-  const res0 = await scanCore(market, settings, now, liquidity);
+  const pairMarket = opts.pairMarket ? cachedMarket(opts.pairMarket) : null;
+  const bias = await htfBias(market).catch(() => null);
+  const res0 = await scanCore(market, settings, now, liquidity, { pairMarket, bias });
+  if (res0.setup) res0.setup = { ...res0.setup, bias, withBias: bias ? bias === res0.setup.direction : null };
   return { ...res0, liquidity };
 }
 
-async function scanCore(market, settings, now, liquidity) {
+async function scanCore(market, settings, now, liquidity, opts = {}) {
   const needTap = settings.requireHtfTap !== false;
   const scalpOn = settings.scalpEnabled !== false;
   const swingOn = settings.swingEnabled !== false;
@@ -136,7 +212,7 @@ async function scanCore(market, settings, now, liquidity) {
   // Swing: highest entry timeframe first.
   const tfs = swingOn ? [...(ENTRY_TIMEFRAMES[String(settings.entryTimeframes ?? 'all')] || ENTRY_TIMEFRAMES.all)].sort((a, b) => b - a) : [];
   const res = {};
-  for (const g of tfs) res[g] = await evaluate(market, g, 'swing', zones, settings, now, liquidity);
+  for (const g of tfs) res[g] = await evaluate(market, g, 'swing', zones, settings, now, liquidity, opts);
   let waiting = null;
   for (const [i, g] of tfs.entries()) {
     const { setup, candles } = res[g];
@@ -154,7 +230,7 @@ async function scanCore(market, settings, now, liquidity) {
   // Scalp: 3m > 2m > 1m IFVG after a 5m / 15m / 30m FVG tap; a lower timeframe waits while a higher one is forming.
   if (scalpOn) {
     const sres = {};
-    for (const g of SCALP_TIMEFRAMES) sres[g] = await evaluate(market, g, 'scalp', zones, settings, now, liquidity);
+    for (const g of SCALP_TIMEFRAMES) sres[g] = await evaluate(market, g, 'scalp', zones, settings, now, liquidity, opts);
     for (const [i, g] of SCALP_TIMEFRAMES.entries()) {
       const { setup, candles } = sres[g];
       if (!setup) continue;

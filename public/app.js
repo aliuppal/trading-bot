@@ -783,9 +783,9 @@ $('runBtn').onclick = (e) => withBtn(e.target, async () => {
 const pct = (v) => (v === undefined || v === null ? '—' : `${Math.round(v * 100)}%`);
 function renderJevOverview(rows) {
   const best = (r) => (r.odds ? Object.entries(r.odds).sort((x, y) => y[1] - x[1])[0][0] : null);
-  return `<div class="table-wrap"><table class="jev-table"><thead><tr><th>Symbol</th><th class="r">Price</th><th>Jev says</th><th>Buy</th><th>Sell</th><th>Hold</th><th class="r">Model conf.</th><th>Setup</th></tr></thead><tbody>`
+  return `<div class="table-wrap"><table class="jev-table"><thead><tr><th>Symbol</th><th class="r">Price</th><th>Jev says</th><th>Buy</th><th>Sell</th><th>Hold</th><th class="r">Model conf.</th><th>Bot</th><th>Setup</th></tr></thead><tbody>`
   + rows.map((r) => {
-    if (r.error) return `<tr><td><b>${esc(r.symbol)}</b></td><td colspan="7" class="src">${esc(r.error)}</td></tr>`;
+    if (r.error) return `<tr><td><b>${esc(r.symbol)}</b></td><td colspan="8" class="src">${esc(r.error)}</td></tr>`;
     const top = best(r);
     const bar = (k, cls) => `<td><span class="odds ${cls}${top === k ? ' top' : ''}"><i style="width:${Math.round((r.odds?.[k] ?? 0) * 100)}%"></i><em>${pct(r.odds?.[k])}</em></span></td>`;
     return `<tr class="jev-sym" data-symbol="${esc(r.symbol)}" tabindex="0" title="Show ${esc(r.symbol)} on the chart"><td class="jev-symcell"><b>${esc(r.symbol)}</b>${r.open ? ` <span class="pill OPEN">${esc(r.open.toUpperCase())}</span>` : ''}</td>
@@ -793,6 +793,7 @@ function renderJevOverview(rows) {
       <td><span class="pill ${esc(r.action || '')}">${esc(r.action || '—')}</span></td>
       ${bar('BUY', 'buy')}${bar('SELL', 'sell')}${bar('HOLD', 'hold')}
       <td class="r">${r.modelConfidence !== null && r.modelConfidence !== undefined ? Number(r.modelConfidence).toFixed(2) : '—'}</td>
+      <td class="jev-bot">${esc(r.botAction || '')}</td>
       <td class="jev-setup">${esc(r.setup || r.note || 'no setup')}</td></tr>`;
   }).join('') + '</tbody></table></div>';
 }

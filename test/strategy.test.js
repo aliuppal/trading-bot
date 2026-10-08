@@ -135,3 +135,11 @@ test('path check: opposing 3m/5m/15m FVGs between entry and target block the pat
   assert.equal(b[0].tf, '5m');
   assert.equal(pathBlockers(zones, 'long', 100, 101).length, 0);
 });
+
+test('session filter windows (UTC)', async () => {
+  const { inSession } = await import('../src/strategy.js');
+  assert.equal(inSession(Date.UTC(2026, 9, 8, 8, 0)), true); // London open
+  assert.equal(inSession(Date.UTC(2026, 9, 8, 13, 0)), true); // New York open
+  assert.equal(inSession(Date.UTC(2026, 9, 8, 3, 0)), false); // Asia
+  assert.equal(inSession(Date.UTC(2026, 9, 8, 20, 0)), false);
+});
