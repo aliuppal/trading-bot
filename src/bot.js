@@ -124,11 +124,11 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
   return Object.keys(m).length ? m : null;
 }
 
-/** Minutes between Jev reviews of an open trade: 5 for scalps, 15 for 5m entries, 30 for 15m entries. */
+/** Minutes between Jev reviews of an open trade: 5 for scalps and 5m swings, 30 for 15m swings. */
 export function reviewMinutes(trade) {
   const g = trade.granularity || 900;
   if (trade.category === 'scalp' || g <= 60) return 5; // scalps (1m / 2m / 3m)
-  return g <= 300 ? 15 : 30;
+  return g <= 300 ? 5 : 30;
 }
 
 /** Is the open trade due for a Jev review (period counted from the last review, or from the entry)? */
