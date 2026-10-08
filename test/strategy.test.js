@@ -152,3 +152,12 @@ test('opposing HTF FVG between entry and target blocks the path (30m-4h)', async
   assert.equal(pathBlockers(zones, 'short', 115.5, 114.8, htf).length, 0, 'target above the gap');
   assert.equal(pathBlockers(zones, 'long', 115.5, 121, htf).length, 1, 'bearish 2h FVG above a long');
 });
+
+test('long-wick rejection candle between entry and target blocks a short', async () => {
+  const { wickBlockers } = await import('../src/strategy.js');
+  const c = Array.from({ length: 40 }, (_, i) => ({ time: i * 900000, open: 770, high: 770.6, low: 769.4, close: 770.2 }));
+  c[30] = { time: 30 * 900000, open: 770, high: 770.5, low: 764, close: 769.6 }; // long lower wick down to 764
+  c.push({ time: 40 * 900000, open: 768, high: 768.2, low: 767.8, close: 768 });
+  assert.equal(wickBlockers(c, 'short', 767.87, 764.77).length, 1);
+  assert.equal(wickBlockers(c, 'long', 767.87, 771).length, 0, 'a lower wick does not block a long');
+});

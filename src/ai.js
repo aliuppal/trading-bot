@@ -287,6 +287,7 @@ const JEV_QUESTIONS = {
       + 'At most max_trades_per_day trades per day; that is a cap, not a target: unused trades are fine and the count resets each UTC day, so never force a trade. '
       + 'Only take the setup when the IFVG and momentum agree; otherwise HOLD and wait for a clean setup to form. '
       + 'Never take a trade with an opposing 30m/1h/2h/4h FVG between entry and target (support below a short, resistance above a long): HOLD. '
+      + 'Avoid trades with a recent long-wick rejection candle between entry and target (a long lower wick under a short, a long upper wick above a long). '
       + 'Use the liquidity levels: favor trades toward the draw on liquidity (liquidity_above for longs, liquidity_below for shorts, '
       + 'especially a low-resistance run, lrlr) and avoid trades whose path runs straight into nearby opposing liquidity. '
       + 'setup_grade A+ means a perfect IFVG (gap inverted within 3-5 candles) with an aggressive displacement candle, '

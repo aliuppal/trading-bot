@@ -1,7 +1,7 @@
 import { decide, askJev } from './ai.js';
 import { summarize } from './indicators.js';
 import { bracketFor } from './ifvg.js';
-import { inSession, scanSetups, pathBlockers } from './strategy.js';
+import { inSession, scanSetups, pathBlockers, wickBlockers } from './strategy.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
 import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } from './liquidity.js';
@@ -829,6 +829,16 @@ export class TradingBot {
           // Hard rule: no trade with an opposing 30m / 1h / 2h / 4h FVG between entry and the target it would use.
           const tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk)?.price ?? b0.target) : b0.target;
           const htfBlock = pathBlockers(scan.zones || [], sd, price, tgt, ['30m', '1h', '2h', '4h']);
+          // and no recent long-wick rejection candle (15m and the entry timeframe) between entry and target
+          const m15 = await this.market.getCandles(900, 120).catch(() => []);
+          const wicks = [...wickBlockers(m15, sd, price, tgt, { lookback: 48 }), ...(scan.granularity !== 900 ? wickBlockers(scan.candles || [], sd, price, tgt, { lookback: 60 }) : [])];
+          if (!htfBlock.length && wicks.length) {
+            const w = wicks.sort((x, y) => y.time - x.time)[0];
+            const hhmm2 = new Date(w.time).toISOString().slice(11, 16);
+            scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: long-wick rejection candle at ${hhmm2} UTC (${fmtPx(w.wickFrom)}-${fmtPx(w.wickTo)}) between entry and TP ${fmtPx(tgt)}`;
+            scan.setup = null;
+            setup = null;
+          }
           if (htfBlock.length) {
             const z = htfBlock[0];
             scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: ${z.tf} ${z.type} FVG ${fmtPx(z.bottom)}-${fmtPx(z.top)} sits between entry and TP ${fmtPx(tgt)}`;

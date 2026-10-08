@@ -62,6 +62,29 @@ const TAP_WINDOW_MINUTES = { swing: 180, scalp: 60 }; // how recent the zone tap
 const SWEEP_TF = { swing: 900, scalp: 300 };
 export const tfLabel = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 
+/**
+ * Long-wick rejection candles in the way of a trade: for a short, a recent candle whose long LOWER wick
+ * (buyers rejected price) sits between entry and target; for a long, a long UPPER wick between entry and target.
+ * Long wick: wick >= 60% of the candle range and range >= 1.2x ATR14. Looks at the last `lookback` closed candles.
+ */
+export function wickBlockers(candles, side, entry, target, { lookback = 48 } = {}) {
+  const c = candles.slice(-lookback - 15);
+  const atr = atr14(c.slice(0, -1)) || 0;
+  const lo = Math.min(entry, target), hi = Math.max(entry, target);
+  const out = [];
+  for (const k of c.slice(-lookback - 1, -1)) {
+    const range = k.high - k.low;
+    if (!(range > 0) || range < 1.2 * atr) continue;
+    const bodyLo = Math.min(k.open, k.close), bodyHi = Math.max(k.open, k.close);
+    const wick = side === 'short' ? bodyLo - k.low : k.high - bodyHi;
+    if (wick < 0.6 * range) continue;
+    // the wick (rejection zone) overlaps the path to the target
+    const wLo = side === 'short' ? k.low : bodyHi, wHi = side === 'short' ? bodyLo : k.high;
+    if (wHi > lo && wLo < hi) out.push({ time: k.time, low: k.low, high: k.high, wickFrom: wLo, wickTo: wHi });
+  }
+  return out;
+}
+
 /** ATR(14) of the candles. */
 export function atr14(c) {
   if (c.length < 15) return null;
