@@ -147,11 +147,12 @@ function cachedMarket(market) {
 }
 
 /** Active (not closed-through) FVGs on the given zone timeframes (default: all of 5m-4h). */
-export async function loadHtfZones(market, tfs = Object.keys(ZONE_TFS)) {
+export async function loadHtfZones(market, tfs = Object.keys(ZONE_TFS), now = Date.now()) {
   const out = [];
   for (const tf of tfs) {
     const s = ZONE_TFS[tf];
-    out.push(...activeFvgs(await market.getCandles(s, 300), s, { label: tf }));
+    // only gaps whose 3rd candle has closed: a gap made by the still-forming candle is not an FVG yet
+    out.push(...activeFvgs(await market.getCandles(s, 300), s, { label: tf }).filter((z) => z.readyAt <= now));
   }
   return out;
 }
@@ -237,7 +238,7 @@ async function scanCore(market, settings, now, liquidity, opts = {}) {
   const swingOn = settings.swingEnabled !== false;
   // 3m/5m/15m zones are always loaded too: they are checked for gaps in the path to the target.
   const zoneTfs = [...new Set(['3m', '5m', '15m', ...(needTap ? [...(scalpOn ? ['30m'] : []), ...(swingOn ? ['30m', '1h', '2h', '4h'] : [])] : [])])];
-  const zones = await loadHtfZones(market, zoneTfs);
+  const zones = await loadHtfZones(market, zoneTfs, now);
   const notes = [];
 
   // Swing: highest entry timeframe first.

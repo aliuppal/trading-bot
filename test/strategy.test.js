@@ -161,3 +161,17 @@ test('long-wick rejection candle between entry and target blocks a short', async
   assert.equal(wickBlockers(c, 'short', 767.87, 764.77).length, 1);
   assert.equal(wickBlockers(c, 'long', 767.87, 771).length, 0, 'a lower wick does not block a long');
 });
+
+test('an HTF FVG made by the still-forming candle is not a zone yet', async () => {
+  const { loadHtfZones } = await import('../src/strategy.js');
+  const M30 = 1800000, T0 = 1_800_000_000_000;
+  const k = (i, o, h, l, c) => ({ time: T0 + i * M30, open: o, high: h, low: l, close: c, volume: 1 });
+  const c = [k(0, 100, 100.2, 99.8, 100), k(1, 100, 100.3, 99.9, 100.2), k(2, 100.2, 102, 100.2, 101.9), k(3, 101.9, 102.4, 101, 102.2)];
+  const market = { getCandles: async () => c };
+  // candle 3 (the gap's 3rd candle) still forming: no zone
+  assert.equal((await loadHtfZones(market, ['30m'], T0 + 3 * M30 + 600000)).length, 0);
+  // after candle 3 closed: bullish FVG 100.3-101
+  const z = await loadHtfZones(market, ['30m'], T0 + 4 * M30 + 1000);
+  assert.equal(z.length, 1);
+  assert.equal(z[0].type, 'bullish');
+});
