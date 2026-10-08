@@ -185,6 +185,14 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
     const pair = closedCandles(await opts.pairMarket.getCandles(sweepTf, 200), sweepTf, now);
     smt = pair.length > 20 ? !findSweep(pair, s.direction, since) && !tookOut(pair, s.direction, since) : null;
   }
+  // The liquidity on the target side was just swept (sell-side low before a short, buy-side high before a long)
+  // and no LRLR runs that way: the draw is used up, price tends to reverse. No trade.
+  const opp = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction === 'bullish' ? 'bearish' : 'bullish', since);
+  const toward = s.direction === 'bullish' ? 'above' : 'below';
+  if (opp && liquidity?.lrlr?.side !== toward) {
+    r.note = `${tag}: ${s.direction} IFVG skipped: ${tfLabel(sweepTf)} ${opp.type} ${Number(opp.price.toPrecision(6))} on the target side was already swept and no LRLR ${toward}`;
+    return r;
+  }
   const quality = gradeSetup(s, liquidity, Boolean(htf || sweep));
   if (sweep) quality.qualityReasons.unshift(`swept ${sweep.tf} ${sweep.type} ${Number(sweep.price.toPrecision(6))}${smt ? ' with SMT' : ''}`);
   const atr = atr14(closed);

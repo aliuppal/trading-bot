@@ -811,12 +811,20 @@ export class TradingBot {
       // Liquidity: PDH/PDL, today's high/low, PWH/PWL, equal highs/lows, HTF swings, LRLR.
       const liquidity = scan.liquidity !== undefined ? scan.liquidity : await liquidityLevels(this.market, this.now()).catch(() => null);
       this.state.liquidity = liquidity && { above: liquidity.above.slice(0, 4), below: liquidity.below.slice(0, 4), lrlr: liquidity.lrlr, draw: liquidity.draw };
-      const price = indicators.price;
+      let price = indicators.price;
       entry.price = price;
       // Clear path: no opposing 3m/5m/15m FVG between entry and the (fixed R:R) target.
       if (setup) {
         const sd = SIDE_FOR[setup.direction];
-        const b0 = bracketFor(sd, price, this.stopZone(setup), { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
+        // check the path from the live price (the order fills there, not at the last candle close)
+        const livePx = Number(await this.market.getPrice?.().catch(() => null)) || price;
+        const b0 = bracketFor(sd, livePx, this.stopZone(setup), { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
+        if (!b0) {
+          scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: price ${fmtPx(livePx)} is on the wrong side of the IFVG, no valid stop`;
+          scan.setup = null;
+          setup = null;
+        }
+        price = livePx;
         if (b0) {
           const blockers = pathBlockers(scan.zones || [], sd, price, b0.target);
           setup.htfInPath = false;
