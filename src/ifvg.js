@@ -107,11 +107,30 @@ export function latestSetup(candles, { maxAge = 2, maxGapAge = 7, minGapPct = 0.
   if (candles.length < 5) return null;
   const last = candles.length - 1;
   const price = candles[last].close;
+  const all = findFvgs(candles, { minGapPct });
   const fresh = findIfvgs(candles, { minGapPct, strict: true, displacement, maxGapAge })
     .filter((z) => last - z.invertedIndex <= maxAge)
-    .filter((z) => (z.direction === 'bullish' ? price > z.bottom : price < z.top));
+    .filter((z) => (z.direction === 'bullish' ? price > z.bottom : price < z.top))
+    .map((z) => ({ ...z, ...seriesFormation(all, z) }))
+    // the whole formation, from the first FVG of the series to the inversion, must fit in maxGapAge candles
+    .filter((z) => z.formationCandles <= maxGapAge);
   const z = fresh.at(-1);
   return z ? { ...z, ageCandles: last - z.invertedIndex } : null;
+}
+
+/**
+ * Formation of an IFVG counted over the whole series of same-direction FVGs it belongs to: price usually leaves
+ * several gaps in one leg, and the IFVG is complete when the last of them is closed through. Counts from the
+ * first FVG of that series (formed within 12 candles before, and closed through by the same move, by the inversion
+ * candle) to the inversion. Returns { formationCandles, seriesFvgs, seriesStart }.
+ */
+export function seriesFormation(all, z) {
+  const type = z.direction === 'bullish' ? 'bearish' : 'bullish'; // the FVGs that got inverted
+  const J = z.invertedIndex;
+  const series = all.filter((f) => f.type === type && f.index <= z.formedIndex && f.index >= z.formedIndex - 12
+    && f.invertedIndex !== undefined && f.invertedIndex <= J && f.invertedIndex >= z.formedIndex);
+  const first = Math.min(z.formedIndex, ...series.map((f) => f.index));
+  return { formationCandles: J - first, seriesFvgs: Math.max(1, series.length), seriesStart: first };
 }
 
 /**

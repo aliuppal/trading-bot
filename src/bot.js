@@ -194,14 +194,14 @@ export function describeSetup(setup, side) {
   if (setup.htf) parts.push(`tapped unmitigated ${setup.htf.tf} ${setup.htf.type} FVG ${px(setup.htf.bottom)}-${px(setup.htf.top)}${setup.htf.tappedAt ? ` at ${hhmm(setup.htf.tappedAt)} UTC` : ''}`);
   if (setup.sweep && !setup.qualityReasons?.some((q) => q.startsWith('swept'))) parts.push(`swept ${setup.sweep.tf} ${setup.sweep.type} ${px(setup.sweep.price)}`);
   const age = setup.ageCandles === 0 ? 'on the last closed candle' : `${setup.ageCandles} candle${setup.ageCandles === 1 ? '' : 's'} ago`;
-  parts.push(`${setup.htf ? '-> ' : ''}${setup.granularity ? tfName(setup.granularity) : ''} ${setup.direction} IFVG ${px(setup.bottom)}-${px(setup.top)} (formed in ${setup.formationCandles ?? '?'} candles, inverted ${age}${setup.displacement ? ', displacement candle' : ''})`);
+  parts.push(`${setup.htf ? '-> ' : ''}${setup.granularity ? tfName(setup.granularity) : ''} ${setup.direction} IFVG ${px(setup.bottom)}-${px(setup.top)} (formed in ${setup.formationCandles ?? '?'} candles${setup.seriesFvgs > 1 ? ` from the first of ${setup.seriesFvgs} FVGs` : ''}, inverted ${age}${setup.displacement ? ', displacement candle' : ''})`);
   return parts.join(' · ').replace(' · -> ', ' -> ');
 }
 
 const sig = (v) => Number(Number(v).toPrecision(8));
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: sig(z.top), bottom: sig(z.bottom),
-  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, grade: z.grade, qualityReasons: z.qualityReasons, clearPath: z.clearPath, granularity: z.granularity, category: z.category, displacement: z.displacement,
+  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, seriesFvgs: z.seriesFvgs, grade: z.grade, qualityReasons: z.qualityReasons, clearPath: z.clearPath, granularity: z.granularity, category: z.category, displacement: z.displacement,
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: sig(z.htf.top), bottom: sig(z.htf.bottom), tappedAt: z.htf.tappedAt },
   }),

@@ -110,3 +110,24 @@ test('brackets keep small-price decimals (XRP 1.42)', async () => {
   const s = bracketShort(1.42, { top: 1.4235, bottom: 1.4215 });
   assert.ok(s.stop > 1.42 && s.target < 1.42);
 });
+
+test('IFVG formation counts from the first FVG of the series to the inversion', async () => {
+  const { latestSetup } = await import('../src/ifvg.js');
+  const k = (i, o, h, l, c) => ({ time: i * 60000, open: o, high: h, low: l, close: c });
+  const c = [
+    k(0, 100, 100.2, 99.8, 100), k(1, 100, 100.2, 99.8, 100),
+    k(2, 100, 100.3, 99.9, 100.2),   // a: high 100.3
+    k(3, 100.2, 101.2, 100.2, 101),  // impulse
+    k(4, 101, 101.4, 100.6, 101.3),  // low 100.6 > 100.3: bullish FVG #1 (100.3-100.6), middle candle 3
+    k(5, 101.3, 102.2, 101.2, 102),  // impulse
+    k(6, 102, 102.4, 101.6, 102.2),  // low 101.6 > 101.4: bullish FVG #2 (101.4-101.6), middle candle 5
+    k(7, 102.2, 102.3, 101.8, 101.9),
+    k(8, 101.9, 102, 99.9, 100),     // closes below both FVGs: inverts #2 and #1
+  ];
+  const s = latestSetup(c, { maxAge: 2, maxGapAge: 7, minGapPct: 0.01 });
+  assert.ok(s, 'bearish IFVG found');
+  assert.equal(s.direction, 'bearish');
+  assert.equal(s.formationCandles, 5, 'from FVG #1 (candle 3) to the inversion (candle 8)');
+  assert.equal(s.seriesFvgs, 2);
+  assert.equal(latestSetup(c, { maxAge: 2, maxGapAge: 4, minGapPct: 0.01 }), null, 'series longer than 4 candles is rejected');
+});
