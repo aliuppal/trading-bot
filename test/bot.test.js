@@ -256,21 +256,21 @@ test('missing snapshots are re-rendered on demand as base64 images', async () =>
   assert.deepEqual(await s.kv.get(`shot_${t.id}`, {}), shots);
 });
 
-test('Jev risk review: a 15m trade is reviewed after 60 min and closed when Jev says close', async () => {
+test('Jev risk review: a 15m trade is reviewed after 30 min and closed when Jev says close', async () => {
   let answer = { action: 'BUY', confidence: 0.8, size_pct: 5, reasoning: 'IFVG holding' };
   const s = setup({ fetchImpl: async (...a) => geminiResponse(answer)(...a) });
   await s.bot.runOnce();
   const [t] = await s.bot.trades();
   assert.equal(t.status, 'open');
 
-  // 30 min later: no review yet for a 15m trade
-  s.bot.now = () => NOW + 30 * 60000;
+  // 20 min later: no review yet for a 15m trade
+  s.bot.now = () => NOW + 20 * 60000;
   const early = await s.bot.runOnce();
   assert.match(early.note, /Managing open trade/);
 
-  // 61 min later: Jev reviews and answers close (SELL closes a long)
+  // 31 min later: Jev reviews and answers close (SELL closes a long)
   answer = { action: 'SELL', confidence: 0.9, size_pct: 0, reasoning: 'momentum turned' };
-  s.bot.now = () => NOW + 61 * 60000;
+  s.bot.now = () => NOW + 31 * 60000;
   const rev = await s.bot.runOnce();
   assert.match(rev.note, /Jev review: closed long early/);
   const [closed] = await s.bot.trades();
