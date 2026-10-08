@@ -54,7 +54,8 @@ const tickAll = () => bot.locked(async () => {
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// always revalidate the page, script and styles, so a deploy shows up without a hard refresh
+app.use(express.static(path.join(__dirname, 'public'), { etag: true, lastModified: true, setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
 const wrap = (fn) => (req, res) =>
   Promise.resolve(fn(req, res)).catch((err) => res.status(400).json({ error: err.message }));
