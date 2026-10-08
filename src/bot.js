@@ -205,7 +205,7 @@ const zoneSummary = (z) => z && {
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: sig(z.htf.top), bottom: sig(z.htf.bottom), tappedAt: z.htf.tappedAt },
   }),
-  ...(z.sweep && { sweep: z.sweep }), ...(z.lrlrToTp != null && { lrlrToTp: z.lrlrToTp }),
+  ...(z.sweep && { sweep: z.sweep }), ...(z.htfTarget && { htfTarget: z.htfTarget }), ...(z.lrlrToTp != null && { lrlrToTp: z.lrlrToTp }),
   ...(z.smt != null && { smt: z.smt }), ...(z.gapAtr != null && { gapAtr: z.gapAtr }), ...(z.bias && { bias: z.bias, withBias: z.withBias }),
 };
 
@@ -659,6 +659,12 @@ export class TradingBot {
       const lt = pr >= 0.5 ? { ...p, r: Number(pr.toFixed(2)), byJev: true } : liquidityTarget(liquidity, side, entryPrice, b.risk);
       if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.label || lt.level.type} ${fmtPx(lt.price)}${lt.byJev ? ' (Jev pick)' : ''}`; }
     }
+    // HTF FVG chosen as the target at scan time (it was in the way): recompute from the actual fill
+    if (setup.htfTarget) {
+      const ht = setup.htfTarget.price;
+      const hr = (side === 'short' ? entryPrice - ht : ht - entryPrice) / b.risk;
+      if (hr >= 0.5) { b.target = ht; b.rr = Number(hr.toFixed(2)); targetLevel = `${setup.htfTarget.tf} ${setup.htfTarget.type} FVG ${setup.htfTarget.inside ? 'far edge (gap fill)' : 'near edge'} ${fmtPx(ht)}`; }
+    }
     // A 30m-4h FVG inside the bracket (between entry and target) is where price reacts first: target its near edge.
     const hz = htfTargetInBracket(zones, side, entryPrice, b.target, b.risk);
     if (hz) { b.target = hz.price; b.rr = hz.r; targetLevel = `${hz.zone.tf} ${hz.zone.type} FVG ${fmtPx(hz.price)} (HTF in bracket)`; }
@@ -836,8 +842,27 @@ export class TradingBot {
           // A+ needs a clear path; without it an untapped "A+" is not tradeable.
           if (setup.grade === 'A+' && !setup.clearPath) setup.grade = 'A';
           // Hard rule: no trade with an opposing 30m / 1h / 2h / 4h FVG between entry and the target it would use.
-          const tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk)?.price ?? b0.target) : b0.target;
-          const htfBlock = pathBlockers(scan.zones || [], sd, price, tgt, ['30m', '1h', '2h', '4h']);
+          let tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk)?.price ?? b0.target) : b0.target;
+          let htfBlock = pathBlockers(scan.zones || [], sd, price, tgt, ['30m', '1h', '2h', '4h']);
+          // An opposing 30m-4h FVG in the way becomes the target: its near edge, or its far edge (gap fill) when
+          // price is already inside it. The trade is skipped only if that target is closer than 0.75R.
+          if (htfBlock.length) {
+            const edges = htfBlock.map((z) => {
+              const inside = z.bottom < price && z.top > price;
+              const edge = sd === 'short' ? (inside ? z.bottom : z.top) : (inside ? z.top : z.bottom);
+              return { z, inside, edge, r: Math.abs(price - edge) / b0.risk };
+            }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price))
+              .sort((x, y) => Math.abs(x.edge - price) - Math.abs(y.edge - price));
+            const first = edges[0];
+            if (first && first.r >= 0.75) {
+              tgt = first.edge;
+              setup.htfTarget = { price: first.edge, tf: first.z.tf, type: first.z.type, inside: first.inside };
+              setup.qualityReasons = [...(setup.qualityReasons || []), `target ${first.z.tf} ${first.z.type} FVG ${first.inside ? 'far edge (gap fill)' : 'near edge'} ${fmtPx(first.edge)} (${first.r.toFixed(2)}R)`];
+              htfBlock = [];
+            } else if (first) {
+              htfBlock = [{ ...first.z, tooClose: first.r }];
+            }
+          }
           // and no recent long-wick rejection candle (15m and the entry timeframe) between entry and target
           const m15 = await this.market.getCandles(900, 120).catch(() => []);
           const wicks = [...wickBlockers(m15, sd, price, tgt, { lookback: 48 }), ...(scan.granularity !== 900 ? wickBlockers(scan.candles || [], sd, price, tgt, { lookback: 60 }) : [])];
@@ -859,9 +884,9 @@ export class TradingBot {
             scan.setup = null;
             setup = null;
           }
-          if (htfBlock.length) {
+          if (htfBlock.length && setup) {
             const z = htfBlock[0];
-            scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: ${z.tf} ${z.type} FVG ${fmtPx(z.bottom)}-${fmtPx(z.top)} sits between entry and TP ${fmtPx(tgt)}`;
+            scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: ${z.tf} ${z.type} FVG ${fmtPx(z.bottom)}-${fmtPx(z.top)} in the way${z.tooClose != null ? `, only ${z.tooClose.toFixed(2)}R to it` : ` of TP ${fmtPx(tgt)}`}`;
             scan.setup = null;
             setup = null;
           }
