@@ -444,7 +444,9 @@ async function loadStatus() {
     $('scanStats').innerHTML = ss
       ? `<b>Scans today ${ss.scans}</b> · no IFVG ${ss.noIfvg || 0} · IFVG but no FVG tap ${ss.noTap || 0} · waiting ${ss.waiting || 0} · in trade ${ss.inTrade || 0}${ss.limit ? ` · limit ${ss.limit}` : ''} · <b>sent to Jev ${ss.askedJev || 0}</b> · <b>taken ${ss.taken || 0}</b>`
       : 'Scans today: counting starts with the next scan';
-    $('meterSplit').innerHTML = s.symbols ? s.symbols.map((x) => `<div class="sym-scan"><b>${esc(x.symbol)}</b> ${esc(x.lastScan || 'waiting for first scan')}</div>`).join('') : '';
+    // only symbols with an open trade (what the bot is managing right now)
+    const openSyms = new Set((s.openTrades || (s.openTrade ? [s.openTrade] : [])).map(symOf));
+    $('meterSplit').innerHTML = (s.symbols || []).filter((x) => openSyms.has(x.symbol)).map((x) => `<div class="sym-scan"><b>${esc(x.symbol)}</b> ${esc(x.lastScan || 'open trade')}</div>`).join('');
     const opens = s.openTrades || (s.openTrade ? [s.openTrade] : []);
     $('openTrade').innerHTML = opens.map(renderOpenTrade).join('<hr class="ot-sep">');
     // chart symbol choices (symbols with an open trade marked)
