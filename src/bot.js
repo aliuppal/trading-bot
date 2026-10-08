@@ -723,9 +723,10 @@ export class TradingBot {
       let reason = null; // why the AI is not consulted / an entry can't be taken
       if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
       else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
-      else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `${openAll} trades already open (max ${s.maxOpenTrades ?? 2} at a time)`;
       else if (!open && !swingLeft && !scalpLeft) reason = `Daily swing (${s.maxSwingPerDay ?? 5}) and scalp (${s.maxScalpPerDay ?? 5}) limits reached`;
       else if (!open && !setup) reason = `${!swingLeft ? 'Swing limit reached · ' : ''}${!scalpLeft ? 'Scalp limit reached · ' : ''}${scan.note ? `No setup · ${scan.note}` : 'No fresh IFVG setup'}`;
+      // open-trade cap: keep scanning, only the entry waits for a free slot
+      else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG found · waiting for a free slot (max ${s.maxOpenTrades ?? 2} trades at a time)`;
       else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';
       else if (!open && asked) reason = 'Already evaluated this IFVG';
 
