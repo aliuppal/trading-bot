@@ -166,7 +166,7 @@ select { font-family: var(--font-mono); font-size: 13px; }
 /* daily trade meter */
 .meter { margin-top: 12px; }
 .meter-head { display: flex; justify-content: space-between; font: 500 11px/16px var(--font-mono); color: var(--muted); }
-.meter-head b { color: var(--text); font-weight: 500; }
+.meter-head b { color: var(--text); font-weight: 500; white-space: nowrap; }
 .meter-track { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin-top: 6px; }
 .meter-track i { height: 6px; border-radius: 1px; background: var(--l2); border: 1px solid var(--line-soft); }
 .meter-track i.used { background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 6px rgba(6, 182, 212, .35); }
@@ -175,9 +175,9 @@ select { font-family: var(--font-mono); font-size: 13px; }
 .scan-stats { margin-top: 8px; font: 400 11px/16px var(--font-mono); color: var(--dim); }
 .scan-stats b { color: var(--text-2); font-weight: 500; }
 .meter-bars { display: grid; gap: 6px; margin-top: 8px; }
-.meter-row { display: grid; grid-template-columns: 64px 1fr 44px; align-items: center; gap: 8px; }
+.meter-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .meter-row .pill { text-align: center; }
-.meter-row b { font: 500 11px/16px var(--font-mono); color: var(--text-2); text-align: right; }
+.meter-row b { font: 500 11px/16px var(--font-mono); color: var(--text-2); text-align: right; white-space: nowrap; min-width: 52px; }
 .meter-row .meter-track { margin-top: 0; }
 .meter-track.swing i.used { background: var(--cyan); border-color: var(--cyan); }
 .meter-track.scalp i.used { background: #FBBF24; border-color: #FBBF24; box-shadow: 0 0 6px rgba(251, 191, 36, .35); }
