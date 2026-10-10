@@ -11,6 +11,7 @@ import { findIfvgs, minGapFor } from './src/ifvg.js';
 import { createKV } from './src/store.js';
 import { loadHtfZones } from './src/strategy.js';
 import { liquidityLevels } from './src/liquidity.js';
+import { chatAnswer } from './src/ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -147,6 +148,25 @@ app.get('/api/suggestions', wrap(async (req, res) => res.json(await bot.suggesti
 app.post('/api/suggestions/generate', wrap(async (req, res) => res.json(await bot.generateSuggestions(req.body?.day || undefined))));
 app.post('/api/suggestions/:id/approve', wrap(async (req, res) => res.json(await bot.decideSuggestion(String(req.params.id), true))));
 app.post('/api/suggestions/:id/ignore', wrap(async (req, res) => res.json(await bot.decideSuggestion(String(req.params.id), false))));
+// Chat assistant (lower-right bubble): answers from the live bot data, read-only.
+app.post('/api/chat', wrap(async (req, res) => {
+  if (!config.ai.apiKey) throw new Error('Chat needs the OpenRouter key (OPENROUTER_API_KEY)');
+  await Promise.all(bots.slice(1).map((b) => b.load()));
+  const st = await bot.status();
+  const pick = (t) => ({ symbol: t.symbol || 'BTCUSDC', model: t.model || 'ifvg', side: t.side, category: t.category, tf: t.granularity ? t.granularity / 60 + 'm' : null, status: t.status, entry: t.entryPrice, stop: t.stop, target: t.target, exit: t.exitPrice, exitReason: t.exitReason, r: t.r, pnl: t.pnl, fees: t.fees, opened: t.entryTime, closed: t.exitTime, reason: (t.setupReason || '').slice(0, 300) });
+  const trades = (await bot.allTrades()).slice(0, 25).map(pick);
+  const decisions = (await bot.decisions(20)).map((d) => ({ time: d.time, symbol: d.symbol, action: d.label || d.action, confidence: d.confidence, executed: d.executed, note: (d.note || '').slice(0, 200), reasoning: (d.reasoning || '').slice(0, 160) }));
+  const context = {
+    now: new Date().toISOString(), running: st.running, model: st.model, modelName: st.models?.[st.model], modelRules: st.modelRules?.[st.model],
+    settings: st.settings && Object.fromEntries(Object.entries(st.settings).filter(([k]) => k !== 'modelConfigs')),
+    tradesToday: st.tradesToday, swingToday: st.swingToday, scalpToday: st.scalpToday, scanStats: st.scanStats,
+    openTrades: (st.openTrades || []).map(pick), symbols: bots.map((b) => ({ symbol: b.symbol, lastScan: b.state.lastScan?.note ?? null })),
+    liquidity: st.liquidity, recentTrades: trades, recentDecisions: decisions,
+    jevReviewMinutes: { scalp: 3, swing5m: 3, swing15m: 30 },
+    costs: 'Jev calls cost about $0.0001 each (about 6-10 per hour); day-end web research about $0.03 per run; typical total about $1.5-2.5 per month',
+  };
+  res.json(await chatAnswer({ messages: req.body?.messages, context, apiKey: config.ai.apiKey }));
+}));
 app.post('/api/settings', wrap(async (req, res) => res.json(await bot.updateSettings(req.body || {}))));
 
 // Scheduler hook for serverless hosts (Supabase pg_cron calls it every minute, see supabase/cron.sql).

@@ -216,6 +216,40 @@ At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.strin
   }));
 }
 
+/**
+ * Dashboard chat assistant: answers questions about the bot, its settings, trades and the strategies from the
+ * live context it is given. Read-only (it explains, it does not change settings or place trades).
+ * Model: CHAT_MODEL (default minimax/minimax-m3). Returns { reply, model, cost }.
+ */
+export async function chatAnswer({ messages, context, apiKey, fetchImpl = fetch, llm = process.env.CHAT_MODEL || 'minimax/minimax-m3' }) {
+  const history = (messages || []).filter((m) => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
+    .slice(-12).map((m) => ({ role: m.role, content: m.content.slice(0, 2000) }));
+  if (!history.length || history.at(-1).role !== 'user') throw new Error('Ask a question');
+  const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'HTTP-Referer': 'https://github.com/aliuppal/trading-bot', 'X-Title': 'CryptoQuant Pro' },
+    body: JSON.stringify({
+      model: llm,
+      temperature: 0.3,
+      max_tokens: 700,
+      messages: [
+        { role: 'system', content: 'You are the assistant inside CryptoQuant Pro, an automated crypto futures trading bot (Binance demo account). '
+          + 'Answer the user\'s questions about the bot, its strategy models, settings, open trades, results and decisions, using ONLY the live data below. '
+          + 'Be short and concrete, use the numbers from the data, and say plainly when the data does not contain the answer. '
+          + 'You cannot change settings or place / close trades: tell the user where to do it on the dashboard (Configure strategy, model picker, Start / Stop, Suggestions tab). '
+          + 'This is a demo account; never promise profits.\n\nLIVE DATA (JSON):\n' + JSON.stringify(context).slice(0, 24000) },
+        ...history,
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`chat HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  if (data.error) throw new Error(`chat: ${data.error.message || JSON.stringify(data.error)}`);
+  const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+  if (!reply) throw new Error('Empty answer');
+  return { reply, model: data.model || llm, cost: data.usage?.cost };
+}
+
 async function openRouterChat(prompt, model, apiKey, fetchImpl) {
   const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
     method: 'POST',

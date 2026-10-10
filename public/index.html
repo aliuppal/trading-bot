@@ -315,6 +315,30 @@
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="app.js"></script>
+    <button type="button" class="chat-fab" id="chatFab" aria-label="Open the CryptoQuant assistant" aria-expanded="false" aria-controls="chatPanel">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>
+  </button>
+  <section class="chat-panel" id="chatPanel" hidden aria-label="CryptoQuant assistant">
+    <header class="chat-head">
+      <div><b>CryptoQuant assistant</b><span class="sub">Asks about your bot, trades, settings and strategies</span></div>
+      <div class="chat-actions">
+        <button type="button" class="chat-icon" id="chatClear" title="New conversation" aria-label="New conversation">↺</button>
+        <button type="button" class="chat-icon" id="chatClose" title="Close" aria-label="Close">✕</button>
+      </div>
+    </header>
+    <div class="chat-log" id="chatLog" aria-live="polite"></div>
+    <div class="chat-chips" id="chatChips">
+      <button type="button">Why no trade right now?</button>
+      <button type="button">How did today go?</button>
+      <button type="button">Explain my open trades</button>
+    </div>
+    <form class="chat-form" id="chatForm">
+      <label class="sr-only" for="chatInput">Message</label>
+      <textarea id="chatInput" rows="1" placeholder="Ask about your bot…" maxlength="1500"></textarea>
+      <button type="submit" class="btn btn-primary" id="chatSend">Send</button>
+    </form>
+  </section>
+
+<script src="app.js"></script>
 </body>
 </html>

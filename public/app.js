@@ -951,3 +951,47 @@ checkChanges();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshAll(); loadMarket(); } });
 setInterval(loadMarket, 15000);
 $('chartSymbol').onchange = (e) => { chartSymbol = e.target.value; renderJevReason(); candles = []; view.offset = 0; view.yZoom = 1; view.yPan = 0; loadMarket(); loadStatus(); }; // keep the chart live (new candles, open trade)
+
+
+/* ---------------- chat assistant (lower right) ---------------- */
+let chat = [];
+try { chat = JSON.parse(localStorage.getItem('cqp-chat') || '[]'); } catch { chat = []; }
+const saveChat = () => { try { localStorage.setItem('cqp-chat', JSON.stringify(chat.slice(-30))); } catch { /* private mode */ } };
+function renderChat() {
+  $('chatLog').innerHTML = chat.length
+    ? chat.map((m) => `<div class="chat-msg ${m.role}">${esc(m.content).replace(/\n/g, '<br>')}</div>`).join('')
+    : '<div class="chat-empty">Hi! Ask me anything about your bot: why a trade was or wasn\'t taken, today\'s results, your settings or a strategy model.</div>';
+  $('chatChips').hidden = chat.length > 0;
+  $('chatLog').scrollTop = $('chatLog').scrollHeight;
+}
+function toggleChat(open) {
+  $('chatPanel').hidden = !open;
+  $('chatFab').setAttribute('aria-expanded', String(open));
+  if (open) { renderChat(); $('chatInput').focus(); }
+}
+async function sendChat(text) {
+  const q = text.trim();
+  if (!q) return;
+  chat.push({ role: 'user', content: q });
+  $('chatInput').value = '';
+  renderChat();
+  $('chatLog').insertAdjacentHTML('beforeend', '<div class="chat-msg assistant typing">Thinking…</div>');
+  $('chatSend').disabled = true;
+  try {
+    const r = await api('/api/chat', { method: 'POST', body: { messages: chat } });
+    chat.push({ role: 'assistant', content: r.reply });
+  } catch (e) {
+    chat.push({ role: 'assistant', content: `Sorry, I couldn't answer: ${e.message}` });
+  } finally {
+    $('chatSend').disabled = false;
+    saveChat();
+    renderChat();
+  }
+}
+$('chatFab').onclick = () => toggleChat($('chatPanel').hidden);
+$('chatClose').onclick = () => toggleChat(false);
+$('chatClear').onclick = () => { chat = []; saveChat(); renderChat(); };
+$('chatChips').onclick = (e) => { const b = e.target.closest('button'); if (b) sendChat(b.textContent); };
+$('chatForm').onsubmit = (e) => { e.preventDefault(); sendChat($('chatInput').value); };
+$('chatInput').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat($('chatInput').value); } };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('chatPanel').hidden) toggleChat(false); });
