@@ -858,7 +858,7 @@ $('shotClose').onclick = closeShot;
 $('shotModal').onclick = (e) => { if (e.target === $('shotModal')) closeShot(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('shotModal').hidden) closeShot(); });
 
-$('startBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/start', { method: 'POST' }); toast('Bot started: IFVG setups will be traded automatically'); refreshAll(); });
+$('startBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/start', { method: 'POST' }); toast(`Bot started: ${modelName(status?.model || 'ifvg')} is trading automatically`); refreshAll(); });
 $('stopBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/stop', { method: 'POST' }); toast('Bot stopped (open trades keep their stop and target)'); refreshAll(); });
 $('runBtn').onclick = (e) => withBtn(e.target, async () => {
   $('botState').textContent = 'Thinking…';

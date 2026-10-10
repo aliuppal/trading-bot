@@ -496,3 +496,7 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .odds-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 9999px; border: 1px solid var(--line-soft); background: var(--l2); font: 500 11px/16px var(--font-mono); color: var(--muted); }
 .chip b { color: var(--text); font-weight: 500; }
+
+/* toast sits left of the chat bubble */
+#toast { right: 88px; }
+@media (max-width: 760px) { #toast { right: 16px; bottom: 84px; } }
