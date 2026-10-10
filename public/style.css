@@ -480,3 +480,19 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .eq-dot { stroke: var(--l2); stroke-width: 2; } .eq-dot.up { fill: #10B981; } .eq-dot.down { fill: #F43F5E; }
 .eq-cross { stroke: var(--muted); stroke-width: 1; }
 .eq-tip { position: absolute; top: 8px; display: grid; gap: 2px; padding: 6px 9px; border-radius: 6px; background: var(--l3); border: 1px solid rgba(255, 255, 255, .1); font: 500 11px/15px var(--font-mono); color: var(--text-2); pointer-events: none; min-width: 150px; }
+
+/* Jev odds as a picture */
+.odds-viz { margin-top: 10px; display: grid; gap: 8px; }
+.odds-bar { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--l2); }
+.odds-bar i { display: block; min-width: 2px; opacity: .55; }
+.odds-bar i.top { opacity: 1; }
+.odd-buy { background: #10B981; } .odd-sell { background: #F43F5E; } .odd-hold, .odd-close { background: #64748B; }
+.odd-close { background: #F59E0B; }
+.odds-legend { display: flex; flex-wrap: wrap; gap: 12px; font: 500 12px/16px var(--font-mono); color: var(--muted); }
+.odd-key { display: inline-flex; align-items: center; gap: 5px; }
+.odd-key i { width: 8px; height: 8px; border-radius: 2px; }
+.odd-key b { color: var(--text-2); font-weight: 500; }
+.odd-key.top b { color: var(--text); font-weight: 700; }
+.odds-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 9999px; border: 1px solid var(--line-soft); background: var(--l2); font: 500 11px/16px var(--font-mono); color: var(--muted); }
+.chip b { color: var(--text); font-weight: 500; }

@@ -1085,3 +1085,27 @@ $('eqRange').onclick = (e) => {
   renderEquity();
 };
 window.addEventListener('resize', () => renderEquity());
+
+/**
+ * Jev's answer as a picture: one 100% bar split BUY / SELL / HOLD (or HOLD / CLOSE on a review), each share
+ * labelled, plus chips for model confidence, size and leverage. Falls back to the text when it can't be read.
+ */
+function jevOddsHtml(reasoning) {
+  const text = String(reasoning);
+  const odds = [...text.matchAll(/\b(BUY|SELL|HOLD|CLOSE) (\d+)%/g)].map((m) => ({ k: m[1], v: Number(m[2]) }));
+  if (odds.length < 2) return `<p>${esc(text)}</p>`;
+  const conf = /model confidence ([\d.]+)/.exec(text)?.[1];
+  const size = /suggested size (\d+)%/.exec(text)?.[1];
+  const lev = /leverage (\d+)x/.exec(text)?.[1];
+  const top = odds.reduce((a, b) => (b.v > a.v ? b : a));
+  const total = odds.reduce((a, o) => a + o.v, 0) || 1;
+  const seg = odds.map((o) => `<i class="odd-${o.k.toLowerCase()}${o === top ? ' top' : ''}" style="flex:${Math.max(o.v, 0.0001) / total}" title="${o.k} ${o.v}%"></i>`).join('');
+  const legend = odds.map((o) => `<span class="odd-key${o === top ? ' top' : ''}"><i class="odd-${o.k.toLowerCase()}"></i>${o.k} <b>${o.v}%</b></span>`).join('');
+  const chips = [
+    conf !== undefined ? `<span class="chip">Model conf ${confBadge(Number(conf))}</span>` : '',
+    size !== undefined ? `<span class="chip">Size <b>${size}%</b></span>` : '',
+    lev !== undefined ? `<span class="chip">Leverage <b>${lev}x</b></span>` : '',
+  ].join('');
+  return `<div class="odds-viz" title="${esc(text)}"><div class="odds-bar" role="img" aria-label="${esc(odds.map((o) => `${o.k} ${o.v}%`).join(', '))}">${seg}</div>
+    <div class="odds-legend">${legend}</div>${chips ? `<div class="odds-chips">${chips}</div>` : ''}</div>`;
+}
