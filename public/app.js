@@ -494,7 +494,7 @@ async function renderJevReason() {
   box.className = `decision ${esc(d.action || '')}`;
   box.innerHTML = `<div class="decision-head"><span>Jev · <b>${esc(chartSymbol)}</b> <span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span></span>
     <span class="num">${d.confidence !== undefined ? `${confBadge(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
-    ${d.reasoning ? `<p>${esc(d.reasoning)}</p>` : ''}
+    ${d.reasoning ? jevOddsHtml(d.reasoning) : ''}
     <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}</div>
     ${nextReviewHtml()}`;
 }
