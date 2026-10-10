@@ -227,13 +227,28 @@ export async function chatAnswer({ messages, context, apiKey, fetchImpl = fetch,
   const history = (messages || []).filter((m) => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
     .slice(-12).map((m) => ({ role: m.role, content: m.content.slice(0, 2000) }));
   if (!history.length || history.at(-1).role !== 'user') throw new Error('Ask a question');
+  // Free models are often busy (429) or "thinking" models that spend the whole budget reasoning and return no
+  // text: try the router, then a few specific free models, until one gives an answer.
+  const tries = [llm];
+  if (llm === 'openrouter/free') tries.push(...(await listFreeModels(fetchImpl).catch(() => [])).filter((m) => m !== llm).slice(0, 4));
+  let lastErr = null;
+  for (const model of tries) {
+    try {
+      return await chatOnce({ model, history, context, apiKey, fetchImpl });
+    } catch (err) { lastErr = err; }
+  }
+  throw lastErr || new Error('No model answered');
+}
+
+async function chatOnce({ model, history, context, apiKey, fetchImpl }) {
   const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'HTTP-Referer': 'https://github.com/aliuppal/trading-bot', 'X-Title': 'CryptoQuant Pro' },
     body: JSON.stringify({
-      model: llm,
+      model,
       temperature: 0.3,
-      max_tokens: 700,
+      max_tokens: 2500, // room for reasoning models to think AND answer
+      reasoning: { effort: 'low', exclude: true },
       messages: [
         { role: 'system', content: 'You are the assistant inside CryptoQuant Pro, an automated crypto futures trading bot (Binance demo account). '
           + 'Answer the user\'s questions about the bot, its strategy models, settings, open trades, results and decisions, using ONLY the live data below. '
@@ -248,8 +263,8 @@ export async function chatAnswer({ messages, context, apiKey, fetchImpl = fetch,
   const data = await res.json();
   if (data.error) throw new Error(`chat: ${data.error.message || JSON.stringify(data.error)}`);
   const reply = String(data?.choices?.[0]?.message?.content || '').trim();
-  if (!reply) throw new Error('Empty answer');
-  return { reply, model: data.model || llm, cost: data.usage?.cost };
+  if (!reply) throw new Error(`Empty answer from ${data.model || model}`);
+  return { reply, model: data.model || model, cost: data.usage?.cost };
 }
 
 async function openRouterChat(prompt, model, apiKey, fetchImpl) {

@@ -435,3 +435,12 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .chat-form textarea { flex: 1; resize: none; min-height: 38px; max-height: 120px; }
 .chat-form .btn { width: auto; }
 @media (max-width: 560px) { .chat-panel { right: 16px; bottom: 84px; } .chat-fab { right: 16px; bottom: 16px; } }
+
+/* chat assistant: robot icon */
+.chat-fab { background: radial-gradient(circle at 30% 25%, #22D3EE, #0E7490 70%); }
+.chat-fab svg { width: 28px; height: 28px; stroke-width: 1.7; }
+.chat-fab svg .dot, .chat-avatar svg .dot { fill: currentColor; stroke: none; }
+.chat-head { justify-content: flex-start; }
+.chat-head .chat-actions { margin-left: auto; }
+.chat-avatar { width: 34px; height: 34px; flex: none; border-radius: 10px; display: grid; place-items: center; color: #22D3EE; background: rgba(6, 182, 212, .14); border: 1px solid rgba(6, 182, 212, .35); }
+.chat-avatar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
