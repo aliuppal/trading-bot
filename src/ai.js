@@ -587,12 +587,11 @@ export async function decide(context, ai, fetchImpl = fetch) {
       const { model, cost, ...d } = await askJev(context, ai, fetchImpl);
       return { ...d, source: `jev:${model}`, cost };
     } catch (err) {
-      errors.push(err.message);
-      if (err.status === 401 || err.status === 402) {
-        return { ...ruleBasedDecision(context.indicators), source: 'rules (Jev error)', error: errors.join(' | ') };
-      }
-      // Same OpenRouter key: fall back to the free chat models before the rules.
-      ai = { ...ai, provider: 'openrouter', model: 'auto' };
+      // No trade without Jev: if Jev cannot answer (no credits, bad key, outage) the bot holds,
+      // it never falls back to rules or other models to open or close trades.
+      const why = err.status === 402 ? 'OpenRouter credits used up (add credits at openrouter.ai/settings/credits)'
+        : err.status === 401 ? 'OpenRouter key rejected' : err.message;
+      return { action: 'HOLD', confidence: 0, sizePct: 0, leverage: 1, reasoning: `Jev unavailable: ${why}. No trade until Jev answers again.`, source: 'jev (unavailable)', error: why };
     }
   }
   try {

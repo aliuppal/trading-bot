@@ -141,7 +141,7 @@ app.post('/api/bot/run', wrap(async (req, res) => {
 // JEV overview: Jev's BUY / SELL / HOLD odds and model confidence for every symbol, in parallel. Read-only, no trades.
 app.get('/api/jev/overview', wrap(async (req, res) => {
   await Promise.all(bots.slice(1).map((b) => b.load()));
-  res.json(await Promise.all(bots.map((b) => b.jevView().catch((e) => ({ symbol: b.symbol, error: e.message })))));
+  res.json(await Promise.all(bots.map((b) => b.jevView().catch((e) => ({ symbol: b.symbol, error: /HTTP 402/.test(e.message) ? 'OpenRouter credits used up: add credits at openrouter.ai/settings/credits' : /HTTP 401/.test(e.message) ? 'OpenRouter key rejected' : e.message.slice(0, 160) })))));
 }));
 // Daily suggestions for the selected model: list, approve (applies the change), ignore, generate now
 app.get('/api/suggestions', wrap(async (req, res) => res.json(await bot.suggestions())));

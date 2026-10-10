@@ -177,7 +177,7 @@ test('decide uses Jev decisions endpoint', async () => {
   assert.match(d.reasoning, /BUY 81%/);
 });
 
-test('Jev failure falls back to free OpenRouter chat models', async () => {
+test('Jev failure: HOLD, no fallback to other models (no trade without Jev)', async () => {
   resetFreeModelCache();
   const fetchImpl = async (url, opts = {}) => {
     if (url.includes('/alpha/decisions')) return json({ error: { message: 'busy' } }, 503);
@@ -185,16 +185,23 @@ test('Jev failure falls back to free OpenRouter chat models', async () => {
     return chat({ action: 'HOLD', confidence: 0.5, size_pct: 0, reasoning: 'r' }, JSON.parse(opts.body).model);
   };
   const d = await decide(ctx, { provider: 'jev', apiKey: 'k', model: 'typesafe/jev-1.13' }, fetchImpl);
-  assert.equal(d.source, 'openrouter:vendor/big:free');
+  assert.equal(d.action, 'HOLD');
+  assert.equal(d.confidence, 0);
+  assert.equal(d.source, 'jev (unavailable)');
   assert.match(d.error, /Jev HTTP 503/);
 });
 
-test('Jev bad key goes straight to rules', async () => {
+test('Jev out of credits / bad key: HOLD, never rule-based trades', async () => {
   let calls = 0;
   const fetchImpl = async () => { calls++; return json({ error: { message: 'no auth' } }, 401); };
   const d = await decide(ctx, { provider: 'jev', apiKey: 'bad', model: 'typesafe/jev-1.13' }, fetchImpl);
   assert.equal(calls, 1);
-  assert.equal(d.source, 'rules (Jev error)');
+  assert.equal(d.action, 'HOLD');
+  assert.equal(d.source, 'jev (unavailable)');
+  const fetch402 = async () => json({ error: { message: 'Insufficient credits' } }, 402);
+  const d2 = await decide(ctx, { provider: 'jev', apiKey: 'k', model: 'typesafe/jev-1.13' }, fetch402);
+  assert.equal(d2.action, 'HOLD');
+  assert.match(d2.error, /credits used up/);
 });
 
 test('buildJevState carries the IFVG setup, 1:1 R:R and trades today', () => {
