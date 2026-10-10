@@ -1,4 +1,4 @@
-import { decide, askJev } from './ai.js';
+import { decide, askJev, researchSuggestions } from './ai.js';
 import { summarize } from './indicators.js';
 import { bracketFor, closedCandles } from './ifvg.js';
 import { scanModel, MODELS, MODEL_RULES } from './models.js';
@@ -930,6 +930,23 @@ export class TradingBot {
       // against the 4h bias (information)
       const against = T.filter((t) => t.ifvg?.withBias === false);
       if (against.length >= 2 && R(against) < 0) add('Losses against the 4h bias', `${against.length} trades against the 4h bias, net ${R(against).toFixed(2)}R. No setting for this yet: information only.`, null);
+    }
+    // Web research (OpenRouter model with web search): sourced ideas for this model, given the day's results
+    if (this.ai.apiKey && this.ai.provider !== 'gemini') {
+      const by = (f) => { const a = T.filter(f); return `${a.length} trades, ${W(a)} wins, ${R(a).toFixed(2)}R`; };
+      const stats = T.length
+        ? `${day}: ${by(() => true)}, P&L $${P(T).toFixed(2)}; swing ${by((t) => t.category !== 'scalp')}; scalp ${by((t) => t.category === 'scalp')}; `
+          + `long ${by((t) => t.side !== 'short')}; short ${by((t) => t.side === 'short')}; stopped out ${by((t) => t.exitReason === 'stop')}; `
+          + `closed early by Jev ${by((t) => ['review', 'signal'].includes(t.exitReason))}; average fees ${(T.reduce((x, t) => x + (t.fees || 0), 0) / T.length).toFixed(2)} $ per trade on ${s.riskPerTradeUsd ?? 50} $ risk`
+        : `${day}: no closed trades yet`;
+      try {
+        const web = await researchSuggestions({ modelName: MODELS[model]?.name || model, rules: MODEL_RULES[model] || '', stats, settings: s, apiKey: this.ai.apiKey, fetchImpl: this.fetch });
+        for (const w of web) {
+          out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: w.title, detail: w.detail, patch: w.patch, sources: w.sources, origin: `web research (${w.model})`, status: w.patch ? 'pending' : 'info', createdAt: new Date(this.now()).toISOString() });
+        }
+      } catch (err) {
+        out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: 'Web research unavailable', detail: err.message.slice(0, 200), patch: null, origin: 'web research', status: 'info', createdAt: new Date(this.now()).toISOString() });
+      }
     }
     const list = await this.suggestions();
     const kept = list.filter((x) => !(x.day === day && x.model === model && x.status !== 'approved' && x.status !== 'ignored'));

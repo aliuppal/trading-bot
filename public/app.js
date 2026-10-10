@@ -781,7 +781,7 @@ async function loadSuggestions() {
     $('suggestCount').textContent = pending ? ` ${pending}` : '';
     $('suggestions').querySelector('tbody').innerHTML = list.map((x) => `<tr>
       <td class="t">${esc(x.day)}</td><td><span class="pill">${esc(modelName(x.model))}</span></td>
-      <td><b>${esc(x.title)}</b></td><td class="reason">${esc(x.detail)}</td><td class="src">${esc(patchText(x.patch))}</td>
+      <td><b>${esc(x.title)}</b>${x.origin ? `<div class="src">${esc(x.origin)}</div>` : ''}</td><td class="reason">${esc(x.detail)}${(x.sources || []).map((u, i) => ` <a href="${esc(u)}" target="_blank" rel="noopener noreferrer" class="src-link">source ${i + 1}</a>`).join('')}</td><td class="src">${esc(patchText(x.patch))}</td>
       <td>${x.status === 'pending' ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${esc(x.id)}">Approve</button> <button type="button" class="btn btn-ghost btn-sm" data-ignore="${esc(x.id)}">Ignore</button>` : `<span class="pill ${x.status === 'approved' ? 'WIN' : ''}">${esc(x.status.toUpperCase())}</span>`}</td></tr>`).join('')
       || '<tr><td colspan="6" class="empty"><b>No suggestions yet</b>They appear after the first UTC day closes, or click "Analyze today so far".</td></tr>';
   } catch (e) {

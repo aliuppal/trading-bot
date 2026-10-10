@@ -210,3 +210,23 @@ test('buildJevState carries the IFVG setup, 1:1 R:R and trades today', () => {
   assert.equal(st.risk_reward, '1:1');
   assert.equal(st.trades_today, 7);
 });
+
+test('web research suggestions: sources kept, only known settings with valid values', async () => {
+  const { researchSuggestions, cleanPatch } = await import('../src/ai.js');
+  assert.deepEqual(cleanPatch({ minStopPct: 0.3, hack: 1, stopMode: 'nope', requireDisplacement: 'true' }), { minStopPct: 0.3, requireDisplacement: true });
+  assert.equal(cleanPatch({ minStopPct: 50 }), null, 'out of range');
+  let body;
+  const fetchImpl = async (url, opts) => {
+    body = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ model: 'openai/gpt-4o-mini', choices: [{ message: {
+      content: '{"suggestions":[{"title":"Trade the London / NY opens","why":"Most IFVG traders filter by session.","change":{"sessionFilter":true},"source_url":"https://example.com/a"},{"title":"Idea","why":"x","change":{"unknown":1}}]}',
+      annotations: [{ type: 'url_citation', url_citation: { url: 'https://example.com/b' } }],
+    } }] }) };
+  };
+  const out = await researchSuggestions({ modelName: 'IFVG', rules: 'r', stats: 's', settings: { minStopPct: 0.15 }, apiKey: 'k', fetchImpl });
+  assert.match(body.model, /:online$/, 'web search model');
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0].patch, { sessionFilter: true });
+  assert.deepEqual(out[0].sources, ['https://example.com/a', 'https://example.com/b']);
+  assert.equal(out[1].patch, null);
+});

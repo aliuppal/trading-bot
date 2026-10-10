@@ -151,6 +151,71 @@ export function resetFreeModelCache() {
   freeModelCache = { at: 0, ids: [] };
 }
 
+/** Settings a suggestion may change, with their allowed values (anything else is dropped). */
+export const SUGGEST_KEYS = {
+  minStopPct: [0.05, 2], riskReward: [0.5, 10], breakevenAtR: [0, 5], minConfidence: [0, 1], maxLeverage: [1, 125],
+  maxSwingPerDay: [0, 50], maxScalpPerDay: [0, 50], maxOpenTrades: [1, 6], ifvgMaxAge: [3, 7], minGapAtr: [0, 3], partialPct: [0, 90],
+  requireDisplacement: 'bool', requireSweep: 'bool', sessionFilter: 'bool',
+  stopMode: ['zone', 'swing'], earlyExit: ['jev', 'displacement'], smt: ['off', 'info', 'require'], targetMode: ['rr', 'liquidity'],
+};
+
+/** Keep only known settings with valid values. Returns null when nothing usable is left. */
+export function cleanPatch(p) {
+  if (!p || typeof p !== 'object') return null;
+  const out = {};
+  for (const [k, v] of Object.entries(p)) {
+    const rule = SUGGEST_KEYS[k];
+    if (!rule) continue;
+    if (rule === 'bool') { if (v === true || v === false || v === 'true' || v === 'false') out[k] = v === true || v === 'true'; }
+    else if (typeof rule[0] === 'string') { if (rule.includes(v)) out[k] = v; }
+    else if (Number.isFinite(Number(v)) && Number(v) >= rule[0] && Number(v) <= rule[1]) out[k] = Number(v);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Web research for the day-end suggestions: an OpenRouter model with web search (SUGGEST_MODEL, default
+ * openai/gpt-4o-mini:online) looks up proven ways to improve the selected strategy given the day's results and
+ * answers with up to 4 suggestions, each with a source link and an optional settings change (only SUGGEST_KEYS).
+ * Returns [{ title, detail, patch, sources }].
+ */
+export async function researchSuggestions({ modelName, rules, stats, settings, apiKey, fetchImpl = fetch, llm = process.env.SUGGEST_MODEL || 'openai/gpt-4o-mini:online' }) {
+  const current = Object.fromEntries(Object.keys(SUGGEST_KEYS).filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
+  const prompt = `You help tune an automated crypto futures day-trading strategy (Binance USD-M, BTC/ETH/BNB/XRP/SOL/DOGE).
+Strategy model: ${modelName}. Rules: ${rules}
+Results of the period: ${stats}
+Current settings: ${JSON.stringify(current)}
+Search the web for well-supported ways traders improve the win rate and expectancy of this kind of setup (entry filters, stop placement, targets, session timing, risk management, fees).
+Reply with JSON only: {"suggestions":[{"title":"short title","why":"what the sources say and why it fits these results (1-2 sentences)","change":{"settingKey":value} or null,"source_url":"https://..."}]}
+At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.stringify(SUGGEST_KEYS)}. Use null when the idea has no matching setting.`;
+  const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'HTTP-Referer': 'https://github.com/aliuppal/trading-bot', 'X-Title': 'CryptoQuant Pro' },
+    body: JSON.stringify({
+      model: llm,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: 'You are a careful trading-strategy researcher. Use web search results, cite them, and reply with a single JSON object and nothing else.' },
+        { role: 'user', content: prompt },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`web research HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  if (data.error) throw new Error(`web research: ${data.error.message || JSON.stringify(data.error)}`);
+  const msg = data?.choices?.[0]?.message || {};
+  const text = String(msg.content || '');
+  const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+  const cited = (msg.annotations || []).map((a) => a?.url_citation?.url).filter(Boolean);
+  return (json.suggestions || []).slice(0, 4).map((x) => ({
+    title: String(x.title || 'Research suggestion').slice(0, 80),
+    detail: String(x.why || '').slice(0, 500),
+    patch: cleanPatch(x.change),
+    sources: [...new Set([x.source_url, ...cited].filter((u) => /^https?:\/\//.test(String(u || ''))))].slice(0, 3),
+    model: data.model || llm,
+  }));
+}
+
 async function openRouterChat(prompt, model, apiKey, fetchImpl) {
   const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
     method: 'POST',

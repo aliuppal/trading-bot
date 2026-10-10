@@ -396,3 +396,5 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .model-rules { margin: 0 0 12px; color: var(--text-2); line-height: 22px; }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 #suggestions .reason { min-width: 260px; white-space: normal; }
+
+#suggestions .src-link { color: #22D3EE; font-size: 12px; white-space: nowrap; }
