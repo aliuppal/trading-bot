@@ -772,15 +772,52 @@ export class TradingBot {
   }
 
   /** What Jev thinks about this symbol right now: BUY / SELL / HOLD odds and model confidence. Read-only. */
+  /** JEV · all symbols pop-up when the Jev model is selected: no pattern scan, Jev's own read of the market. */
+  async jevModelView(s, open) {
+    const candles = closedCandles(await this.market.getCandles(300, 200), 300, this.now());
+    const indicators = summarize(candles);
+    const base = {
+      symbol: this.symbol, price: indicators.price, open: open ? open.side || 'long' : null,
+      setup: 'Jev model: no pattern filter, Jev reads the market every 3 min', note: null,
+    };
+    if (!this.ai.apiKey || this.ai.provider !== 'jev') return { ...base, error: 'Jev key not set' };
+    const liquidity = await liquidityLevels(this.market, this.now()).catch(() => null);
+    const account = await this.broker.getAccount(indicators.price).catch(() => ({ cash: 0, equity: 0 }));
+    const d = await askJev({
+      indicators, account, recentCandles: candles.slice(-24), granularity: 300, ifvg: null, jevOnly: !open, model: 'jev',
+      review: open && { side: open.side || 'long', minutesOpen: Math.round((this.now() - new Date(open.entryTime).getTime()) / 60000), unrealizedR: 0 },
+      riskReward: s.riskReward ?? 1, maxLeverage: this.broker.supportsLeverage ? s.maxLeverage ?? 5 : 1, breakevenAtR: s.breakevenAtR ?? 0,
+      liquidity, targetMode: s.targetMode ?? 'rr', maxTradesPerDay: s.maxTradesPerDay,
+      openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
+    }, this.ai, this.fetch);
+    const all = await this.allTrades();
+    const openAll = all.filter((t) => t.status === 'open').length;
+    const cap = s.maxOpenTrades ?? 2;
+    let botAction;
+    if (open) botAction = d.action === EXIT_ACTION[open.side || 'long'] && d.confidence >= s.minConfidence
+      ? `Jev wants to close the ${open.side}: it closes on the next review` : `managing the open ${open.side} (Jev ${d.action === 'HOLD' ? 'holds' : 'leans against it'})`;
+    else if (d.action === 'HOLD') botAction = 'Jev: no trade now';
+    else if (d.confidence < s.minConfidence) botAction = `Jev ${d.action} below ${s.minConfidence}: no entry`;
+    else if (openAll >= cap) botAction = `${d.action === 'BUY' ? 'LONG' : 'SHORT'} wanted, waiting for a free slot (${openAll}/${cap} open)`;
+    else botAction = `${d.action === 'BUY' ? 'LONG' : 'SHORT'}${d.style ? ` (${d.style.toLowerCase()})` : ''}: the bot opens it at the next 3-min check`;
+    return { ...base, action: d.action, confidence: d.confidence, odds: d.odds, modelConfidence: d.modelConfidence, sizePct: d.sizePct, leverage: d.leverage, botAction };
+  }
+
   async jevView() {
     const s = this.state.settings;
-    const scan = await scanSetups(this.market, s, this.now(), { pairMarket: this.pairMarket });
-    const indicators = summarize(scan.candles);
+    const model = s.model || 'ifvg';
     const open = (await this.trades()).find((t) => t.status === 'open');
+    if (model === 'jev') return this.jevModelView(s, open);
+    // the selected model's own scan (IFVG, ICT 2022, Unicorn, AMD, Forever)
+    const scan = model === 'ifvg'
+      ? await scanSetups(this.market, s, this.now(), { pairMarket: this.pairMarket })
+      : await scanModel(model, this.market, s, this.now(), { pairMarket: this.pairMarket });
+    const indicators = summarize(scan.candles);
     const st = scan.setup;
+    const name = MODELS[model]?.name || model;
     const base = {
       symbol: this.symbol, price: indicators.price, open: open ? open.side || 'long' : null, note: scan.note || null,
-      setup: st ? `${st.category} ${st.granularity / 60}m ${st.direction} IFVG${st.grade ? ` (${st.grade})` : ''}` : null,
+      setup: st ? `${name}: ${st.category} ${st.granularity / 60}m ${st.direction}${model === 'ifvg' ? ' IFVG' : ' setup'}${st.grade ? ` (${st.grade})` : ''}` : null,
     };
     if (!this.ai.apiKey || this.ai.provider !== 'jev') return { ...base, error: 'Jev key not set' };
     const account = await this.broker.getAccount(indicators.price).catch(() => ({ cash: 0, equity: 0 }));
@@ -799,7 +836,7 @@ export class TradingBot {
     if (open) botAction = d.action === EXIT_ACTION[open.side || 'long']
       ? (d.confidence >= s.minConfidence ? `Jev is against the open ${open.side}: closes on the next review / opposite IFVG` : `Jev leans against the open ${open.side} (below ${s.minConfidence})`)
       : `managing the open ${open.side}`;
-    else if (!st) botAction = d.action === 'HOLD' ? 'waiting for a setup' : `no IFVG setup: Jev ${d.action} alone does not open a trade`;
+    else if (!st) botAction = d.action === 'HOLD' ? `waiting for a ${name} setup` : `no ${name} setup: Jev ${d.action} alone does not open a trade`;
     else if (d.action !== ENTRY_ACTION[want]) botAction = `Jev ${d.action} does not match the ${st.direction} setup: no entry`;
     else if (d.confidence < s.minConfidence) botAction = `confidence below ${s.minConfidence}: no entry`;
     else if (openAll >= cap) botAction = `${want.toUpperCase()} aligned, waiting for a free slot (${openAll}/${cap} open)`;
