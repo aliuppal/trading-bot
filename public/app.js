@@ -443,9 +443,8 @@ async function loadStatus() {
     $('meterTrack').innerHTML = (s.settings.swingEnabled === false ? off('SWING') : bar(s.swingToday ?? 0, maxSw, 'SWING'))
       + (s.settings.scalpEnabled === false ? off('SCALP') : bar(s.scalpToday ?? 0, maxSc, 'SCALP'));
     const ss = s.scanStats;
-    $('scanStats').innerHTML = ss
-      ? `<b>Scans today ${ss.scans}</b> · no IFVG ${ss.noIfvg || 0} · IFVG but no FVG tap ${ss.noTap || 0} · waiting ${ss.waiting || 0} · in trade ${ss.inTrade || 0}${ss.limit ? ` · limit ${ss.limit}` : ''} · <b>sent to Jev ${ss.askedJev || 0}</b> · <b>taken ${ss.taken || 0}</b>`
-      : 'Scans today: counting starts with the next scan';
+    $('scanStats').innerHTML = ss ? scanFunnel(ss, s.model) : 'Scans today: counting starts with the next scan';
+    $('scanStats').title = ss ? `no setup ${ss.noIfvg || 0} · no FVG tap / sweep ${ss.noTap || 0} · waiting ${ss.waiting || 0} · in trade ${ss.inTrade || 0} · limit ${ss.limit || 0} · already asked ${ss.seen || 0}` : '';
     // only symbols with an open trade (what the bot is managing right now)
     const openSyms = new Set((s.openTrades || (s.openTrade ? [s.openTrade] : [])).map(symOf));
     $('meterSplit').innerHTML = (s.symbols || []).filter((x) => openSyms.has(x.symbol)).map((x) => `<div class="sym-scan"><b>${esc(x.symbol)}</b> ${esc(x.lastScan || 'open trade')}</div>`).join('');
@@ -494,7 +493,7 @@ async function renderJevReason() {
   const lbl = decisionLabel(d);
   box.className = `decision ${esc(d.action || '')}`;
   box.innerHTML = `<div class="decision-head"><span>Jev · <b>${esc(chartSymbol)}</b> <span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span></span>
-    <span class="num">${d.confidence !== undefined ? `conf ${esc(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
+    <span class="num">${d.confidence !== undefined ? `${confBadge(d.confidence)} · ` : ''}${fmtTime(d.time)}</span></div>
     ${d.reasoning ? `<p>${esc(d.reasoning)}</p>` : ''}
     <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}</div>
     ${nextReviewHtml()}`;
@@ -516,7 +515,7 @@ async function loadDecisions() {
     $('decisions').querySelector('tbody').innerHTML = decisions.map((d) => `<tr>
       <td class="t">${fmtTime(d.time)}</td><td class="r">${d.symbol ? `<span class="src">${esc(d.symbol)}</span> ` : ''}${px(d.price)}</td>
       <td><span class="pill ${esc(labelClass(decisionLabel(d)))}">${esc(decisionLabel(d))}</span></td>
-      <td class="r">${d.confidence ?? '—'}</td>
+      <td class="r">${d.confidence !== undefined && d.confidence !== null ? confBadge(d.confidence) : '—'}</td>
       <td>${d.executed ? '<span class="ok">✓</span> ' : ''}${esc(d.note || '')}</td>
       <td class="reason">${esc(d.reasoning || '')}</td>
       <td class="src">${esc(d.source || '')}</td></tr>`).join('')
@@ -697,6 +696,7 @@ function renderPnl() {
       <td><div class="pnl-cell"><div class="bar"><i class="${g.total >= 0 ? 'pos' : 'neg'}" style="width:${(Math.abs(g.total) / max) * 50}%"></i></div>${pnlSpan(g.total)}</div></td>
     </tr>`).join('')
     || '<tr><td colspan="8" class="empty"><b>No closed trades yet</b>P&amp;L appears here once a trade hits its target or stop.</td></tr>';
+  renderEquity();
 }
 
 $('pnlPeriod').onclick = (e) => {
@@ -792,7 +792,7 @@ async function loadSuggestions() {
     $('suggestions').querySelector('tbody').innerHTML = list.map((x) => `<tr>
       <td class="t">${esc(x.day)}</td><td><span class="pill">${esc(modelName(x.model))}</span></td>
       <td><b>${esc(x.title)}</b>${x.origin ? `<div class="src">${esc(x.origin)}</div>` : ''}</td><td class="reason">${esc(x.detail)}${(x.sources || []).map((u, i) => ` <a href="${esc(u)}" target="_blank" rel="noopener noreferrer" class="src-link">source ${i + 1}</a>`).join('')}</td><td class="src">${esc(patchText(x.patch))}</td>
-      <td>${x.status === 'pending' ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${esc(x.id)}">Approve</button> <button type="button" class="btn btn-ghost btn-sm" data-ignore="${esc(x.id)}">Ignore</button>` : `<span class="pill ${x.status === 'approved' ? 'WIN' : ''}">${esc(x.status.toUpperCase())}</span>`}</td></tr>`).join('')
+      <td>${x.status === 'pending' ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${esc(x.id)}">Enable now</button> <button type="button" class="btn btn-ghost btn-sm" data-ignore="${esc(x.id)}">Ignore</button>` : `<span class="pill ${x.status === 'approved' ? 'WIN' : ''}">${esc(x.status.toUpperCase())}</span>`}</td></tr>`).join('')
       || '<tr><td colspan="6" class="empty"><b>No suggestions yet</b>They appear after the first UTC day closes, or click "Analyze today so far".</td></tr>';
   } catch (e) {
     $('suggestions').querySelector('tbody').innerHTML = `<tr><td colspan="6" class="empty"><b>Couldn't load suggestions</b>${esc(e.message)}</td></tr>`;
@@ -804,7 +804,7 @@ $('suggestions').onclick = (e) => {
   const approve = Boolean(b.dataset.approve);
   withBtn(b, async () => {
     await api(`/api/suggestions/${encodeURIComponent(b.dataset.approve || b.dataset.ignore)}/${approve ? 'approve' : 'ignore'}`, { method: 'POST' });
-    toast(approve ? 'Applied to the model' : 'Ignored (kept in history)');
+    toast(approve ? 'Enabled for this model' : 'Ignored (kept in history)');
     settingsLoaded = false;
     await refreshAll();
   });
@@ -880,7 +880,7 @@ function renderJevOverview(rows) {
       <td class="r">${px(r.price)}</td>
       <td><span class="pill ${esc(r.action || '')}">${esc(r.action || '—')}</span></td>
       ${bar('BUY', 'buy')}${bar('SELL', 'sell')}${bar('HOLD', 'hold')}
-      <td class="r">${r.modelConfidence !== null && r.modelConfidence !== undefined ? Number(r.modelConfidence).toFixed(2) : '—'}</td>
+      <td class="r">${r.modelConfidence !== null && r.modelConfidence !== undefined ? confBadge(r.modelConfidence) : '—'}</td>
       <td class="jev-bot">${esc(r.botAction || '')}</td>
       <td class="jev-setup">${esc(r.setup || r.note || 'no setup')}</td></tr>`;
   }).join('') + '</tbody></table></div>';
@@ -923,10 +923,16 @@ $('settingsForm').onsubmit = (e) => {
   });
 };
 $('buyBtn').onclick = (e) => withBtn(e.target, async () => {
+  const amt = Number($('buyAmount').value);
+  if (!(amt > 0)) throw new Error('Enter the USD amount to buy');
+  if (!confirm(`Place a manual BUY of $${amt.toLocaleString()} at market now? This is outside the bot's strategy.`)) return;
   await api('/api/order', { method: 'POST', body: { side: 'buy', amount: $('buyAmount').value } });
   toast('Buy order placed'); $('buyAmount').value = ''; refreshAll();
 });
 $('sellBtn').onclick = (e) => withBtn(e.target, async () => {
+  const qty = Number($('sellAmount').value);
+  if (!(qty > 0)) throw new Error('Enter the quantity to sell');
+  if (!confirm(`Place a manual SELL of ${qty} at market now? This is outside the bot's strategy.`)) return;
   await api('/api/order', { method: 'POST', body: { side: 'sell', amount: $('sellAmount').value } });
   toast('Sell order placed'); $('sellAmount').value = ''; refreshAll();
 });
@@ -998,3 +1004,84 @@ $('chatChips').onclick = (e) => { const b = e.target.closest('button'); if (b) s
 $('chatForm').onsubmit = (e) => { e.preventDefault(); sendChat($('chatInput').value); };
 $('chatInput').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat($('chatInput').value); } };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('chatPanel').hidden) toggleChat(false); });
+
+
+/* ---------------- scan funnel, confidence badges, equity curve ---------------- */
+
+/** Today's scans as a funnel: scans -> setups found -> sent to Jev -> taken (details in the tooltip). */
+function scanFunnel(ss, model) {
+  const scans = ss.scans || 0;
+  const setups = (ss.askedJev || 0) + (ss.seen || 0) + (ss.limit || 0) + (ss.waiting || 0);
+  const stages = model === 'jev'
+    ? [['Scans', scans], ['Asked Jev', ss.askedJev || 0], ['Taken', ss.taken || 0]]
+    : [['Scans', scans], ['Setups', Math.max(setups, ss.askedJev || 0)], ['Sent to Jev', ss.askedJev || 0], ['Taken', ss.taken || 0]];
+  const w = (n) => (scans ? Math.max(4, Math.round((Math.log10(n + 1) / Math.log10(scans + 1)) * 100)) : 0);
+  return '<div class="funnel">' + stages.map(([label, n], i) => `<div class="funnel-row"><span>${label}</span><div class="funnel-track"><i class="s${i}" style="width:${w(n)}%"></i></div><b>${n.toLocaleString()}</b></div>`).join('') + '</div>';
+}
+
+/** Jev confidence as a colour-coded badge: red < 0.5, amber 0.5-0.7, green >= 0.7 (the number is always shown). */
+function confBadge(c) {
+  const v = Number(c);
+  if (!Number.isFinite(v)) return '—';
+  const cls = v >= 0.7 ? 'hi' : v >= 0.5 ? 'mid' : 'lo';
+  return `<span class="conf ${cls}" title="Jev confidence ${v.toFixed(2)}"><i style="width:${Math.round(Math.min(1, Math.max(0, v)) * 100)}%"></i><em>${v.toFixed(2)}</em></span>`;
+}
+
+let eqRange = 'all';
+/** Step line of cumulative net P&L (closed trades, by exit time) with a zero line and hover read-out. */
+function renderEquity() {
+  const box = $('equityPlot');
+  if (!box) return;
+  const W = Math.max(320, box.clientWidth || 640), H = 220, P = { l: 64, r: 14, t: 12, b: 26 };
+  const closed = trades.filter((t) => t.status !== 'open' && t.exitTime && Number.isFinite(Number(t.pnl)))
+    .sort((a, b) => Date.parse(a.exitTime) - Date.parse(b.exitTime));
+  const span = { day: 864e5, week: 7 * 864e5, month: 30 * 864e5 }[eqRange];
+  const t0 = span ? Date.now() - span : 0;
+  let cum = 0, base = 0;
+  const pts = [];
+  for (const t of closed) {
+    cum += Number(t.pnl);
+    if (Date.parse(t.exitTime) < t0) { base = cum; continue; }
+    pts.push({ x: Date.parse(t.exitTime), y: cum, t });
+  }
+  if (!pts.length) { box.innerHTML = '<div class="equity-empty">No closed trades in this range</div>'; return; }
+  const all = [{ x: span ? t0 : pts[0].x - 60000, y: base }, ...pts];
+  const x0 = all[0].x, x1 = Math.max(all.at(-1).x, x0 + 60000);
+  const lo = Math.min(0, ...all.map((p) => p.y)), hi = Math.max(0, ...all.map((p) => p.y));
+  const pad = (hi - lo) * 0.08 || 1;
+  const X = (x) => P.l + ((x - x0) / (x1 - x0)) * (W - P.l - P.r);
+  const Y = (y) => P.t + (1 - (y - (lo - pad)) / (hi + pad - (lo - pad))) * (H - P.t - P.b);
+  let d = `M${X(all[0].x).toFixed(1)} ${Y(all[0].y).toFixed(1)}`;
+  for (const p of pts) d += ` H${X(p.x).toFixed(1)} V${Y(p.y).toFixed(1)}`;
+  const grid = [0, 1, 2, 3].map((k) => lo - pad + ((hi + pad - (lo - pad)) * k) / 3);
+  const last = pts.at(-1);
+  const fmtD = (x) => new Date(x).toLocaleString([], span && span <= 864e5 ? { hour: '2-digit', minute: '2-digit' } : { month: 'short', day: 'numeric' });
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+    ${grid.map((g) => `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(g).toFixed(1)}" y2="${Y(g).toFixed(1)}" class="eq-grid"/><text x="${P.l - 8}" y="${(Y(g) + 4).toFixed(1)}" class="eq-axis" text-anchor="end">${signedUsd(Math.round(g))}</text>`).join('')}
+    <line x1="${P.l}" x2="${W - P.r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" class="eq-zero"/>
+    <text x="${P.l}" y="${H - 6}" class="eq-axis">${fmtD(x0)}</text><text x="${W - P.r}" y="${H - 6}" class="eq-axis" text-anchor="end">${fmtD(x1)}</text>
+    <path d="${d}" class="eq-line"/>
+    <circle cx="${X(last.x).toFixed(1)}" cy="${Y(last.y).toFixed(1)}" r="4" class="eq-dot ${last.y >= 0 ? 'up' : 'down'}"/>
+    <line class="eq-cross" id="eqCross" y1="${P.t}" y2="${H - P.b}" x1="0" x2="0" visibility="hidden"/>
+    <rect x="${P.l}" y="${P.t}" width="${W - P.l - P.r}" height="${H - P.t - P.b}" fill="transparent" id="eqHit"/>
+  </svg><div class="eq-tip" id="eqTip" hidden></div>`;
+  const hit = $('eqHit'), tip = $('eqTip'), cross = $('eqCross');
+  hit.onmousemove = (e) => {
+    const r = hit.getBoundingClientRect();
+    const mx = x0 + ((e.clientX - r.left) / r.width) * (x1 - x0);
+    const p = pts.reduce((a, b) => (Math.abs(b.x - mx) < Math.abs(a.x - mx) ? b : a));
+    cross.setAttribute('x1', X(p.x)); cross.setAttribute('x2', X(p.x)); cross.setAttribute('visibility', 'visible');
+    tip.hidden = false;
+    tip.innerHTML = `<b class="${p.y >= 0 ? 'up' : 'down'}">${signedUsd(p.y)}</b><span>${fmtTime(p.x)}</span><span>${esc(symOf(p.t))} ${esc(p.t.side)} ${signedUsd(p.t.pnl)}</span>`;
+    tip.style.left = `${Math.min(X(p.x) + 10, W - 170)}px`;
+  };
+  hit.onmouseleave = () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); };
+}
+$('eqRange').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  eqRange = b.dataset.r;
+  document.querySelectorAll('#eqRange button').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-selected', String(x === b)); });
+  renderEquity();
+};
+window.addEventListener('resize', () => renderEquity());

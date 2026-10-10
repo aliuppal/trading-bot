@@ -652,3 +652,16 @@ test('daily suggestions for the selected model; approve applies, ignore keeps hi
   assert.equal(after.find((x) => x.id === disp.id).status, 'ignored');
   assert.notEqual(bot.state.settings.requireDisplacement, true, "ignored: not applied");
 });
+
+test('optimization: a weak session gets a plain-English Session Filter suggestion', async () => {
+  const kv = new MemKV();
+  const day = new Date(NOW - 86400000).toISOString().slice(0, 10);
+  const mk = (i, hour, status) => ({ id: `T${i}`, status, category: 'swing', model: 'ifvg', entryTime: `${day}T${String(hour).padStart(2, '0')}:10:00Z`, exitTime: `${day}T${String(hour).padStart(2, '0')}:40:00Z`, exitReason: status === 'win' ? 'target' : 'stop', r: status === 'win' ? 1 : -1, pnl: status === 'win' ? 50 : -50 });
+  await kv.set('trades', [mk(1, 2, 'loss'), mk(2, 3, 'loss'), mk(3, 4, 'loss'), mk(4, 8, 'win'), mk(5, 9, 'win'), mk(6, 13, 'win'), mk(7, 14, 'win')]);
+  const { bot } = setup({ kv });
+  const list = await bot.generateSuggestions(day);
+  const s = list.find((x) => x.title === 'Weak Asian session');
+  assert.ok(s, 'session suggestion');
+  assert.match(s.detail, /win rate drops to 0% during Asian hours/);
+  assert.deepEqual(s.patch, { sessionFilter: true });
+});

@@ -102,7 +102,7 @@
             <button type="button" role="tab" data-tab="decisions">AI decisions</button>
             <button type="button" role="tab" data-tab="orders">Orders</button>
           <button type="button" role="tab" data-tab="pnl">P&amp;L</button>
-          <button type="button" role="tab" data-tab="suggest">Suggestions<span class="count num" id="suggestCount"></span></button>
+          <button type="button" role="tab" data-tab="suggest">Optimization<span class="count num" id="suggestCount"></span></button>
           </div>
         </div>
   
@@ -126,6 +126,18 @@
 
         <div class="tab-pane" data-pane="pnl" hidden>
           <div class="pnl-summary" id="pnlSummary"></div>
+          <div class="equity">
+            <div class="equity-head">
+              <div><b>Equity curve</b><span class="sub"> · cumulative net P&amp;L of closed trades (after fees)</span></div>
+              <div class="segmented" id="eqRange" role="tablist" aria-label="Equity range">
+                <button type="button" role="tab" data-r="day">Day</button>
+                <button type="button" role="tab" data-r="week">Week</button>
+                <button type="button" role="tab" data-r="month">Month</button>
+                <button type="button" role="tab" data-r="all" class="active" aria-selected="true">All</button>
+              </div>
+            </div>
+            <div class="equity-plot" id="equityPlot" role="img" aria-label="Equity curve"></div>
+          </div>
           <div class="pnl-toolbar">
             <div class="segmented" id="pnlPeriod" role="tablist" aria-label="P&amp;L period">
               <button type="button" role="tab" data-p="day" class="active" aria-selected="true">Day</button>
@@ -142,7 +154,7 @@
 
         <div class="tab-pane" data-pane="suggest" hidden>
           <div class="pnl-toolbar">
-            <span class="sub">At the end of each UTC day the selected model reviews its own trades and suggests changes. Approve to apply a change to that model, Ignore to keep it in history only.</span>
+            <span class="sub">Your bot coach: every day it reads the selected model's trades (and the web) and tells you in plain English what to change. "Enable now" applies the change to that model; "Ignore" keeps it in history only.</span>
             <button type="button" id="suggestNowBtn" class="btn btn-ghost">Analyze today so far</button>
           </div>
           <div class="table-wrap"><table id="suggestions"><thead><tr>

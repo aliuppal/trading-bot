@@ -964,6 +964,16 @@ export class TradingBot {
       const wr = wins / T.length;
       const winR = T.filter((t) => t.status === 'win');
       if (wr >= 0.6 && winR.length && R(winR) / winR.length < 1 && (s.targetMode ?? 'rr') === 'rr') add('Let winners run further', `Win rate ${Math.round(wr * 100)}% but the average win is ${(R(winR) / winR.length).toFixed(2)}R.`, { riskReward: Math.min(5, (s.riskReward ?? 1) + 0.5) });
+      // sessions (UTC): Asia 00-07, London 07-12, New York 12-17, late 17-24
+      const sessionOf = (t) => { const h = new Date(t.entryTime).getUTCHours(); return h < 7 ? 'Asian' : h < 12 ? 'London' : h < 17 ? 'New York' : 'late (after New York)'; };
+      const wrOf = (a) => { const w = W(a), l = a.filter((t) => t.status === 'loss').length; return w + l ? w / (w + l) : null; };
+      const overall = wrOf(T);
+      const bySession = {};
+      for (const t of T) (bySession[sessionOf(t)] ||= []).push(t);
+      const worst = Object.entries(bySession).filter(([, a]) => a.length >= 3).map(([k, a]) => ({ k, a, wr: wrOf(a) })).filter((x) => x.wr !== null).sort((x, y) => x.wr - y.wr)[0];
+      if (worst && overall !== null && worst.wr < overall - 0.15 && !s.sessionFilter) {
+        add(`Weak ${worst.k} session`, `Your win rate drops to ${Math.round(worst.wr * 100)}% during ${worst.k} hours (${worst.a.length} trades, net ${R(worst.a).toFixed(2)}R) against ${Math.round(overall * 100)}% overall. I recommend enabling the Session Filter: only trade the London open (07:00-10:00 UTC) and New York open (12:30-16:00 UTC).`, { sessionFilter: true });
+      }
       // against the 4h bias (information)
       const against = T.filter((t) => t.ifvg?.withBias === false);
       if (against.length >= 2 && R(against) < 0) add('Losses against the 4h bias', `${against.length} trades against the 4h bias, net ${R(against).toFixed(2)}R. No setting for this yet: information only.`, null);
