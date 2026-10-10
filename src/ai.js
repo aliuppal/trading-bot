@@ -221,16 +221,18 @@ At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.strin
 /**
  * Dashboard chat assistant: answers questions about the bot, its settings, trades and the strategies from the
  * live context it is given. Read-only (it explains, it does not change settings or place trades).
- * Model: CHAT_MODEL (default openrouter/free: OpenRouter's free-models router, mostly MiniMax M3). Returns { reply, model, cost }.
+ * Model: CHAT_MODEL (default: free nvidia/nemotron-3-super-120b, then the free router). Returns { reply, model, cost }.
  */
-export async function chatAnswer({ messages, context, apiKey, fetchImpl = fetch, llm = process.env.CHAT_MODEL || 'openrouter/free' }) {
+/** Free chat models, best first (tested on the bot's questions); the free router is the last resort. */
+export const CHAT_FREE_MODELS = ['nvidia/nemotron-3-super-120b-a12b:free', 'openrouter/free'];
+
+export async function chatAnswer({ messages, context, apiKey, fetchImpl = fetch, llm = process.env.CHAT_MODEL || CHAT_FREE_MODELS[0] }) {
   const history = (messages || []).filter((m) => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
     .slice(-12).map((m) => ({ role: m.role, content: m.content.slice(0, 2000) }));
   if (!history.length || history.at(-1).role !== 'user') throw new Error('Ask a question');
   // Free models are often busy (429) or "thinking" models that spend the whole budget reasoning and return no
   // text: try the router, then a few specific free models, until one gives an answer.
-  const tries = [llm];
-  if (llm === 'openrouter/free') tries.push(...(await listFreeModels(fetchImpl).catch(() => [])).filter((m) => m !== llm).slice(0, 4));
+  const tries = [...new Set([llm, ...CHAT_FREE_MODELS])];
   let lastErr = null;
   for (const model of tries) {
     try {
@@ -264,6 +266,8 @@ async function chatOnce({ model, history, context, apiKey, fetchImpl }) {
   if (data.error) throw new Error(`chat: ${data.error.message || JSON.stringify(data.error)}`);
   const reply = String(data?.choices?.[0]?.message?.content || '').trim();
   if (!reply) throw new Error(`Empty answer from ${data.model || model}`);
+  // weak free models sometimes loop ("NowNowNow..."): reject and try the next model
+  if (/(\S{2,12}?)\1{8,}/.test(reply.replace(/\s+/g, ''))) throw new Error(`Garbled answer from ${data.model || model}`);
   return { reply, model: data.model || model, cost: data.usage?.cost };
 }
 

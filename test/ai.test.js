@@ -238,8 +238,22 @@ test('chat assistant: live data in the system prompt, last user question answere
   const fetchImpl = async (url, opts) => { body = JSON.parse(opts.body); return { ok: true, json: async () => ({ model: 'minimax/minimax-m3', choices: [{ message: { content: 'No setup on BTC yet.' } }] }) }; };
   const r = await chatAnswer({ messages: [{ role: 'user', content: 'Why no trade?' }], context: { model: 'ifvg', openTrades: [] }, apiKey: 'k', fetchImpl });
   assert.equal(r.reply, 'No setup on BTC yet.');
-  assert.equal(body.model, 'openrouter/free');
+  assert.equal(body.model, 'nvidia/nemotron-3-super-120b-a12b:free');
   assert.match(body.messages[0].content, /LIVE DATA/);
   assert.equal(body.messages.at(-1).content, 'Why no trade?');
   await assert.rejects(chatAnswer({ messages: [], context: {}, apiKey: 'k', fetchImpl }));
+});
+
+test('chat assistant: a looping answer is rejected and the next free model answers', async () => {
+  const { chatAnswer } = await import('../src/ai.js');
+  const used = [];
+  const fetchImpl = async (url, opts) => {
+    const b = JSON.parse(opts.body);
+    used.push(b.model);
+    const content = used.length === 1 ? 'Here' + 'Now'.repeat(30) : 'Two trades today, both losses.';
+    return { ok: true, json: async () => ({ model: b.model, choices: [{ message: { content } }] }) };
+  };
+  const r = await chatAnswer({ messages: [{ role: 'user', content: 'How did today go?' }], context: {}, apiKey: 'k', fetchImpl });
+  assert.equal(r.reply, 'Two trades today, both losses.');
+  assert.equal(used.length, 2);
 });
