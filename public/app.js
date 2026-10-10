@@ -775,8 +775,11 @@ $('modelSelect').onchange = (e) => {
   withBtn(e.target, async () => {
     await api('/api/settings', { method: 'POST', body: { model: m } });
     settingsLoaded = false; // the form shows this model's own settings
+    $('jevOverview').innerHTML = ''; // old model's answers
     toast(`Model: ${modelName(m)}`);
-    await refreshAll();
+    await Promise.all([refreshAll(), loadMarket()]);
+    renderJevReason();
+    if (!$('jevModal').hidden) loadJev();
   });
 };
 

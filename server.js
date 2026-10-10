@@ -167,7 +167,17 @@ app.post('/api/chat', wrap(async (req, res) => {
   };
   res.json(await chatAnswer({ messages: req.body?.messages, context, apiKey: config.ai.apiKey }));
 }));
-app.post('/api/settings', wrap(async (req, res) => res.json(await bot.updateSettings(req.body || {}))));
+app.post('/api/settings', wrap(async (req, res) => {
+  const before = bot.state.settings.model || 'ifvg';
+  const out = await bot.updateSettings(req.body || {});
+  if ((out.model || 'ifvg') !== before) {
+    // model switched: scan every symbol with the new model right away, so the dashboard shows it at once
+    await Promise.all(bots.slice(1).map((b) => b.load()));
+    for (const b of bots) { b.state.lastRun = null; b.state.lastJevAsk = null; }
+    await tickAll().catch(() => null);
+  }
+  res.json(out);
+}));
 
 // Scheduler hook for serverless hosts (Supabase pg_cron calls it every minute, see supabase/cron.sql).
 const cron = wrap(async (req, res) => {
