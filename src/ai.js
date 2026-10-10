@@ -175,11 +175,11 @@ export function cleanPatch(p) {
 
 /**
  * Web research for the day-end suggestions: an OpenRouter model with web search (SUGGEST_MODEL, default
- * openai/gpt-4o-mini:online) looks up proven ways to improve the selected strategy given the day's results and
+ * openrouter/free = the free-models router, mostly MiniMax M3, plus the web search plugin) looks up proven ways to improve the selected strategy given the day's results and
  * answers with up to 4 suggestions, each with a source link and an optional settings change (only SUGGEST_KEYS).
  * Returns [{ title, detail, patch, sources }].
  */
-export async function researchSuggestions({ modelName, rules, stats, settings, apiKey, fetchImpl = fetch, llm = process.env.SUGGEST_MODEL || 'openai/gpt-4o-mini:online' }) {
+export async function researchSuggestions({ modelName, rules, stats, settings, apiKey, fetchImpl = fetch, llm = process.env.SUGGEST_MODEL || 'openrouter/free' }) {
   const current = Object.fromEntries(Object.keys(SUGGEST_KEYS).filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
   const prompt = `You help tune an automated crypto futures day-trading strategy (Binance USD-M, BTC/ETH/BNB/XRP/SOL/DOGE).
 Strategy model: ${modelName}. Rules: ${rules}
@@ -194,6 +194,8 @@ At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.strin
     body: JSON.stringify({
       model: llm,
       temperature: 0.2,
+      // web search: built into ":online" models, else the web plugin (3 results keep it cheap)
+      ...(!llm.endsWith(':online') && { plugins: [{ id: 'web', max_results: 3 }] }),
       messages: [
         { role: 'system', content: 'You are a careful trading-strategy researcher. Use web search results, cite them, and reply with a single JSON object and nothing else.' },
         { role: 'user', content: prompt },
@@ -219,9 +221,9 @@ At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.strin
 /**
  * Dashboard chat assistant: answers questions about the bot, its settings, trades and the strategies from the
  * live context it is given. Read-only (it explains, it does not change settings or place trades).
- * Model: CHAT_MODEL (default minimax/minimax-m3). Returns { reply, model, cost }.
+ * Model: CHAT_MODEL (default openrouter/free: OpenRouter's free-models router, mostly MiniMax M3). Returns { reply, model, cost }.
  */
-export async function chatAnswer({ messages, context, apiKey, fetchImpl = fetch, llm = process.env.CHAT_MODEL || 'minimax/minimax-m3' }) {
+export async function chatAnswer({ messages, context, apiKey, fetchImpl = fetch, llm = process.env.CHAT_MODEL || 'openrouter/free' }) {
   const history = (messages || []).filter((m) => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string')
     .slice(-12).map((m) => ({ role: m.role, content: m.content.slice(0, 2000) }));
   if (!history.length || history.at(-1).role !== 'user') throw new Error('Ask a question');

@@ -224,7 +224,8 @@ test('web research suggestions: sources kept, only known settings with valid val
     } }] }) };
   };
   const out = await researchSuggestions({ modelName: 'IFVG', rules: 'r', stats: 's', settings: { minStopPct: 0.15 }, apiKey: 'k', fetchImpl });
-  assert.match(body.model, /:online$/, 'web search model');
+  assert.equal(body.model, 'openrouter/free', 'free model router');
+  assert.equal(body.plugins[0].id, 'web', 'web search plugin');
   assert.equal(out.length, 2);
   assert.deepEqual(out[0].patch, { sessionFilter: true });
   assert.deepEqual(out[0].sources, ['https://example.com/a', 'https://example.com/b']);
@@ -237,7 +238,7 @@ test('chat assistant: live data in the system prompt, last user question answere
   const fetchImpl = async (url, opts) => { body = JSON.parse(opts.body); return { ok: true, json: async () => ({ model: 'minimax/minimax-m3', choices: [{ message: { content: 'No setup on BTC yet.' } }] }) }; };
   const r = await chatAnswer({ messages: [{ role: 'user', content: 'Why no trade?' }], context: { model: 'ifvg', openTrades: [] }, apiKey: 'k', fetchImpl });
   assert.equal(r.reply, 'No setup on BTC yet.');
-  assert.equal(body.model, 'minimax/minimax-m3');
+  assert.equal(body.model, 'openrouter/free');
   assert.match(body.messages[0].content, /LIVE DATA/);
   assert.equal(body.messages.at(-1).content, 'Why no trade?');
   await assert.rejects(chatAnswer({ messages: [], context: {}, apiKey: 'k', fetchImpl }));

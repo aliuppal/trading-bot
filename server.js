@@ -163,7 +163,7 @@ app.post('/api/chat', wrap(async (req, res) => {
     openTrades: (st.openTrades || []).map(pick), symbols: bots.map((b) => ({ symbol: b.symbol, lastScan: b.state.lastScan?.note ?? null })),
     liquidity: st.liquidity, recentTrades: trades, recentDecisions: decisions,
     jevReviewMinutes: { scalp: 3, swing5m: 3, swing15m: 30 },
-    costs: 'Jev calls cost about $0.0001 each (about 6-10 per hour); day-end web research about $0.03 per run; typical total about $1.5-2.5 per month',
+    costs: 'Jev calls cost about $0.0001 each (about 6-10 per hour); chat uses the free OpenRouter router (openrouter/free); day-end research uses the free router plus web search (about $0.01 per run); typical total about $1-2 per month',
   };
   res.json(await chatAnswer({ messages: req.body?.messages, context, apiKey: config.ai.apiKey }));
 }));
