@@ -162,6 +162,11 @@ const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 
 const tfName = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 const hhmm = (t) => new Date(t).toISOString().slice(11, 16);
+
+/** Weekend = Saturday 00:00 UTC to Monday 00:00 UTC. */
+export const isWeekend = (t) => [0, 6].includes(new Date(t).getUTCDay());
+/** The Saturday (UTC date) a weekend moment belongs to: one key per weekend. */
+export const weekendKey = (t) => { const d = new Date(t); const back = d.getUTCDay() === 0 ? 1 : 0; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - back)).toISOString().slice(0, 10); };
 // prices for any symbol: 83,291 (BTC) / 3,512.40 (ETH) / 2.3457 (XRP)
 /**
  * HTF (30m / 1h / 2h / 4h) FVG sitting inside the bracket, between entry and target: its near edge
@@ -270,6 +275,8 @@ export class TradingBot {
     const s = this.state;
     return {
       running: s.running,
+      weekendPaused: Boolean(s.weekendPaused),
+      weekendPause: s.settings.weekendPause !== false,
       busy: this.busy,
       lastRun: s.lastRun,
       lastScan: s.lastScan,
@@ -371,7 +378,7 @@ export class TradingBot {
     if (MODELS[patch.model]) s.model = patch.model;
     if (['jev', 'displacement'].includes(patch.earlyExit)) s.earlyExit = patch.earlyExit;
     if (['off', 'info', 'require'].includes(patch.smt)) s.smt = patch.smt;
-    for (const k of ['requireSweep', 'sessionFilter']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
+    for (const k of ['requireSweep', 'sessionFilter', 'weekendPause']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
     for (const k of ['minGapAtr', 'partialPct']) if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Math.max(0, Number(patch[k]));
     s.partialPct = Math.min(90, s.partialPct || 0);
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
@@ -400,6 +407,9 @@ export class TradingBot {
 
   async setRunning(running) {
     this.state.running = running;
+    // a manual switch overrides the weekend pause until the next weekend
+    this.state.weekendPaused = false;
+    if (isWeekend(this.now())) this.state.weekendPausedFor = weekendKey(this.now());
     await this.save();
     if (running) await this.runOnce().catch(() => {});
     return this.status();
@@ -421,8 +431,36 @@ export class TradingBot {
     return this.locked(() => this.tickUnlocked());
   }
 
+  /**
+   * Weekend pause (setting weekendPause, on by default): auto-trading switches itself off on Saturday 00:00 UTC
+   * and back on on Monday 00:00 UTC, but only if it was on. Manual On / Off keeps working at any time; switching
+   * by hand during the weekend is respected until the next weekend. Runs on the primary bot (it owns On / Off).
+   */
+  async weekendGuard() {
+    const s = this.state;
+    if (s.settings.weekendPause === false) return null;
+    const now = this.now();
+    const note = (msg) => this.log({ time: new Date(now).toISOString(), action: 'HOLD', source: 'weekend', executed: false, note: msg }).catch(() => null);
+    if (isWeekend(now)) {
+      const key = weekendKey(now);
+      if (s.running && s.weekendPausedFor !== key) {
+        Object.assign(s, { running: false, weekendPaused: true, weekendPausedFor: key });
+        await this.save();
+        await note('Weekend: auto-trading paused until Monday 00:00 UTC (open trades keep their stop and target)');
+        return 'paused';
+      }
+    } else if (s.weekendPaused) {
+      Object.assign(s, { running: true, weekendPaused: false });
+      await this.save();
+      await note('Weekend over: auto-trading resumed');
+      return 'resumed';
+    }
+    return null;
+  }
+
   async tickUnlocked() {
     await this.load();
+    if (this.primary) await this.weekendGuard();
     const due = !this.state.lastRun
       || this.now() - new Date(this.state.lastRun).getTime() >= this.state.settings.intervalMinutes * 60000 - 5000;
     if (this.state.running && due) return this.runOnceUnlocked();

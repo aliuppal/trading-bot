@@ -665,3 +665,32 @@ test('optimization: a weak session gets a plain-English Session Filter suggestio
   assert.match(s.detail, /win rate drops to 0% during Asian hours/);
   assert.deepEqual(s.patch, { sessionFilter: true });
 });
+
+test('weekend pause: off on Saturday, back on Monday; manual switch is respected', async () => {
+  const { isWeekend } = await import('../src/bot.js');
+  const SAT = Date.UTC(2026, 9, 10, 1, 0), SUN = Date.UTC(2026, 9, 11, 12, 0), MON = Date.UTC(2026, 9, 12, 0, 5), FRI = Date.UTC(2026, 9, 9, 23, 0);
+  assert.equal(isWeekend(SAT), true);
+  assert.equal(isWeekend(MON), false);
+  let t = FRI;
+  const { bot } = setup({ kv: new MemKV(), now: () => t });
+  bot.state.running = true;
+  assert.equal(await bot.weekendGuard(), null, 'Friday: nothing');
+  t = SAT;
+  assert.equal(await bot.weekendGuard(), 'paused');
+  assert.equal(bot.state.running, false);
+  t = SUN;
+  await bot.setRunning(true); // user switches it back on during the weekend
+  assert.equal(await bot.weekendGuard(), null, 'manual On is respected this weekend');
+  assert.equal(bot.state.running, true);
+  await bot.setRunning(false);
+  t = MON;
+  assert.equal(await bot.weekendGuard(), null, 'manually off: stays off on Monday');
+  assert.equal(bot.state.running, false);
+  // next weekend, paused automatically again, resumed on Monday
+  bot.state.running = true;
+  t = SAT + 7 * 864e5;
+  assert.equal(await bot.weekendGuard(), 'paused');
+  t = MON + 7 * 864e5;
+  assert.equal(await bot.weekendGuard(), 'resumed');
+  assert.equal(bot.state.running, true);
+});

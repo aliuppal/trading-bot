@@ -430,7 +430,9 @@ async function loadStatus() {
     $('botDot').className = `dot${s.running ? ' on' : ''}`;
     $('botState').textContent = s.busy ? 'Thinking…' : s.running ? 'Running' : 'Stopped';
     $('autoToggle').setAttribute('aria-checked', String(Boolean(s.running)));
-    $('autoState').textContent = s.running ? 'On' : 'Off';
+    $('autoState').textContent = s.running ? 'On' : s.weekendPaused ? 'Off · weekend' : 'Off';
+    $('autoToggle').title = s.weekendPaused ? 'Paused for the weekend: turns back on Monday 00:00 UTC (you can still switch it on now)'
+      : s.weekendPause ? 'Pauses automatically Saturday 00:00 UTC, resumes Monday 00:00 UTC' : '';
     const scan = s.symbols ? '' : s.lastScan?.note ? ` · ${s.lastScan.note}` : '';
     $('botTimes').textContent = `Last scan ${fmtTime(s.lastRun)}${s.nextRun ? ` · next ${fmtTime(s.nextRun)}` : ''}${scan}`;
 

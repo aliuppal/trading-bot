@@ -65,6 +65,8 @@ export const config = {
     maxLeverage: Math.min(125, Math.max(1, num(process.env.MAX_LEVERAGE, 5))),
     // Strategy model: ifvg (default) | jev | ict2022 | unicorn | amd | forever
     model: process.env.STRATEGY_MODEL || 'ifvg',
+    // auto-trading pauses Saturday 00:00 UTC and resumes Monday 00:00 UTC
+    weekendPause: process.env.WEEKEND_PAUSE !== 'false',
     autoStart: process.env.AUTO_START !== 'false',
   },
   // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).
