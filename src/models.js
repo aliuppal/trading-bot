@@ -16,7 +16,7 @@ import { loadHtfZones, tfLabel, atr14 } from './strategy.js';
 
 export const MODELS = {
   ifvg: { name: 'IFVG', jev: 'assists' },
-  jev: { name: 'JEV only', jev: 'decides' },
+  jev: { name: 'Jev', jev: 'decides' },
   ict2022: { name: 'ICT 2022', jev: 'assists' },
   unicorn: { name: 'Unicorn', jev: 'assists' },
   amd: { name: 'AMD (Power of 3)', jev: 'assists' },
@@ -26,7 +26,7 @@ export const MODELS = {
 /** Short rule text per model, for Jev and the strategy pop-up. */
 export const MODEL_RULES = {
   ifvg: 'IFVG: first tap of an unmitigated HTF FVG (or an ITH/ITL sweep), then an inverse FVG on the entry timeframe within 3-7 candles counted from the first FVG of the series.',
-  jev: 'JEV only: no pattern filter. Jev reads price, structure and liquidity and decides BUY / SELL / HOLD by itself, picks scalp or swing, and manages the trade (reviews every 3 min for scalps, 5 min for swings).',
+  jev: 'Jev: no pattern filter. Jev reads price, structure and liquidity and decides BUY / SELL / HOLD by itself, picks scalp or swing, and manages the trade (reviews every 3 min for scalps, 5 min for swings).',
   ict2022: 'ICT 2022: price sweeps a swing low (longs) / swing high (shorts), then a displacement candle closes through the most recent opposing swing (market structure shift). Entry on the retrace into the FVG of that displacement leg; stop beyond the swept extreme; target the liquidity on the other side.',
   unicorn: 'Unicorn: sweep of a swing, displacement through structure, and an FVG of that leg that overlaps the breaker (the last opposite candle before the move). Entry on the retrace into the breaker + FVG overlap; stop beyond the breaker; invalid on a close through the breaker.',
   amd: 'AMD (Power of 3): the Asia session (00:00-06:00 UTC) range is the accumulation; a sweep of one side of it after 06:00 is the manipulation; a displacement candle closing back through the daily open the other way is the distribution entry. Stop beyond the manipulation extreme, target the far side of the range.',

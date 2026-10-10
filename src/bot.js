@@ -127,7 +127,7 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
 
 /** Minutes between Jev reviews of an open trade: 3 for scalps and 5m swings, 30 for 15m swings. */
 export function reviewMinutes(trade) {
-  if (trade.reviewEvery) return trade.reviewEvery; // JEV only: 3 min scalps, 5 min swings
+  if (trade.reviewEvery) return trade.reviewEvery; // Jev model: 3 min scalps, 5 min swings
   const g = trade.granularity || 900;
   if (trade.category === 'scalp' || g <= 60) return 3; // scalps (1m / 2m / 3m)
   return g <= 300 ? 3 : 30;
@@ -808,7 +808,7 @@ export class TradingBot {
   }
 
   /**
-   * JEV only: no pattern. Every 3 min (per symbol, no open trade) Jev reads price, structure and liquidity and
+   * Jev model: no pattern. Every 3 min (per symbol, no open trade) Jev reads price, structure and liquidity and
    * decides BUY / SELL / HOLD and SCALP / SWING; the stop goes beyond the recent swing (1m for scalps, 5m for swings)
    * and the target on liquidity. Open trades are reviewed every 3 min (scalps) / 5 min (swings) and Jev may close them.
    * Fills entry (the decision log row) and returns the scan outcome class.
@@ -828,12 +828,12 @@ export class TradingBot {
     const lastAsk = this.state.lastJevAsk ? Date.parse(this.state.lastJevAsk) : 0;
     const review = Boolean(open && reviewDue(open, this.now()));
     let reason = null;
-    if (open && !review) reason = `JEV only: managing open trade (next review ${nextReviewLabel(open)})`;
-    else if (!open && this.now() - lastAsk < 3 * 60000 - 5000) reason = `JEV only: next market check ${hhmm(lastAsk + 3 * 60000)} UTC`;
+    if (open && !review) reason = `Jev model: managing open trade (next review ${nextReviewLabel(open)})`;
+    else if (!open && this.now() - lastAsk < 3 * 60000 - 5000) reason = `Jev model: next market check ${hhmm(lastAsk + 3 * 60000)} UTC`;
     else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
-    else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `JEV only: waiting for a free slot (${openAll}/${s.maxOpenTrades ?? 2} open)`;
+    else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `Jev model: waiting for a free slot (${openAll}/${s.maxOpenTrades ?? 2} open)`;
     else if (!open && !swingLeft && !scalpLeft) reason = 'Daily swing and scalp limits reached';
-    this.state.lastScan = { time: entry.time, note: reason || (review ? 'Jev reviewing open trade (JEV only)' : 'Asked Jev (JEV only)') };
+    this.state.lastScan = { time: entry.time, note: reason || (review ? 'Jev reviewing open trade (Jev model)' : 'Asked Jev (Jev model)') };
     if (reason) { Object.assign(entry, { action: 'HOLD', note: reason, executed: false }); return open ? 'inTrade' : 'other'; }
     if (!open) this.state.lastJevAsk = entry.time;
     const account = await this.broker.getAccount(price);
@@ -851,19 +851,19 @@ export class TradingBot {
       entry.tradeId = open.id;
       if (confident && decision.action === EXIT_ACTION[open.side || 'long']) {
         const t = await this.closeTrade(open, price, 'review', candles);
-        Object.assign(entry, { executed: true, label: `CLOSE ${(open.side || 'long').toUpperCase()}`, note: `JEV only: Jev closed the ${open.side || 'long'} · P&L ${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}` });
+        Object.assign(entry, { executed: true, label: `CLOSE ${(open.side || 'long').toUpperCase()}`, note: `Jev model: Jev closed the ${open.side || 'long'} · P&L ${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}` });
       } else {
-        Object.assign(entry, { label: 'HOLD', note: `JEV only: keep ${open.side || 'long'} open (${decision.action}${confident ? '' : ', low confidence'}) · next review ${nextReviewLabel(open)}` });
+        Object.assign(entry, { label: 'HOLD', note: `Jev model: keep ${open.side || 'long'} open (${decision.action}${confident ? '' : ', low confidence'}) · next review ${nextReviewLabel(open)}` });
       }
       return 'inTrade';
     }
-    if (!['BUY', 'SELL'].includes(decision.action)) { entry.note = 'JEV only: HOLD, no trade'; return 'asked'; }
-    if (!confident) { entry.note = `JEV only: ${decision.action} ${decision.confidence} below minimum ${s.minConfidence}`; return 'asked'; }
+    if (!['BUY', 'SELL'].includes(decision.action)) { entry.note = 'Jev model: HOLD, no trade'; return 'asked'; }
+    if (!confident) { entry.note = `Jev model: ${decision.action} ${decision.confidence} below minimum ${s.minConfidence}`; return 'asked'; }
     const side = decision.action === 'BUY' ? 'long' : 'short';
     let style = decision.style === 'SCALP' ? 'scalp' : 'swing';
     if (style === 'scalp' && (!scalpLeft || s.scalpEnabled === false)) style = 'swing';
     if (style === 'swing' && (!swingLeft || s.swingEnabled === false)) style = 'scalp';
-    if ((style === 'scalp' && (!scalpLeft || s.scalpEnabled === false)) || (style === 'swing' && (!swingLeft || s.swingEnabled === false))) { entry.note = 'JEV only: no swing or scalp trades left today'; return 'limit'; }
+    if ((style === 'scalp' && (!scalpLeft || s.scalpEnabled === false)) || (style === 'swing' && (!swingLeft || s.swingEnabled === false))) { entry.note = 'Jev model: no swing or scalp trades left today'; return 'limit'; }
     const g = style === 'scalp' ? 60 : 300;
     const sc = closedCandles(await this.market.getCandles(g, 200), g, this.now());
     const win = sc.slice(-12);
@@ -873,7 +873,7 @@ export class TradingBot {
       top: side === 'long' ? price : extreme, bottom: side === 'long' ? extreme : price, swingStop: extreme,
       id: `jev:${this.symbol}:${entry.time}`, granularity: g, category: style, model: 'jev', grade: 'JEV',
       reviewEvery: style === 'scalp' ? 3 : 5, ageCandles: 0, formedAt: Date.parse(entry.time), invertedAt: Date.parse(entry.time),
-      qualityReasons: [`JEV only: Jev ${decision.action} ${Math.round(decision.confidence * 100)}%, ${style}`],
+      qualityReasons: [`Jev model: Jev ${decision.action} ${Math.round(decision.confidence * 100)}%, ${style}`],
     };
     const res = await this.openTrade({ side, setup, decision, account, price, candles: sc, liquidity, zones: [] });
     entry.note = res.note;
@@ -1000,7 +1000,7 @@ export class TradingBot {
       const swingLeft = tradesToday(before, this.now(), 'swing') < (s.maxSwingPerDay ?? 5);
       const scalpLeft = tradesToday(before, this.now(), 'scalp') < (s.maxScalpPerDay ?? 5);
       const model = s.model || 'ifvg';
-      // JEV only: no pattern filter, Jev decides entries and manages trades by itself
+      // Jev model: no pattern filter, Jev decides entries and manages trades by itself
       if (model === 'jev') {
         scanClass = await this.runJevOnly(entry, s, { swingLeft, scalpLeft });
         if (entry.confidence !== undefined || entry.executed) persist = true;

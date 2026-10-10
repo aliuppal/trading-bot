@@ -441,7 +441,7 @@ const JEV_QUESTIONS = {
   },
 };
 
-/** JEV only: no pattern filter, Jev decides the trade, its style and size from price, structure and liquidity. */
+/** Jev model: no pattern filter, Jev decides the trade, its style and size from price, structure and liquidity. */
 const JEV_ONLY_QUESTIONS = {
   action: {
     type: 'choice',
