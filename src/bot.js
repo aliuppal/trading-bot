@@ -863,6 +863,22 @@ export class TradingBot {
               htfBlock = [{ ...first.z, tooClose: first.r }];
             }
           }
+          // Scalps (HTF FVG tapped -> IFVG on 1m-3m): an opposing 5m / 15m FVG in the way can be the target too
+          // (near edge, or far edge when price is inside it), if it is at least 0.75R away.
+          if (setup.category === 'scalp' && !setup.htfTarget && !htfBlock.length) {
+            const ltf = pathBlockers(scan.zones || [], sd, price, tgt, ['5m', '15m']).map((z) => {
+              const inside = z.bottom < price && z.top > price;
+              const edge = sd === 'short' ? (inside ? z.bottom : z.top) : (inside ? z.top : z.bottom);
+              return { z, inside, edge, r: Math.abs(price - edge) / b0.risk };
+            }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price) && e.r >= 0.75)
+              .sort((x, y) => Math.abs(x.edge - price) - Math.abs(y.edge - price));
+            if (ltf[0]) {
+              const f = ltf[0];
+              tgt = f.edge;
+              setup.htfTarget = { price: f.edge, tf: f.z.tf, type: f.z.type, inside: f.inside };
+              setup.qualityReasons = [...(setup.qualityReasons || []), `scalp target ${f.z.tf} ${f.z.type} FVG ${f.inside ? 'far edge (gap fill)' : 'near edge'} ${fmtPx(f.edge)} (${f.r.toFixed(2)}R)`];
+            }
+          }
           // and no recent long-wick rejection candle (15m and the entry timeframe) between entry and target
           const m15 = await this.market.getCandles(900, 120).catch(() => []);
           const wicks = [...wickBlockers(m15, sd, price, tgt, { lookback: 48 }), ...(scan.granularity !== 900 ? wickBlockers(scan.candles || [], sd, price, tgt, { lookback: 60 }) : [])];

@@ -209,7 +209,7 @@ export const LEVERAGE_LEVELS = [1, 2, 3, 5, 10, 20, 50, 75, 100, 125];
 
 /** The entry models the bot scans, described for Jev. */
 export const ENTRY_MODELS = 'SWING: tap of a 30m/1h/2h/4h FVG, then an IFVG on 15m (preferred) > 5m. '
-  + 'SCALP: tap of a 5m/15m/30m FVG, then an IFVG on 3m (preferred) > 2m > 1m. '
+  + 'SCALP: tap of a 5m/15m/30m FVG, then an IFVG on 3m (preferred) > 2m > 1m; a scalp may target an opposing 5m/15m FVG in its path (near edge, or far edge when price is inside it). '
   + '(Within each, a lower timeframe waits if a higher one is forming.) '
   + 'IFVG = gap inverted within 3-7 candles by a decisive close (>= 20% through, body across). '
   + 'Context before the IFVG: first tap of an unmitigated FVG, OR a liquidity sweep (ITL swept before a long, ITH swept before a short). '
