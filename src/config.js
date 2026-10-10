@@ -23,7 +23,7 @@ export const config = {
     baseUrl: process.env.BINANCE_BASE_URL || 'https://demo-fapi.binance.com',
     symbol: process.env.BINANCE_SYMBOL || 'BTCUSDC',
     // Every symbol the bot scans and trades; the first is the primary one (it holds the shared settings)
-    symbols: [...new Set([process.env.BINANCE_SYMBOL || 'BTCUSDC', ...(process.env.BINANCE_SYMBOLS || 'ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT,LINKUSDT').split(',').map((x) => x.trim()).filter(Boolean)])],
+    symbols: [...new Set([process.env.BINANCE_SYMBOL || 'BTCUSDC', ...(process.env.BINANCE_SYMBOLS || 'ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT,DOGEUSDT').split(',').map((x) => x.trim()).filter(Boolean)])],
     leverage: num(process.env.BINANCE_LEVERAGE, 1),
   },
   startingCash: num(process.env.STARTING_CASH, 100000),
@@ -63,6 +63,8 @@ export const config = {
     breakevenAtR: num(process.env.BREAKEVEN_AT_R, 0),
     // Jev picks 1-10x leverage per trade (Binance only); never above this cap
     maxLeverage: Math.min(125, Math.max(1, num(process.env.MAX_LEVERAGE, 5))),
+    // Strategy model: ifvg (default) | jev | ict2022 | unicorn | amd | forever
+    model: process.env.STRATEGY_MODEL || 'ifvg',
     autoStart: process.env.AUTO_START !== 'false',
   },
   // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).

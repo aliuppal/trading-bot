@@ -1,6 +1,7 @@
 import { decide, askJev } from './ai.js';
 import { summarize } from './indicators.js';
-import { bracketFor } from './ifvg.js';
+import { bracketFor, closedCandles } from './ifvg.js';
+import { scanModel, MODELS, MODEL_RULES } from './models.js';
 import { inSession, scanSetups, pathBlockers, wickBlockers } from './strategy.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
@@ -126,6 +127,7 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
 
 /** Minutes between Jev reviews of an open trade: 5 for scalps and 5m swings, 30 for 15m swings. */
 export function reviewMinutes(trade) {
+  if (trade.reviewEvery) return trade.reviewEvery; // JEV only: 3 min scalps, 5 min swings
   const g = trade.granularity || 900;
   if (trade.category === 'scalp' || g <= 60) return 5; // scalps (1m / 2m / 3m)
   return g <= 300 ? 5 : 30;
@@ -284,6 +286,9 @@ export class TradingBot {
       // with the time of the next Jev review
       openTrades: trades.filter((t) => t.status === 'open').map((t) => ({ ...t, nextReviewAt: new Date(new Date(t.lastReviewAt || t.entryTime).getTime() + reviewMinutes(t) * 60000).toISOString() })),
       symbol: this.symbol,
+      model: s.settings.model || 'ifvg',
+      models: Object.fromEntries(Object.entries(MODELS).map(([k, v]) => [k, v.name])),
+      modelRules: MODEL_RULES,
       ai: this.ai.apiKey ? `${this.ai.provider}:${this.ai.model === 'auto' ? 'free models' : this.ai.model}` : 'rules (no AI key set)',
       broker: this.broker.name,
       storage: this.kv.name,
@@ -344,6 +349,15 @@ export class TradingBot {
   }
 
   async updateSettings(patch) {
+    // Model switch: each model keeps its own saved settings (risk, limits, filters...)
+    if (patch.model && MODELS[patch.model] && patch.model !== (this.state.settings.model || 'ifvg')) {
+      const cur = this.state.settings;
+      const old = cur.model || 'ifvg';
+      const { modelConfigs = {}, ...cfg } = cur;
+      modelConfigs[old] = cfg;
+      const next = modelConfigs[patch.model];
+      this.state.settings = { ...cur, ...(next || {}), model: patch.model, modelConfigs };
+    }
     const allowed = ['intervalMinutes', 'minConfidence', 'maxPositionPct', 'maxTradePct', 'granularity', 'maxTradesPerDay', 'ifvgMaxAge', 'maxSwingPerDay', 'maxScalpPerDay', 'maxOpenTrades', 'riskReward', 'breakevenAtR', 'maxLeverage', 'minStopPct', 'riskPerTradeUsd'];
     const s = this.state.settings;
     for (const k of allowed) {
@@ -354,6 +368,7 @@ export class TradingBot {
     if (['percent', 'risk'].includes(patch.sizingMode)) s.sizingMode = patch.sizingMode;
     s.riskPerTradeUsd = Math.min(100000, Math.max(1, Number(s.riskPerTradeUsd ?? 50)));
     if (['zone', 'swing'].includes(patch.stopMode)) s.stopMode = patch.stopMode;
+    if (MODELS[patch.model]) s.model = patch.model;
     if (['jev', 'displacement'].includes(patch.earlyExit)) s.earlyExit = patch.earlyExit;
     if (['off', 'info', 'require'].includes(patch.smt)) s.smt = patch.smt;
     for (const k of ['requireSweep', 'sessionFilter']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
@@ -682,6 +697,8 @@ export class TradingBot {
       ...(trimPnl ? { trimPnl } : {}),
       granularity: setup.granularity || this.state.settings.granularity,
       category: setup.category || 'swing',
+      model: setup.model || this.state.settings.model || 'ifvg',
+      ...(setup.reviewEvery && { reviewEvery: setup.reviewEvery }),
       broker: this.broker.name,
       leverage,
       margin,
@@ -790,6 +807,162 @@ export class TradingBot {
     return { ...base, action: d.action, confidence: d.confidence, odds: d.odds, modelConfidence: d.modelConfidence, sizePct: d.sizePct, leverage: d.leverage, botAction };
   }
 
+  /**
+   * JEV only: no pattern. Every 3 min (per symbol, no open trade) Jev reads price, structure and liquidity and
+   * decides BUY / SELL / HOLD and SCALP / SWING; the stop goes beyond the recent swing (1m for scalps, 5m for swings)
+   * and the target on liquidity. Open trades are reviewed every 3 min (scalps) / 5 min (swings) and Jev may close them.
+   * Fills entry (the decision log row) and returns the scan outcome class.
+   */
+  async runJevOnly(entry, s, { swingLeft, scalpLeft }) {
+    const open = (await this.trades()).find((t) => t.status === 'open');
+    const all = await this.allTrades();
+    const count = tradesToday(all, this.now());
+    const openAll = all.filter((t) => t.status === 'open').length;
+    const candles = closedCandles(await this.market.getCandles(300, 200), 300, this.now());
+    const indicators = summarize(candles);
+    const liquidity = await liquidityLevels(this.market, this.now()).catch(() => null);
+    this.state.liquidity = liquidity && { above: liquidity.above.slice(0, 4), below: liquidity.below.slice(0, 4), lrlr: liquidity.lrlr, draw: liquidity.draw };
+    const price = Number(await this.market.getPrice?.().catch(() => null)) || indicators.price;
+    entry.price = price;
+    entry.source = 'jev-only';
+    const lastAsk = this.state.lastJevAsk ? Date.parse(this.state.lastJevAsk) : 0;
+    const review = Boolean(open && reviewDue(open, this.now()));
+    let reason = null;
+    if (open && !review) reason = `JEV only: managing open trade (next review ${nextReviewLabel(open)})`;
+    else if (!open && this.now() - lastAsk < 3 * 60000 - 5000) reason = `JEV only: next market check ${hhmm(lastAsk + 3 * 60000)} UTC`;
+    else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
+    else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `JEV only: waiting for a free slot (${openAll}/${s.maxOpenTrades ?? 2} open)`;
+    else if (!open && !swingLeft && !scalpLeft) reason = 'Daily swing and scalp limits reached';
+    this.state.lastScan = { time: entry.time, note: reason || (review ? 'Jev reviewing open trade (JEV only)' : 'Asked Jev (JEV only)') };
+    if (reason) { Object.assign(entry, { action: 'HOLD', note: reason, executed: false }); return open ? 'inTrade' : 'other'; }
+    if (!open) this.state.lastJevAsk = entry.time;
+    const account = await this.broker.getAccount(price);
+    const decision = await decide({
+      indicators, account, recentCandles: candles.slice(-24), granularity: 300, ifvg: null, jevOnly: !review, model: 'jev',
+      review: review && { side: open.side || 'long', minutesOpen: Math.round((this.now() - new Date(open.entryTime).getTime()) / 60000), unrealizedR: Number(((open.side === 'short' ? open.entryPrice - price : price - open.entryPrice) / Math.abs(open.entryPrice - (open.initialStop ?? open.stop))).toFixed(2)) },
+      recentDecisions: await this.decisions(5), tradesToday: count, riskReward: s.riskReward ?? 1, liquidity, targetMode: s.targetMode ?? 'rr',
+      maxLeverage: this.broker.supportsLeverage ? s.maxLeverage ?? 5 : 1, breakevenAtR: s.breakevenAtR ?? 0, maxTradesPerDay: s.maxTradesPerDay,
+      openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
+    }, this.ai, this.fetch);
+    Object.assign(entry, { action: decision.action, confidence: decision.confidence, sizePct: decision.sizePct, reasoning: decision.reasoning, source: `jev-only · ${decision.source}`, executed: false });
+    const confident = decision.confidence >= s.minConfidence;
+    if (review) {
+      await this.markReviewed(open);
+      entry.tradeId = open.id;
+      if (confident && decision.action === EXIT_ACTION[open.side || 'long']) {
+        const t = await this.closeTrade(open, price, 'review', candles);
+        Object.assign(entry, { executed: true, label: `CLOSE ${(open.side || 'long').toUpperCase()}`, note: `JEV only: Jev closed the ${open.side || 'long'} · P&L ${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}` });
+      } else {
+        Object.assign(entry, { label: 'HOLD', note: `JEV only: keep ${open.side || 'long'} open (${decision.action}${confident ? '' : ', low confidence'}) · next review ${nextReviewLabel(open)}` });
+      }
+      return 'inTrade';
+    }
+    if (!['BUY', 'SELL'].includes(decision.action)) { entry.note = 'JEV only: HOLD, no trade'; return 'asked'; }
+    if (!confident) { entry.note = `JEV only: ${decision.action} ${decision.confidence} below minimum ${s.minConfidence}`; return 'asked'; }
+    const side = decision.action === 'BUY' ? 'long' : 'short';
+    let style = decision.style === 'SCALP' ? 'scalp' : 'swing';
+    if (style === 'scalp' && (!scalpLeft || s.scalpEnabled === false)) style = 'swing';
+    if (style === 'swing' && (!swingLeft || s.swingEnabled === false)) style = 'scalp';
+    if ((style === 'scalp' && (!scalpLeft || s.scalpEnabled === false)) || (style === 'swing' && (!swingLeft || s.swingEnabled === false))) { entry.note = 'JEV only: no swing or scalp trades left today'; return 'limit'; }
+    const g = style === 'scalp' ? 60 : 300;
+    const sc = closedCandles(await this.market.getCandles(g, 200), g, this.now());
+    const win = sc.slice(-12);
+    const extreme = side === 'long' ? Math.min(...win.map((k) => k.low)) : Math.max(...win.map((k) => k.high));
+    const setup = {
+      direction: side === 'long' ? 'bullish' : 'bearish',
+      top: side === 'long' ? price : extreme, bottom: side === 'long' ? extreme : price, swingStop: extreme,
+      id: `jev:${this.symbol}:${entry.time}`, granularity: g, category: style, model: 'jev', grade: 'JEV',
+      reviewEvery: style === 'scalp' ? 3 : 5, ageCandles: 0, formedAt: Date.parse(entry.time), invertedAt: Date.parse(entry.time),
+      qualityReasons: [`JEV only: Jev ${decision.action} ${Math.round(decision.confidence * 100)}%, ${style}`],
+    };
+    const res = await this.openTrade({ side, setup, decision, account, price, candles: sc, liquidity, zones: [] });
+    entry.note = res.note;
+    if (res.trade) Object.assign(entry, { executed: true, tradeId: res.trade.id, order: res.order, label: side === 'short' ? 'SHORT' : 'LONG' });
+    return 'asked';
+  }
+
+  // ---------------- daily suggestions (selected model only) ----------------
+
+  async suggestions() { return this.kv.get('suggestions', []); }
+
+  /**
+   * Look at one UTC day's closed trades of the selected model and suggest concrete setting changes.
+   * Each suggestion: { id, day, model, title, detail, patch, status: pending | approved | ignored }.
+   */
+  async generateSuggestions(day = utcDay(this.now() - 86400000)) {
+    const s = this.state.settings;
+    const model = s.model || 'ifvg';
+    const T = (await this.allTrades()).filter((t) => t.status !== 'open' && t.exitTime && utcDay(t.entryTime) === day && (t.model || 'ifvg') === model);
+    const R = (a) => a.reduce((x, t) => x + (t.r || 0), 0);
+    const P = (a) => a.reduce((x, t) => x + (t.pnl || 0), 0);
+    const W = (a) => a.filter((t) => t.status === 'win').length;
+    const out = [];
+    const add = (title, detail, patch) => out.push({ id: `S${day}-${out.length}-${model}`, day, model, title, detail, patch, status: patch ? 'pending' : 'info', createdAt: new Date(this.now()).toISOString() });
+    if (T.length === 0) add('No closed trades', `No closed ${MODELS[model]?.name || model} trades on ${day}: nothing to tune yet.`, null);
+    else {
+      const wins = W(T);
+      add('Day summary', `${T.length} trades · ${wins} wins · net ${R(T).toFixed(2)}R · P&L $${P(T).toFixed(2)}`, null);
+      // fees eating the edge
+      const feeR = T.filter((t) => t.fees != null && t.riskUsd).map((t) => t.fees / t.riskUsd);
+      const avgFee = feeR.length ? feeR.reduce((a, b) => a + b, 0) / feeR.length : 0;
+      if (avgFee > 0.25) add('Fees are eating the edge', `Fees averaged ${avgFee.toFixed(2)}R per trade. A wider minimum stop means a smaller position and lower fees for the same $ risk.`, { minStopPct: Math.min(1, Math.max(0.3, Number(((s.minStopPct ?? 0.15) * 2).toFixed(2)))) });
+      // no displacement losers
+      const noDisp = T.filter((t) => t.ifvg && !t.ifvg.displacement);
+      if (noDisp.length >= 2 && R(noDisp) < 0 && !s.requireDisplacement) add('Require a displacement candle', `Trades without displacement: ${noDisp.length}, net ${R(noDisp).toFixed(2)}R.`, { requireDisplacement: true });
+      // early exits
+      const early = T.filter((t) => ['review', 'signal'].includes(t.exitReason));
+      if (early.length >= 2 && R(early) < 0 && s.earlyExit !== 'displacement') add('Stop closing trades early', `Jev's early closes: ${early.length}, net ${R(early).toFixed(2)}R. Let trades run to stop / target (close only on an opposite IFVG with displacement).`, { earlyExit: 'displacement' });
+      // swing vs scalp
+      const sw = T.filter((t) => t.category !== 'scalp'), sc = T.filter((t) => t.category === 'scalp');
+      if (sc.length >= 3 && R(sc) < 0 && R(sw) >= 0) add('Fewer scalps', `Scalps: ${sc.length}, net ${R(sc).toFixed(2)}R; swings net ${R(sw).toFixed(2)}R.`, { maxScalpPerDay: Math.max(0, Math.floor((s.maxScalpPerDay ?? 5) / 2)) });
+      if (sw.length >= 3 && R(sw) < 0 && R(sc) >= 0) add('Fewer swings', `Swings: ${sw.length}, net ${R(sw).toFixed(2)}R; scalps net ${R(sc).toFixed(2)}R.`, { maxSwingPerDay: Math.max(0, Math.floor((s.maxSwingPerDay ?? 5) / 2)) });
+      // quick stop-outs: stop too tight
+      const losses = T.filter((t) => t.status === 'loss');
+      const quick = losses.filter((t) => t.exitReason === 'stop' && Date.parse(t.exitTime) - Date.parse(t.entryTime) < 10 * 60000);
+      if (losses.length >= 2 && quick.length / losses.length >= 0.4 && s.stopMode !== 'swing') add('Stop beyond the recent swing', `${quick.length} of ${losses.length} losses were stopped within 10 minutes: the stop sits too close.`, { stopMode: 'swing' });
+      // confidence
+      const lowC = T.filter((t) => (t.confidence ?? 1) < 0.85), highC = T.filter((t) => (t.confidence ?? 0) >= 0.85);
+      if (lowC.length >= 2 && R(lowC) < 0 && R(highC) > 0 && (s.minConfidence ?? 0.6) < 0.85) add('Raise the Jev confidence minimum', `Below 0.85: net ${R(lowC).toFixed(2)}R · 0.85+: net ${R(highC).toFixed(2)}R.`, { minConfidence: 0.85 });
+      // small winners
+      const wr = wins / T.length;
+      const winR = T.filter((t) => t.status === 'win');
+      if (wr >= 0.6 && winR.length && R(winR) / winR.length < 1 && (s.targetMode ?? 'rr') === 'rr') add('Let winners run further', `Win rate ${Math.round(wr * 100)}% but the average win is ${(R(winR) / winR.length).toFixed(2)}R.`, { riskReward: Math.min(5, (s.riskReward ?? 1) + 0.5) });
+      // against the 4h bias (information)
+      const against = T.filter((t) => t.ifvg?.withBias === false);
+      if (against.length >= 2 && R(against) < 0) add('Losses against the 4h bias', `${against.length} trades against the 4h bias, net ${R(against).toFixed(2)}R. No setting for this yet: information only.`, null);
+    }
+    const list = await this.suggestions();
+    const kept = list.filter((x) => !(x.day === day && x.model === model && x.status !== 'approved' && x.status !== 'ignored'));
+    await this.kv.set('suggestions', [...out, ...kept].slice(0, 300));
+    return out;
+  }
+
+  /** Once a day (first cycle after 00:05 UTC): suggestions for the previous day, selected model only. */
+  async maybeDailySuggestions() {
+    const today = utcDay(this.now());
+    if (this.state.lastSuggestDay === today) return null;
+    if ((this.now() - Date.parse(`${today}T00:00:00Z`)) < 5 * 60000) return null;
+    this.state.lastSuggestDay = today;
+    await this.save();
+    return this.generateSuggestions(utcDay(this.now() - 86400000));
+  }
+
+  /** Approve: apply the change to the selected model's settings. Ignore: keep it in history only. */
+  async decideSuggestion(id, approve) {
+    const list = await this.suggestions();
+    const x = list.find((y) => y.id === id);
+    if (!x) throw new Error('Suggestion not found');
+    if (x.status !== 'pending') throw new Error(`Already ${x.status}`);
+    if (approve) {
+      if ((this.state.settings.model || 'ifvg') !== x.model) throw new Error(`Switch to the ${MODELS[x.model]?.name || x.model} model first: this change belongs to it`);
+      await this.updateSettings(x.patch);
+    }
+    x.status = approve ? 'approved' : 'ignored';
+    x.decidedAt = new Date(this.now()).toISOString();
+    await this.kv.set('suggestions', list);
+    return x;
+  }
+
   async runOnceUnlocked({ manual = false } = {}) {
     if (this.busy) throw new Error('Bot is already running a cycle');
     this.busy = true;
@@ -809,9 +982,17 @@ export class TradingBot {
       const before = await this.allTrades(); // daily limits count every symbol
       const swingLeft = tradesToday(before, this.now(), 'swing') < (s.maxSwingPerDay ?? 5);
       const scalpLeft = tradesToday(before, this.now(), 'scalp') < (s.maxScalpPerDay ?? 5);
-      const scan = await scanSetups(this.market, {
-        ...s, swingEnabled: s.swingEnabled !== false && swingLeft, scalpEnabled: s.scalpEnabled !== false && scalpLeft,
-      }, this.now(), { pairMarket: this.pairMarket });
+      const model = s.model || 'ifvg';
+      // JEV only: no pattern filter, Jev decides entries and manages trades by itself
+      if (model === 'jev') {
+        scanClass = await this.runJevOnly(entry, s, { swingLeft, scalpLeft });
+        if (entry.confidence !== undefined || entry.executed) persist = true;
+        return entry;
+      }
+      const scanSettings = { ...s, swingEnabled: s.swingEnabled !== false && swingLeft, scalpEnabled: s.scalpEnabled !== false && scalpLeft };
+      const scan = model === 'ifvg'
+        ? await scanSetups(this.market, scanSettings, this.now(), { pairMarket: this.pairMarket })
+        : await scanModel(model, this.market, scanSettings, this.now(), { pairMarket: this.pairMarket });
       let { setup } = scan;
       const { candles } = scan;
       const indicators = summarize(candles);
@@ -908,7 +1089,7 @@ export class TradingBot {
           }
         }
       }
-      if (setup && !setup.htf && !setup.sweep && setup.grade !== 'A+' && s.requireHtfTap !== false) {
+      if (model === 'ifvg' && setup && !setup.htf && !setup.sweep && setup.grade !== 'A+' && s.requireHtfTap !== false) {
         scan.note = `${setup.category} ${setup.granularity / 60}m: ${setup.qualityReasons.at(-1)}, not A+ and no FVG tap`;
         scan.setup = null;
         setup = null;
@@ -974,6 +1155,7 @@ export class TradingBot {
             liquidity,
             targetMode: s.targetMode ?? 'rr',
             targets,
+            model,
             maxTradesPerDay: s.maxTradesPerDay,
             openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
           },

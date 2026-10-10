@@ -142,6 +142,11 @@ app.get('/api/jev/overview', wrap(async (req, res) => {
   await Promise.all(bots.slice(1).map((b) => b.load()));
   res.json(await Promise.all(bots.map((b) => b.jevView().catch((e) => ({ symbol: b.symbol, error: e.message })))));
 }));
+// Daily suggestions for the selected model: list, approve (applies the change), ignore, generate now
+app.get('/api/suggestions', wrap(async (req, res) => res.json(await bot.suggestions())));
+app.post('/api/suggestions/generate', wrap(async (req, res) => res.json(await bot.generateSuggestions(req.body?.day || undefined))));
+app.post('/api/suggestions/:id/approve', wrap(async (req, res) => res.json(await bot.decideSuggestion(String(req.params.id), true))));
+app.post('/api/suggestions/:id/ignore', wrap(async (req, res) => res.json(await bot.decideSuggestion(String(req.params.id), false))));
 app.post('/api/settings', wrap(async (req, res) => res.json(await bot.updateSettings(req.body || {}))));
 
 // Scheduler hook for serverless hosts (GitHub Actions / Vercel Cron / any uptime pinger).
@@ -150,6 +155,7 @@ const cron = wrap(async (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
   const results = await tickAll();
+  await bot.maybeDailySuggestions().catch(() => null); // previous day's suggestions, selected model
   const result = results && results.find((x) => x);
   res.json({ ok: true, ran: Boolean(result), note: result?.note ?? null });
 });

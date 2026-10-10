@@ -102,6 +102,7 @@
             <button type="button" role="tab" data-tab="decisions">AI decisions</button>
             <button type="button" role="tab" data-tab="orders">Orders</button>
           <button type="button" role="tab" data-tab="pnl">P&amp;L</button>
+          <button type="button" role="tab" data-tab="suggest">Suggestions<span class="count num" id="suggestCount"></span></button>
           </div>
         </div>
   
@@ -138,6 +139,16 @@
             <th class="r">W / L</th><th class="r">Win rate</th><th class="r">Net R</th><th>Total P&amp;L</th>
           </tr></thead><tbody><tr><td colspan="8" class="empty">Loading P&amp;L…</td></tr></tbody></table></div>
         </div>
+
+        <div class="tab-pane" data-pane="suggest" hidden>
+          <div class="pnl-toolbar">
+            <span class="sub">At the end of each UTC day the selected model reviews its own trades and suggests changes. Approve to apply a change to that model, Ignore to keep it in history only.</span>
+            <button type="button" id="suggestNowBtn" class="btn btn-ghost">Analyze today so far</button>
+          </div>
+          <div class="table-wrap"><table id="suggestions"><thead><tr>
+            <th>Day</th><th>Model</th><th>Suggestion</th><th>Why</th><th>Change</th><th>Status</th>
+          </tr></thead><tbody><tr><td colspan="6" class="empty">Loading suggestions…</td></tr></tbody></table></div>
+        </div>
       </section>
       </div>
 
@@ -162,7 +173,42 @@
           </div>
           <div id="jevReason" class="decision"></div>
 
-          <h3 class="section-label">Strategy</h3>
+          <div class="model-box">
+            <label class="model-label" for="modelSelect">Strategy model</label>
+            <select id="modelSelect"><option value="ifvg">IFVG</option></select>
+            <p class="sub" id="modelHint"></p>
+            <div class="btn-row">
+              <button type="button" id="viewStrategyBtn" class="btn btn-ghost">View strategy</button>
+              <button type="button" id="configStrategyBtn" class="btn btn-ghost">Configure strategy</button>
+            </div>
+          </div>
+
+
+          <h3 class="section-label">Manual trade</h3>
+          <form id="manualForm" class="manual">
+            <label class="sr-only" for="buyAmount">USD to buy</label>
+            <input id="buyAmount" type="number" min="1" step="any" placeholder="USD to buy" />
+            <button type="button" id="buyBtn" class="btn btn-primary">Buy</button>
+            <label class="sr-only" for="sellAmount">BTC to sell</label>
+            <input id="sellAmount" type="number" min="0" step="any" placeholder="BTC to sell" />
+            <button type="button" id="sellBtn" class="btn btn-sell">Sell</button>
+          </form>
+          <button id="resetBtn" class="btn-link">Reset local paper account</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="modal" id="strategyModal" hidden role="dialog" aria-modal="true" aria-labelledby="strategyTitle">
+    <div class="modal-card strategy-card">
+      <div class="panel-head">
+        <h2 class="card-title" id="strategyTitle">Strategy</h2>
+        <button type="button" class="btn btn-ghost" data-close="strategyModal">Close</button>
+      </div>
+      <div class="modal-body">
+        <p class="model-rules" id="modelRulesText"></p>
+        <div id="ifvgRules">
           <ul class="rules">
             <li>Swing <b>30m/1h/2h/4h FVG tap → IFVG 15m › 5m</b></li>
             <li>Scalp <b>5m/15m/30m FVG tap → IFVG 3m › 2m › 1m</b></li>
@@ -178,9 +224,20 @@
             <li>Stop <b>just beyond the IFVG zone</b></li>
             <li>Jev review <b>5 min (scalps and 5m swings) · 30 min (15m swings), closes at confidence ≥ min confidence</b></li>
           </ul>
+        </div>
+      </div>
+    </div>
+  </div>
 
-          <h3 class="section-label">Risk settings</h3>
-          <form id="settingsForm" class="settings">
+  <div class="modal" id="configModal" hidden role="dialog" aria-modal="true" aria-labelledby="configTitle">
+    <div class="modal-card config-card">
+      <div class="panel-head">
+        <h2 class="card-title" id="configTitle">Configure strategy</h2>
+        <button type="button" class="btn btn-ghost" data-close="configModal">Close</button>
+      </div>
+      <div class="modal-body">
+        <p class="sub" id="configHint">These settings belong to the selected model; every model keeps its own.</p>
+        <form id="settingsForm" class="settings">
             <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
             <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
             <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
@@ -202,22 +259,9 @@
             <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
             <button type="submit" class="btn btn-ghost">Save settings</button>
           </form>
-
-          <h3 class="section-label">Manual trade</h3>
-          <form id="manualForm" class="manual">
-            <label class="sr-only" for="buyAmount">USD to buy</label>
-            <input id="buyAmount" type="number" min="1" step="any" placeholder="USD to buy" />
-            <button type="button" id="buyBtn" class="btn btn-primary">Buy</button>
-            <label class="sr-only" for="sellAmount">BTC to sell</label>
-            <input id="sellAmount" type="number" min="0" step="any" placeholder="BTC to sell" />
-            <button type="button" id="sellBtn" class="btn btn-sell">Sell</button>
-          </form>
-          <button id="resetBtn" class="btn-link">Reset local paper account</button>
-        </div>
       </div>
-    </section>
-
-  </main>
+    </div>
+  </div>
 
   <div class="modal" id="jevModal" hidden role="dialog" aria-modal="true" aria-labelledby="jevTitle">
     <div class="modal-card jev-card">

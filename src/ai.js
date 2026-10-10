@@ -1,4 +1,5 @@
 import { describeLevels } from './liquidity.js';
+import { MODEL_RULES, MODELS } from './models.js';
 
 // Decision engine: asks Jev (TypeSafe's decisions model on OpenRouter), an OpenRouter chat model
 // or Google Gemini for BUY / SELL / HOLD.
@@ -230,7 +231,7 @@ function sessionName(t) {
   return m >= 420 && m < 600 ? 'London open' : m >= 750 && m < 960 ? 'New York open / morning' : m < 420 ? 'Asia' : 'off-session';
 }
 
-export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr', targets }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr', targets, model }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
     setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
@@ -250,6 +251,7 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     htf_bias_4h: ifvg?.bias ? `${ifvg.bias}${ifvg.withBias === false ? ' (setup is against it)' : ifvg.withBias ? ' (setup is with it)' : ''}` : 'unclear',
     gap_size_atr: ifvg?.gapAtr ?? null,
     session: sessionName(Date.now()),
+    strategy_model: model ? `${MODELS[model]?.name || model}: ${MODEL_RULES[model] || ''}` : null,
     entry_timeframe: ifvg?.granularity ? `${ifvg.granularity / 60}m` : null,
     trade_type: ifvg?.category ?? null, // scalp (1m entry) or swing
     entry_models: ENTRY_MODELS,
@@ -318,6 +320,29 @@ const JEV_QUESTIONS = {
   },
 };
 
+/** JEV only: no pattern filter, Jev decides the trade, its style and size from price, structure and liquidity. */
+const JEV_ONLY_QUESTIONS = {
+  action: {
+    type: 'choice',
+    instructions: 'You alone decide this crypto futures trade (no pattern filter). Read the recent candles, momentum, market structure, '
+      + 'the 4h bias, the session and the liquidity levels above and below. Go long only when price is likely to reach liquidity above before '
+      + 'a stop below the recent swing low; short only when price is likely to reach liquidity below before a stop above the recent swing high. '
+      + 'Never force a trade: unused trades are fine, the daily limit is a cap. Otherwise HOLD.',
+    criteria: {
+      BUY: 'A clear bullish case: structure and momentum up, room to liquidity above, a sensible stop below the recent swing low',
+      SELL: 'A clear bearish case: structure and momentum down, room to liquidity below, a sensible stop above the recent swing high',
+      HOLD: 'No clear edge, choppy or mixed signals, or the move already happened',
+    },
+  },
+  style: {
+    type: 'choice',
+    instructions: 'If trading: a quick scalp (1m structure, reviewed every 3 min) or a swing (5m structure, reviewed every 5 min)?',
+    criteria: { SCALP: 'A short, fast move to nearby liquidity', SWING: 'A larger move to further liquidity' },
+  },
+  size: JEV_QUESTIONS.size,
+  leverage: JEV_QUESTIONS.leverage,
+};
+
 /** Map a fractional score index (e.g. 1.18) onto SIZE_LEVELS by linear interpolation. */
 export function scoreToPct(score) {
   const s = Math.min(SIZE_LEVELS.length - 1, Math.max(0, Number(score) || 0));
@@ -358,7 +383,7 @@ export function targetQuestion(targets) {
 export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
   const review = context.review;
   const targets = !review && context.targets?.length ? context.targets : null;
-  const questions = review ? reviewQuestions(review.side) : targets ? { ...JEV_QUESTIONS, target: targetQuestion(targets) } : JEV_QUESTIONS;
+  const questions = review ? reviewQuestions(review.side) : context.jevOnly ? JEV_ONLY_QUESTIONS : targets ? { ...JEV_QUESTIONS, target: targetQuestion(targets) } : JEV_QUESTIONS;
   const res = await fetchImpl(JEV_URL, {
     method: 'POST',
     headers: {
@@ -396,6 +421,7 @@ export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
     odds: Object.fromEntries(choices.map((k) => [k, Number((probs[k] ?? 0).toFixed(2))])),
     modelConfidence: a.confidence ?? null,
     targetChoice: targets ? String(data.answers?.target?.choice || '').toUpperCase() || null : null,
+    style: context.jevOnly ? String(data.answers?.style?.choice || '').toUpperCase() || null : null,
     model: data.model || model,
     cost: data.usage?.cost,
   };

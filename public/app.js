@@ -417,6 +417,7 @@ async function loadStatus() {
     const s = await api('/api/status');
     status = s;
     $('aiBadge').textContent = `AI: ${s.ai}`;
+    renderModel(s);
     $('brokerBadge').textContent = `Broker: ${s.broker}`;
     $('ruleLev').textContent = s.broker === 'binance' ? `Jev decides, max ${s.settings.maxLeverage ?? 5}x` : '1x (simulator)';
     $('ruleInv').textContent = `counted from the FIRST FVG of the series (its middle candle = 0) to the candle that closes through the last one: within ${s.settings.ifvgMaxAge ?? 7} candles, close ≥20% through it, entry ≤2 candles after${s.settings.requireDisplacement ? ', displacement candle' : ''}`;
@@ -735,7 +736,73 @@ async function openShot(t, phase = 'exit') {
 
 /* ---------------- controls ---------------- */
 
-const refreshAll = () => Promise.all([loadStatus(), loadAccount(), loadDecisions(), loadTrades()]).then(loadOrders);
+const refreshAll = () => Promise.all([loadStatus(), loadAccount(), loadDecisions(), loadTrades(), loadSuggestions()]).then(loadOrders);
+
+/* ---------------- strategy model, pop-ups, suggestions ---------------- */
+
+const modelName = (m) => status?.models?.[m] || m;
+function renderModel(s) {
+  const sel = $('modelSelect');
+  const html = Object.entries(s.models || { ifvg: 'IFVG' }).map(([k, v]) => `<option value="${esc(k)}"${k === s.model ? ' selected' : ''}>${esc(v)}${k === 'ifvg' ? ' (default)' : ''}</option>`).join('');
+  if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
+  sel.value = s.model || 'ifvg';
+  $('modelHint').textContent = s.model === 'jev' ? 'Jev decides and manages trades by itself: no pattern filter.'
+    : (s.model || 'ifvg') === 'ifvg' ? 'IFVG setups, Jev confirms each entry and manages the trade.'
+    : `${modelName(s.model)} setups, Jev confirms each entry and manages the trade.`;
+}
+const openModal = (id) => { $(id).hidden = false; $(id).querySelector('[data-close]')?.focus(); };
+document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { $(b.dataset.close).hidden = true; }; });
+['strategyModal', 'configModal'].forEach((id) => { $(id).onclick = (e) => { if (e.target === $(id)) $(id).hidden = true; }; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ['strategyModal', 'configModal'].forEach((id) => { $(id).hidden = true; }); });
+$('viewStrategyBtn').onclick = () => {
+  const m = status?.model || 'ifvg';
+  $('strategyTitle').textContent = `Strategy · ${modelName(m)}`;
+  $('modelRulesText').textContent = status?.modelRules?.[m] || '';
+  $('ifvgRules').hidden = m !== 'ifvg';
+  openModal('strategyModal');
+};
+$('configStrategyBtn').onclick = () => { $('configTitle').textContent = `Configure strategy · ${modelName(status?.model || 'ifvg')}`; openModal('configModal'); };
+$('modelSelect').onchange = (e) => {
+  const m = e.target.value;
+  if (!confirm(`Switch the bot to ${modelName(m)}? Open trades keep their stop and target; new entries use ${modelName(m)}.`)) { e.target.value = status?.model || 'ifvg'; return; }
+  withBtn(e.target, async () => {
+    await api('/api/settings', { method: 'POST', body: { model: m } });
+    settingsLoaded = false; // the form shows this model's own settings
+    toast(`Model: ${modelName(m)}`);
+    await refreshAll();
+  });
+};
+
+const patchText = (p) => (!p ? '—' : Object.entries(p).map(([k, v]) => `${k} → ${v}`).join(', '));
+async function loadSuggestions() {
+  try {
+    const list = await api('/api/suggestions');
+    const pending = list.filter((x) => x.status === 'pending').length;
+    $('suggestCount').textContent = pending ? ` ${pending}` : '';
+    $('suggestions').querySelector('tbody').innerHTML = list.map((x) => `<tr>
+      <td class="t">${esc(x.day)}</td><td><span class="pill">${esc(modelName(x.model))}</span></td>
+      <td><b>${esc(x.title)}</b></td><td class="reason">${esc(x.detail)}</td><td class="src">${esc(patchText(x.patch))}</td>
+      <td>${x.status === 'pending' ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${esc(x.id)}">Approve</button> <button type="button" class="btn btn-ghost btn-sm" data-ignore="${esc(x.id)}">Ignore</button>` : `<span class="pill ${x.status === 'approved' ? 'WIN' : ''}">${esc(x.status.toUpperCase())}</span>`}</td></tr>`).join('')
+      || '<tr><td colspan="6" class="empty"><b>No suggestions yet</b>They appear after the first UTC day closes, or click "Analyze today so far".</td></tr>';
+  } catch (e) {
+    $('suggestions').querySelector('tbody').innerHTML = `<tr><td colspan="6" class="empty"><b>Couldn't load suggestions</b>${esc(e.message)}</td></tr>`;
+  }
+}
+$('suggestions').onclick = (e) => {
+  const b = e.target.closest('[data-approve],[data-ignore]');
+  if (!b) return;
+  const approve = Boolean(b.dataset.approve);
+  withBtn(b, async () => {
+    await api(`/api/suggestions/${encodeURIComponent(b.dataset.approve || b.dataset.ignore)}/${approve ? 'approve' : 'ignore'}`, { method: 'POST' });
+    toast(approve ? 'Applied to the model' : 'Ignored (kept in history)');
+    settingsLoaded = false;
+    await refreshAll();
+  });
+};
+$('suggestNowBtn').onclick = (e) => withBtn(e.target, async () => {
+  await api('/api/suggestions/generate', { method: 'POST', body: { day: new Date().toISOString().slice(0, 10) } });
+  await loadSuggestions();
+});
 
 async function withBtn(btn, fn) {
   btn.disabled = true;
@@ -842,7 +909,7 @@ $('settingsForm').onsubmit = (e) => {
   e.preventDefault();
   withBtn(e.submitter, async () => {
     await api('/api/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-    toast('Settings saved'); loadStatus();
+    toast('Settings saved'); $('configModal').hidden = true; loadStatus();
   });
 };
 $('buyBtn').onclick = (e) => withBtn(e.target, async () => {

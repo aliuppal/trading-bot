@@ -621,3 +621,34 @@ test('risk sizing never picks a leverage whose liquidation sits inside the stop'
   const r2 = riskSize({ riskUsd: 50, stopDist: 0.2, price: 100, cash: 1000, levPick: 125, maxLev: 125, canLever: true });
   assert.ok(r2.leverage <= 125 && r2.leverage >= 1);
 });
+
+test('model switch keeps each model\'s own settings', async () => {
+  const { bot } = setup({ kv: new MemKV() });
+  await bot.updateSettings({ riskReward: 2 });
+  await bot.updateSettings({ model: 'unicorn' });
+  assert.equal(bot.state.settings.model, 'unicorn');
+  await bot.updateSettings({ riskReward: 3 });
+  await bot.updateSettings({ model: 'ifvg' });
+  assert.equal(bot.state.settings.riskReward, 2, 'IFVG config restored');
+  await bot.updateSettings({ model: 'unicorn' });
+  assert.equal(bot.state.settings.riskReward, 3, 'Unicorn config restored');
+});
+
+test('daily suggestions for the selected model; approve applies, ignore keeps history', async () => {
+  const kv = new MemKV();
+  const day = new Date(NOW - 86400000).toISOString().slice(0, 10);
+  const mk = (i, o) => ({ id: `T${i}`, status: 'loss', category: 'scalp', model: 'ifvg', entryTime: `${day}T10:0${i}:00Z`, exitTime: `${day}T10:0${i}:30Z`, exitReason: 'stop', r: -1, pnl: -50, riskUsd: 50, fees: 20, ifvg: { displacement: false }, confidence: 0.7, ...o });
+  await kv.set('trades', [mk(1), mk(2), mk(3), mk(4, { model: 'unicorn' })]);
+  const { bot } = setup({ kv });
+  const list = await bot.generateSuggestions(day);
+  const fee = list.find((x) => x.title.startsWith('Fees'));
+  assert.ok(fee && fee.patch.minStopPct > 0.15, 'fee suggestion with a patch');
+  assert.ok(list.find((x) => x.title === 'Day summary').detail.startsWith('3 trades'), 'only the selected model (ifvg)');
+  await bot.decideSuggestion(fee.id, true);
+  assert.equal(bot.state.settings.minStopPct, fee.patch.minStopPct);
+  const disp = list.find((x) => x.title.startsWith('Require a displacement'));
+  await bot.decideSuggestion(disp.id, false);
+  const after = await bot.suggestions();
+  assert.equal(after.find((x) => x.id === disp.id).status, 'ignored');
+  assert.notEqual(bot.state.settings.requireDisplacement, true, "ignored: not applied");
+});
