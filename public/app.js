@@ -743,7 +743,7 @@ const refreshAll = () => Promise.all([loadStatus(), loadAccount(), loadDecisions
 const modelName = (m) => status?.models?.[m] || m;
 function renderModel(s) {
   const sel = $('modelSelect');
-  const html = Object.entries(s.models || { ifvg: 'IFVG' }).map(([k, v]) => `<option value="${esc(k)}"${k === s.model ? ' selected' : ''}>${esc(v)}${k === 'ifvg' ? ' (default)' : ''}</option>`).join('');
+  const html = Object.entries(s.models || { ifvg: 'IFVG' }).map(([k, v]) => `<option value="${esc(k)}"${k === s.model ? ' selected' : ''}>${esc(v)}</option>`).join('');
   if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
   sel.value = s.model || 'ifvg';
   $('modelHint').textContent = s.model === 'jev' ? 'Jev decides and manages trades by itself: no pattern filter.'
