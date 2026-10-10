@@ -1024,7 +1024,8 @@ function confBadge(c) {
   const v = Number(c);
   if (!Number.isFinite(v)) return '—';
   const cls = v >= 0.7 ? 'hi' : v >= 0.5 ? 'mid' : 'lo';
-  return `<span class="conf ${cls}" title="Jev confidence ${v.toFixed(2)}"><i style="width:${Math.round(Math.min(1, Math.max(0, v)) * 100)}%"></i><em>${v.toFixed(2)}</em></span>`;
+  const pct = Math.round(Math.min(1, Math.max(0, v)) * 100);
+  return `<span class="conf ${cls}" title="Jev confidence ${pct}%"><i style="width:${pct}%"></i><em>${pct}%</em></span>`;
 }
 
 let eqRange = 'all';
