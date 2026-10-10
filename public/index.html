@@ -237,27 +237,44 @@
       </div>
       <div class="modal-body">
         <p class="sub" id="configHint">These settings belong to the selected model; every model keeps its own.</p>
-        <form id="settingsForm" class="settings">
-            <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
-            <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
-            <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
-            <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
-            <label>Swing trades<select name="swingEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
-            <label>Scalp trades<select name="scalpEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
-            <label>Swing trades / day<input name="maxSwingPerDay" type="number" min="0" max="50" step="1" /></label>
-            <label>Scalp trades / day<input name="maxScalpPerDay" type="number" min="0" max="50" step="1" /></label>
-            <label>Max open trades (all symbols)<input name="maxOpenTrades" type="number" min="1" max="6" step="1" /></label>
-            <label>IFVG formation (3-7 candles, from the first FVG)<input name="ifvgMaxAge" type="number" min="3" max="7" step="1" /></label>
-            <label>Risk : reward<select name="riskReward"><option value="1">1 : 1</option><option value="1.5">1 : 1.5</option><option value="2">1 : 2</option><option value="2.5">1 : 2.5</option><option value="3">1 : 3</option><option value="4">1 : 4</option><option value="5">1 : 5</option></select></label>
-            <label>Move stop to breakeven at<select name="breakevenAtR"><option value="0">Off</option><option value="0.5">+0.5R</option><option value="1">+1R (1:1)</option><option value="1.5">+1.5R</option><option value="2">+2R</option><option value="3">+3R</option></select></label>
-            <label>Max leverage (Jev picks)<select name="maxLeverage"><option value="125">Max (Jev decides, up to 125x)</option><option value="100">100x</option><option value="75">75x</option><option value="50">50x</option><option value="20">20x</option><option value="10">10x</option><option value="5">5x</option><option value="3">3x</option><option value="2">2x</option><option value="1">1x (off)</option></select></label>
-            <label>Position sizing<select name="sizingMode"><option value="percent">% of balance (Max per trade %)</option><option value="risk">Risk $ per trade</option></select></label>
-            <label>Risk per trade ($)<input name="riskPerTradeUsd" type="number" min="1" step="1" /></label>
-            <label>Min stop distance (%)<input name="minStopPct" type="number" min="0.05" max="2" step="0.05" /></label>
-            <label>Target<select name="targetMode"><option value="rr">Fixed risk:reward</option><option value="liquidity">Liquidity: swing high/low, LRLR, EQ highs-lows (0.75R-5R)</option></select></label>
-            <label>Displacement candle<select name="requireDisplacement"><option value="false">Optional (off)</option><option value="true">Required</option></select></label>
-            <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
-            <button type="submit" class="btn btn-ghost">Save settings</button>
+        <form id="settingsForm" class="settings-tabs">
+            <div class="segmented cfg-tabs" id="cfgTabs" role="tablist" aria-label="Settings sections">
+              <button type="button" role="tab" data-g="general" class="active" aria-selected="true">General</button>
+              <button type="button" role="tab" data-g="risk">Risk</button>
+              <button type="button" role="tab" data-g="entry">Entry</button>
+              <button type="button" role="tab" data-g="swing">Swing</button>
+              <button type="button" role="tab" data-g="scalp">Scalp</button>
+            </div>
+            <div class="cfg-group" data-group="general">
+              <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
+              <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
+              <label>Max open trades (all symbols)<input name="maxOpenTrades" type="number" min="1" max="6" step="1" /></label>
+              <label>Max position %<input name="maxPositionPct" type="number" min="0" max="100" step="1" /></label>
+              <label>Max per trade %<input name="maxTradePct" type="number" min="0" max="100" step="1" /></label>
+            </div>
+            <div class="cfg-group" data-group="risk" hidden>
+              <label>Position sizing<select name="sizingMode"><option value="percent">% of balance (Max per trade %)</option><option value="risk">Risk $ per trade</option></select></label>
+              <label>Risk per trade ($)<input name="riskPerTradeUsd" type="number" min="1" step="1" /></label>
+              <label>Max leverage (Jev picks)<select name="maxLeverage"><option value="125">Max (Jev decides, up to 125x)</option><option value="100">100x</option><option value="75">75x</option><option value="50">50x</option><option value="20">20x</option><option value="10">10x</option><option value="5">5x</option><option value="3">3x</option><option value="2">2x</option><option value="1">1x (off)</option></select></label>
+              <label>Min stop distance (%)<input name="minStopPct" type="number" min="0.05" max="2" step="0.05" /></label>
+              <label>Risk : reward<select name="riskReward"><option value="1">1 : 1</option><option value="1.5">1 : 1.5</option><option value="2">1 : 2</option><option value="2.5">1 : 2.5</option><option value="3">1 : 3</option><option value="4">1 : 4</option><option value="5">1 : 5</option></select></label>
+              <label>Move stop to breakeven at<select name="breakevenAtR"><option value="0">Off</option><option value="0.5">+0.5R</option><option value="1">+1R (1:1)</option><option value="1.5">+1.5R</option><option value="2">+2R</option><option value="3">+3R</option></select></label>
+              <label>Target<select name="targetMode"><option value="rr">Fixed risk:reward</option><option value="liquidity">Liquidity: swing high/low, LRLR, EQ highs-lows (0.75R-5R)</option></select></label>
+            </div>
+            <div class="cfg-group" data-group="entry" hidden>
+              <label>IFVG formation (3-7 candles, from the first FVG)<input name="ifvgMaxAge" type="number" min="3" max="7" step="1" /></label>
+              <label>Displacement candle<select name="requireDisplacement"><option value="false">Optional (off)</option><option value="true">Required</option></select></label>
+              <label>1h/2h/4h FVG tap<select name="requireHtfTap"><option value="true">Required</option><option value="false">Off</option></select></label>
+            </div>
+            <div class="cfg-group" data-group="swing" hidden>
+              <label>Swing trades<select name="swingEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+              <label>Swing trades / day<input name="maxSwingPerDay" type="number" min="0" max="50" step="1" /></label>
+            </div>
+            <div class="cfg-group" data-group="scalp" hidden>
+              <label>Scalp trades<select name="scalpEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+              <label>Scalp trades / day<input name="maxScalpPerDay" type="number" min="0" max="50" step="1" /></label>
+            </div>
+            <button type="submit" class="btn btn-ghost cfg-save">Save settings</button>
           </form>
       </div>
     </div>

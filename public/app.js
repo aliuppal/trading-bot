@@ -761,6 +761,13 @@ $('viewStrategyBtn').onclick = () => {
   $('ifvgRules').hidden = m !== 'ifvg';
   openModal('strategyModal');
 };
+// Configure strategy: General / Risk / Entry / Swing / Scalp tabs (all fields are still saved together)
+$('cfgTabs').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  document.querySelectorAll('#cfgTabs button').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-selected', String(x === b)); });
+  document.querySelectorAll('.cfg-group').forEach((g) => { g.hidden = g.dataset.group !== b.dataset.g; });
+};
 $('configStrategyBtn').onclick = () => { $('configTitle').textContent = `Configure strategy · ${modelName(status?.model || 'ifvg')}`; openModal('configModal'); };
 $('modelSelect').onchange = (e) => {
   const m = e.target.value;
