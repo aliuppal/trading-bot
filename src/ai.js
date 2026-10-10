@@ -256,6 +256,7 @@ async function chatOnce({ model, history, context, apiKey, fetchImpl }) {
           + 'Answer the user\'s questions about the bot, its strategy models, settings, open trades, results and decisions, using ONLY the live data below. '
           + 'Be short and concrete, use the numbers from the data, and say plainly when the data does not contain the answer. '
           + 'You cannot change settings or place / close trades: tell the user where to do it on the dashboard (Configure strategy, model picker, Start / Stop, Suggestions tab). '
+          + 'Format: plain short text for a small chat bubble: no tables, no headings; simple "- " bullet lines and **bold** are fine. '
           + 'This is a demo account; never promise profits.\n\nLIVE DATA (JSON):\n' + JSON.stringify(context).slice(0, 24000) },
         ...history,
       ],

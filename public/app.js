@@ -959,7 +959,7 @@ try { chat = JSON.parse(localStorage.getItem('cqp-chat') || '[]'); } catch { cha
 const saveChat = () => { try { localStorage.setItem('cqp-chat', JSON.stringify(chat.slice(-30))); } catch { /* private mode */ } };
 function renderChat() {
   $('chatLog').innerHTML = chat.length
-    ? chat.map((m) => `<div class="chat-msg ${m.role}">${esc(m.content).replace(/\n/g, '<br>')}</div>`).join('')
+    ? chat.map((m) => `<div class="chat-msg ${m.role}">${esc(m.content).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>')}</div>`).join('')
     : '<div class="chat-empty">Hi! Ask me anything about your bot: why a trade was or wasn\'t taken, today\'s results, your settings or a strategy model.</div>';
   $('chatChips').hidden = chat.length > 0;
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
