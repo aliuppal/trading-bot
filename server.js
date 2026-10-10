@@ -149,7 +149,7 @@ app.post('/api/suggestions/:id/approve', wrap(async (req, res) => res.json(await
 app.post('/api/suggestions/:id/ignore', wrap(async (req, res) => res.json(await bot.decideSuggestion(String(req.params.id), false))));
 app.post('/api/settings', wrap(async (req, res) => res.json(await bot.updateSettings(req.body || {}))));
 
-// Scheduler hook for serverless hosts (GitHub Actions / Vercel Cron / any uptime pinger).
+// Scheduler hook for serverless hosts (Supabase pg_cron calls it every minute, see supabase/cron.sql).
 const cron = wrap(async (req, res) => {
   if (config.cronSecret && req.get('authorization') !== `Bearer ${config.cronSecret}`) {
     return res.status(401).json({ error: 'unauthorized' });

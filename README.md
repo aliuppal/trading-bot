@@ -99,9 +99,8 @@ Serverless functions don't keep files or timers, so:
    on Vercel. The account, trades, snapshots and bot state live in the `kv` table (browse trades via the
    `trades` view). Upstash Redis (`KV_REST_API_URL` / `KV_REST_API_TOKEN`) also works. Without either, data
    lives in `/tmp` and is lost whenever the function cold-starts.
-2. **Schedule**: set a `CRON_SECRET` env var on Vercel, then add the GitHub repo secrets `BOT_URL`
-   (your `https://<app>.vercel.app`) and `CRON_SECRET`. The workflow `.github/workflows/bot-tick.yml`
-   calls `/api/cron` every 5 minutes. An open dashboard also drives the bot while it's open.
+2. **Schedule**: set a `CRON_SECRET` env var on Vercel, then run [supabase/cron.sql](supabase/cron.sql) in the Supabase
+   SQL Editor: Supabase pg_cron calls `/api/cron` every minute. An open dashboard also drives the bot while it's open.
 3. Set `OPENROUTER_API_KEY` (and any settings from `.env.example`) in the Vercel project.
 
 ## Project layout
