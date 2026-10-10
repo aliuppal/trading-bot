@@ -429,7 +429,8 @@ async function loadStatus() {
     $('ruleAi').textContent = `${s.ai.startsWith('jev') ? 'Jev' : s.ai.split(':')[0]}, auto-execute`;
     $('botDot').className = `dot${s.running ? ' on' : ''}`;
     $('botState').textContent = s.busy ? 'Thinking…' : s.running ? 'Running' : 'Stopped';
-    $('startBtn').textContent = s.running ? 'Auto-trading on' : 'Start bot';
+    $('autoToggle').setAttribute('aria-checked', String(Boolean(s.running)));
+    $('autoState').textContent = s.running ? 'On' : 'Off';
     const scan = s.symbols ? '' : s.lastScan?.note ? ` · ${s.lastScan.note}` : '';
     $('botTimes').textContent = `Last scan ${fmtTime(s.lastRun)}${s.nextRun ? ` · next ${fmtTime(s.nextRun)}` : ''}${scan}`;
 
@@ -858,8 +859,19 @@ $('shotClose').onclick = closeShot;
 $('shotModal').onclick = (e) => { if (e.target === $('shotModal')) closeShot(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('shotModal').hidden) closeShot(); });
 
-$('startBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/start', { method: 'POST' }); toast(`Bot started: ${modelName(status?.model || 'ifvg')} is trading automatically`); refreshAll(); });
-$('stopBtn').onclick = (e) => withBtn(e.target, async () => { await api('/api/bot/stop', { method: 'POST' }); toast('Bot stopped (open trades keep their stop and target)'); refreshAll(); });
+// Auto-trading switch: On = the bot opens and manages trades by itself; Off = no new entries (open trades keep their stop / target)
+$('autoToggle').onclick = (e) => withBtn(e.currentTarget, async () => {
+  const on = $('autoToggle').getAttribute('aria-checked') === 'true';
+  if (on) {
+    if (!confirm('Turn auto-trading OFF? No new trades will be opened; open trades keep their stop and target on Binance.')) return;
+    await api('/api/bot/stop', { method: 'POST' });
+    toast('Auto-trading off (open trades keep their stop and target)');
+  } else {
+    await api('/api/bot/start', { method: 'POST' });
+    toast(`Auto-trading on: ${modelName(status?.model || 'ifvg')} is trading automatically`);
+  }
+  await refreshAll();
+});
 $('runBtn').onclick = (e) => withBtn(e.target, async () => {
   $('botState').textContent = 'Thinking…';
   const d = await api('/api/bot/run', { method: 'POST' });

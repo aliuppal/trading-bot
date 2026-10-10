@@ -179,8 +179,10 @@
           </div>
           <div id="openTrade" class="open-trade"></div>
           <div class="btn-row">
-            <button id="startBtn" class="btn btn-primary">Start bot</button>
-            <button id="stopBtn" class="btn btn-ghost">Stop</button>
+            <button type="button" id="autoToggle" class="auto-toggle" role="switch" aria-checked="false" aria-label="Auto-trading">
+              <span class="auto-track"><span class="auto-knob"></span></span>
+              <span class="auto-text">Auto-trading <b id="autoState">Off</b></span>
+            </button>
             <button id="runBtn" class="btn btn-ghost">Ask AI now</button>
           </div>
           <div id="jevReason" class="decision"></div>

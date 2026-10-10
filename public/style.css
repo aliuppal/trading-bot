@@ -500,3 +500,16 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 /* toast sits left of the chat bubble */
 #toast { right: 88px; }
 @media (max-width: 760px) { #toast { right: 16px; bottom: 84px; } }
+
+/* auto-trading switch */
+.auto-toggle { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 14px; border-radius: var(--r-lg);
+  border: 1px solid var(--line-soft); background: var(--l2); color: var(--text); font: 600 14px/20px var(--font-body); cursor: pointer; }
+.auto-track { position: relative; width: 40px; height: 22px; border-radius: 9999px; background: #334155; transition: background .2s; flex: none; }
+.auto-knob { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #CBD5E1; transition: transform .2s, background .2s; }
+.auto-toggle[aria-checked="true"] { border-color: var(--emerald-line); box-shadow: 0 0 12px rgba(16, 185, 129, .15); }
+.auto-toggle[aria-checked="true"] .auto-track { background: #10B981; }
+.auto-toggle[aria-checked="true"] .auto-knob { transform: translateX(18px); background: #fff; }
+.auto-toggle[aria-checked="true"] #autoState { color: #34D399; }
+.auto-toggle #autoState { color: var(--muted); }
+.auto-toggle:disabled { opacity: .6; cursor: wait; }
+@media (prefers-reduced-motion: reduce) { .auto-track, .auto-knob { transition: none; } }
