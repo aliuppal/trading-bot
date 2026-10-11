@@ -179,7 +179,17 @@ export function cleanPatch(p) {
  * answers with up to 4 suggestions, each with a source link and an optional settings change (only SUGGEST_KEYS).
  * Returns [{ title, detail, patch, sources }].
  */
-export async function researchSuggestions({ modelName, rules, stats, settings, apiKey, fetchImpl = fetch, llm = process.env.SUGGEST_MODEL || 'openrouter/free' }) {
+export async function researchSuggestions({ llm = process.env.SUGGEST_MODEL || null, ...args }) {
+  // free models sometimes return nothing or a cut-off answer: try the best free model, then the free router
+  const tries = llm ? [llm] : CHAT_FREE_MODELS;
+  let lastErr = null;
+  for (const model of tries) {
+    try { return await researchOnce({ ...args, llm: model }); } catch (err) { lastErr = err; }
+  }
+  throw lastErr || new Error('no research model answered');
+}
+
+async function researchOnce({ modelName, rules, stats, settings, apiKey, fetchImpl = fetch, llm }) {
   const current = Object.fromEntries(Object.keys(SUGGEST_KEYS).filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
   const prompt = `You help tune an automated crypto futures day-trading strategy (Binance USD-M, BTC/ETH/BNB/XRP/SOL/DOGE).
 Strategy model: ${modelName}. Rules: ${rules}
@@ -194,6 +204,8 @@ At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.strin
     body: JSON.stringify({
       model: llm,
       temperature: 0.2,
+      max_tokens: 3000, // room for reasoning models to think AND write the JSON
+      reasoning: { effort: 'low', exclude: true },
       // web search: built into ":online" models, else the web plugin (3 results keep it cheap)
       ...(!llm.endsWith(':online') && { plugins: [{ id: 'web', max_results: 3 }] }),
       messages: [
@@ -207,7 +219,9 @@ At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.strin
   if (data.error) throw new Error(`web research: ${data.error.message || JSON.stringify(data.error)}`);
   const msg = data?.choices?.[0]?.message || {};
   const text = String(msg.content || '');
-  const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+  if (!text.includes('{') || !text.includes('}')) throw new Error(`no JSON in the answer from ${data.model || llm}`);
+  let json;
+  try { json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)); } catch { throw new Error(`unreadable answer from ${data.model || llm}`); }
   const cited = (msg.annotations || []).map((a) => a?.url_citation?.url).filter(Boolean);
   return (json.suggestions || []).slice(0, 4).map((x) => ({
     title: String(x.title || 'Research suggestion').slice(0, 80),

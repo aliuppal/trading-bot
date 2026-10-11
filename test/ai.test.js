@@ -231,7 +231,7 @@ test('web research suggestions: sources kept, only known settings with valid val
     } }] }) };
   };
   const out = await researchSuggestions({ modelName: 'IFVG', rules: 'r', stats: 's', settings: { minStopPct: 0.15 }, apiKey: 'k', fetchImpl });
-  assert.equal(body.model, 'openrouter/free', 'free model router');
+  assert.equal(body.model, 'nvidia/nemotron-3-super-120b-a12b:free', 'best free model first');
   assert.equal(body.plugins[0].id, 'web', 'web search plugin');
   assert.equal(out.length, 2);
   assert.deepEqual(out[0].patch, { sessionFilter: true });
@@ -263,4 +263,18 @@ test('chat assistant: a looping answer is rejected and the next free model answe
   const r = await chatAnswer({ messages: [{ role: 'user', content: 'How did today go?' }], context: {}, apiKey: 'k', fetchImpl });
   assert.equal(r.reply, 'Two trades today, both losses.');
   assert.equal(used.length, 2);
+});
+
+test('web research: an empty / cut-off answer is retried with the next free model', async () => {
+  const { researchSuggestions } = await import('../src/ai.js');
+  const used = [];
+  const fetchImpl = async (url, opts) => {
+    const b = JSON.parse(opts.body);
+    used.push(b.model);
+    const content = used.length === 1 ? '{"suggestions":[{"title":"cut' : '{"suggestions":[{"title":"Use the session filter","why":"x","change":{"sessionFilter":true},"source_url":"https://example.com"}]}';
+    return { ok: true, json: async () => ({ model: b.model, choices: [{ message: { content } }] }) };
+  };
+  const out = await researchSuggestions({ modelName: 'IFVG', rules: 'r', stats: 's', settings: {}, apiKey: 'k', fetchImpl });
+  assert.equal(used.length, 2);
+  assert.equal(out[0].title, 'Use the session filter');
 });
