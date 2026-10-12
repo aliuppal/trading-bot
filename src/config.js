@@ -67,6 +67,7 @@ export const config = {
     model: process.env.STRATEGY_MODEL || 'ifvg',
     // auto-trading pauses Saturday 00:00 UTC and resumes Monday 00:00 UTC
     weekendPause: process.env.WEEKEND_PAUSE !== 'false',
+    learnFromTrades: true, // Jev sees the model's last 14 days of results before each decision
     autoStart: process.env.AUTO_START !== 'false',
   },
   // Vercel's filesystem is read-only apart from /tmp (and /tmp is not shared between instances: use Redis there).

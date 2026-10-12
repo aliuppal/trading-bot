@@ -6,6 +6,7 @@ import { inSession, scanSetups, pathBlockers, wickBlockers } from './strategy.js
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
 import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } from './liquidity.js';
+import { trackRecord, approvedEffects, experienceSuggestions } from './learn.js';
 
 const MIN_ORDER_USD = 10;
 const MAX_TRADES_KEPT = 200;
@@ -380,7 +381,7 @@ export class TradingBot {
     if (MODELS[patch.model]) s.model = patch.model;
     if (['jev', 'displacement'].includes(patch.earlyExit)) s.earlyExit = patch.earlyExit;
     if (['off', 'info', 'require'].includes(patch.smt)) s.smt = patch.smt;
-    for (const k of ['requireSweep', 'sessionFilter', 'weekendPause']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
+    for (const k of ['requireSweep', 'sessionFilter', 'weekendPause', 'learnFromTrades']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
     for (const k of ['minGapAtr', 'partialPct']) if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Math.max(0, Number(patch[k]));
     s.partialPct = Math.min(90, s.partialPct || 0);
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
@@ -918,6 +919,7 @@ export class TradingBot {
       indicators, account, recentCandles: candles.slice(-24), granularity: 300, ifvg: null, jevOnly: !review, model: 'jev',
       review: review && { side: open.side || 'long', minutesOpen: Math.round((this.now() - new Date(open.entryTime).getTime()) / 60000), unrealizedR: Number(((open.side === 'short' ? open.entryPrice - price : price - open.entryPrice) / Math.abs(open.entryPrice - (open.initialStop ?? open.stop))).toFixed(2)) },
       recentDecisions: await this.decisions(5), tradesToday: count, riskReward: s.riskReward ?? 1, liquidity, targetMode: s.targetMode ?? 'rr',
+      trackRecord: this.learned(all, 'jev'),
       maxLeverage: this.broker.supportsLeverage ? s.maxLeverage ?? 5 : 1, breakevenAtR: s.breakevenAtR ?? 0, maxTradesPerDay: s.maxTradesPerDay,
       openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
     }, this.ai, this.fetch);
@@ -961,6 +963,12 @@ export class TradingBot {
   // ---------------- daily suggestions (selected model only) ----------------
 
   async suggestions() { return this.kv.get('suggestions', []); }
+
+  /** The model's 14-day track record for Jev (this symbol in detail), or null when learning is off / no trades. */
+  learned(trades, model) {
+    if (this.state.settings.learnFromTrades === false) return null;
+    return trackRecord(trades, { model, symbol: this.symbol, now: this.now() }).text || null;
+  }
 
   /**
    * Look at one UTC day's closed trades of the selected model and suggest concrete setting changes.
@@ -1018,7 +1026,24 @@ export class TradingBot {
       const against = T.filter((t) => t.ifvg?.withBias === false);
       if (against.length >= 2 && R(against) < 0) add('Losses against the 4h bias', `${against.length} trades against the 4h bias, net ${R(against).toFixed(2)}R. No setting for this yet: information only.`, null);
     }
-    // Web research (OpenRouter model with web search): sourced ideas for this model, given the day's results
+    // Experience: the model's last 14 days (not just this day) and how earlier approved changes worked out
+    const allTrades = await this.allTrades();
+    const rec = trackRecord(allTrades, { model, now: Date.parse(`${day}T23:59:59Z`) });
+    const effects = approvedEffects(await this.suggestions(), allTrades, { model, now: this.now() });
+    if (rec.n) {
+      const o = rec.overall;
+      out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: 'Track record (14 days)', detail: `${o.n} trades · ${o.wins} wins${o.winRate == null ? '' : ` (${Math.round(o.winRate * 100)}%)`} · net ${o.r >= 0 ? '+' : ''}${o.r}R. ${rec.bySymbol.map((g) => `${g.key} ${g.r >= 0 ? '+' : ''}${g.r}R`).join(' · ')}`, patch: null, origin: 'trade history', status: 'info', createdAt: new Date(this.now()).toISOString() });
+      const have = new Set(out.flatMap((x) => Object.keys(x.patch || {})));
+      for (const x of experienceSuggestions(rec, s)) {
+        if (x.patch && Object.keys(x.patch).some((k) => have.has(k))) continue;
+        out.push({ id: `S${day}-${out.length}-${model}`, day, model, ...x, origin: 'trade history', status: x.patch ? 'pending' : 'info', createdAt: new Date(this.now()).toISOString() });
+      }
+    }
+    for (const e of effects) {
+      const better = e.after.r / e.after.n > e.before.r / e.before.n;
+      out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: `Result of "${e.title}"`, detail: `${better ? 'Better since' : 'Not better since'} it was enabled. ${e.text.slice(e.text.indexOf(': ') + 2)}`, patch: null, origin: 'trade history', status: 'info', createdAt: new Date(this.now()).toISOString() });
+    }
+    // Web research (OpenRouter model with web search): sourced ideas for this model, given the day's results and the track record
     if (this.ai.apiKey && this.ai.provider !== 'gemini') {
       const by = (f) => { const a = T.filter(f); return `${a.length} trades, ${W(a)} wins, ${R(a).toFixed(2)}R`; };
       const stats = T.length
@@ -1027,7 +1052,8 @@ export class TradingBot {
           + `closed early by Jev ${by((t) => ['review', 'signal'].includes(t.exitReason))}; average fees ${(T.reduce((x, t) => x + (t.fees || 0), 0) / T.length).toFixed(2)} $ per trade on ${s.riskPerTradeUsd ?? 50} $ risk`
         : `${day}: no closed trades yet`;
       try {
-        const web = await researchSuggestions({ modelName: MODELS[model]?.name || model, rules: MODEL_RULES[model] || '', stats, settings: s, apiKey: this.ai.apiKey, fetchImpl: this.fetch });
+        const experience = [rec.text, ...effects.map((e) => `earlier change ${e.text}`)].filter(Boolean).join(' | ');
+        const web = await researchSuggestions({ modelName: MODELS[model]?.name || model, rules: MODEL_RULES[model] || '', stats, experience, settings: s, apiKey: this.ai.apiKey, fetchImpl: this.fetch });
         for (const w of web) {
           out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: w.title, detail: w.detail, patch: w.patch, sources: w.sources, origin: `web research (${w.model})`, status: w.patch ? 'pending' : 'info', createdAt: new Date(this.now()).toISOString() });
         }
@@ -1260,6 +1286,7 @@ export class TradingBot {
             targetMode: s.targetMode ?? 'rr',
             targets,
             model,
+            trackRecord: this.learned(everything, model),
             maxTradesPerDay: s.maxTradesPerDay,
             openTrade: open && { side: open.side || 'long', entryPrice: open.entryPrice, stop: open.stop, target: open.target },
           },

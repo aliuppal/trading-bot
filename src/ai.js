@@ -189,14 +189,14 @@ export async function researchSuggestions({ llm = process.env.SUGGEST_MODEL || n
   throw lastErr || new Error('no research model answered');
 }
 
-async function researchOnce({ modelName, rules, stats, settings, apiKey, fetchImpl = fetch, llm }) {
+async function researchOnce({ modelName, rules, stats, experience, settings, apiKey, fetchImpl = fetch, llm }) {
   const current = Object.fromEntries(Object.keys(SUGGEST_KEYS).filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
   const prompt = `You help tune an automated crypto futures day-trading strategy (Binance USD-M, BTC/ETH/BNB/XRP/SOL/DOGE).
 Strategy model: ${modelName}. Rules: ${rules}
 Results of the period: ${stats}
-Current settings: ${JSON.stringify(current)}
-Search the web for well-supported ways traders improve the win rate and expectancy of this kind of setup (entry filters, stop placement, targets, session timing, risk management, fees).
-Reply with JSON only: {"suggestions":[{"title":"short title","why":"what the sources say and why it fits these results (1-2 sentences)","change":{"settingKey":value} or null,"source_url":"https://..."}]}
+${experience ? `Track record (our own past trades with this model, and how earlier settings changes worked out): ${experience}\n` : ''}Current settings: ${JSON.stringify(current)}
+Search the web for well-supported ways traders improve the win rate and expectancy of this kind of setup (entry filters, stop placement, targets, session timing, risk management, fees). Combine what the sources say with our own track record: target the weak spots it shows, keep what works, and do not repeat a change that did not help.
+Reply with JSON only: {"suggestions":[{"title":"short title","why":"what the sources say and how it fits our track record (1-2 sentences, plain English)","change":{"settingKey":value} or null,"source_url":"https://..."}]}
 At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.stringify(SUGGEST_KEYS)}. Use null when the idea has no matching setting.`;
   const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
     method: 'POST',
@@ -366,7 +366,7 @@ function sessionName(t) {
   return m >= 420 && m < 600 ? 'London open' : m >= 750 && m < 960 ? 'New York open / morning' : m < 420 ? 'Asia' : 'off-session';
 }
 
-export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr', targets, model }) {
+export function buildJevState({ indicators, account, recentCandles, granularity, ifvg, tradesToday = 0, maxTradesPerDay = 10, openTrade, review, riskReward = 1, breakevenAtR = 0, maxLeverage = 1, liquidity, targetMode = 'rr', targets, model, trackRecord }) {
   const { macd, bollinger, ...rest } = indicators;
   return {
     setup: ifvg ? `${ifvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} IFVG pattern detected` : 'No IFVG pattern',
@@ -394,6 +394,10 @@ export function buildJevState({ indicators, account, recentCandles, granularity,
     setup_grade: ifvg?.grade ?? null, // A+ = perfect IFVG + displacement + toward liquidity
     setup_quality: ifvg?.qualityReasons?.length ? ifvg.qualityReasons.join(', ') : null,
     ...(review && { review_minutes_open: review.minutesOpen, review_unrealized_r: review.unrealizedR }),
+    ...(trackRecord && {
+      track_record: trackRecord,
+      track_record_note: 'How this strategy model actually did over the last 14 days. Learn from it: be more careful where it keeps losing (symbol, side, type, session, confidence) and trust what has worked, but judge the current chart first.',
+    }),
     trades_today: tradesToday,
     max_trades_per_day: maxTradesPerDay,
     daily_limit_note: 'The daily limit is a cap, not a target: the count resets every UTC day and unused trades are fine. Never take a weak setup to use up the limit; wait for a clean setup to form.',
