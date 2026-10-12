@@ -198,6 +198,8 @@ export function describeSetup(setup, side) {
   if (!setup) return '';
   const parts = [`${setup.grade ? `${setup.grade} ` : ''}${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
   if (setup.qualityReasons?.length) parts.push(setup.qualityReasons.join(' + ').replace(' + -> ', ' -> '));
+  // Jev model: no pattern, Jev's own call; the stop sits beyond the recent swing high/low.
+  if (setup.model === 'jev') return [...parts, `stop beyond the ${tfName(setup.granularity)} swing ${setup.direction === 'bearish' ? 'high' : 'low'} ${px(setup.swingStop)}`].join(' · ');
   if (setup.htf) parts.push(`tapped unmitigated ${setup.htf.tf} ${setup.htf.type} FVG ${px(setup.htf.bottom)}-${px(setup.htf.top)}${setup.htf.tappedAt ? ` at ${hhmm(setup.htf.tappedAt)} UTC` : ''}`);
   if (setup.sweep && !setup.qualityReasons?.some((q) => q.startsWith('swept'))) parts.push(`swept ${setup.sweep.tf} ${setup.sweep.type} ${px(setup.sweep.price)}`);
   const age = setup.ageCandles === 0 ? 'on the last closed candle' : `${setup.ageCandles} candle${setup.ageCandles === 1 ? '' : 's'} ago`;

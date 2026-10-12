@@ -392,6 +392,12 @@ async function loadAccount() {
   } catch (e) { toast(`Account: ${e.message}`, true); }
 }
 
+// Jev-model trades have no pattern: drop the IFVG wording older Jev trades were saved with.
+function reasonText(t) {
+  const r = t.setupReason || '';
+  return t.model === 'jev' ? r.replace(/ · \d+[mh] (bullish|bearish) IFVG [^)]*\)/, '') : r;
+}
+
 function renderOpenTrade(t) {
   if (!t) return '';
   const price = (symOf(t) === chartSymbol ? candles.at(-1)?.close : t.lastPrice) ?? t.entryPrice;
@@ -408,7 +414,7 @@ function renderOpenTrade(t) {
     <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
     <div class="ot-risk">Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
     ${t.nextReviewAt ? `<div class="ot-risk">Next Jev review <b>${new Date(t.nextReviewAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></div>` : ''}
-    ${t.setupReason ? `<div class="ot-reason">${esc(t.setupReason)}</div>` : ''}`;
+    ${reasonText(t) ? `<div class="ot-reason">${esc(reasonText(t))}</div>` : ''}`;
 }
 
 let settingsLoaded = false;
@@ -614,7 +620,7 @@ async function loadTrades() {
       <td class="r">${t.r != null ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
       <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>${t.fees != null ? `<div class="src" title="Binance realized profit before fees, and the entry + exit trading fees">gross ${signedUsd(t.grossPnl)} · fees ${usd(t.fees)}</div>` : ''}` : '—'}</td>
       <td class="src">${esc(t.source || '')}</td>
-      <td class="reason">${esc(t.setupReason || '')}</td></tr>`).join('');
+      <td class="reason">${esc(reasonText(t))}</td></tr>`).join('');
     // thumbnails for the most recent trades
     trades.slice(0, 25).forEach(async (t, i) => {
       const shots = await getShots(t);
@@ -720,9 +726,9 @@ async function openShot(t, phase = 'exit') {
     ['Symbol', symOf(t)], ['Entry', px(t.entryPrice)], ['Stop', px(t.stop)], ['Target', px(t.target)],
     ['Type', t.category === 'scalp' ? 'Scalp' : 'Swing'], ['Side', t.side === 'short' ? 'Short' : 'Long'], ['Risk', (t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)) ? usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null))) : '—'], ['Exit', t.exitPrice ? usd(t.exitPrice) : '—'], ['Qty', `${Number(t.qty).toFixed(6)} BTC`],
     ['P&L', t.pnl !== undefined ? signedUsd(t.pnl) : '—'], ['Confidence', t.confidence ?? '—'],
-    ['IFVG zone', t.ifvg ? `${px(t.ifvg.bottom)} – ${px(t.ifvg.top)}` : '—'],
+    [t.model === 'jev' ? 'Setup' : 'IFVG zone', t.model === 'jev' ? 'Jev (no pattern)' : t.ifvg ? `${px(t.ifvg.bottom)} – ${px(t.ifvg.top)}` : '—'],
   ].map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');
-  $('shotNote').textContent = [t.setupReason, t.reasoning].filter(Boolean).join(' — ');
+  $('shotNote').textContent = [reasonText(t), t.reasoning].filter(Boolean).join(' — ');
   $('shotModal').hidden = false;
   $('shotClose').focus();
   const shots = await getShots(t);
