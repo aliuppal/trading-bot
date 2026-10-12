@@ -189,15 +189,16 @@ export async function researchSuggestions({ llm = process.env.SUGGEST_MODEL || n
   throw lastErr || new Error('no research model answered');
 }
 
-async function researchOnce({ modelName, rules, stats, experience, settings, apiKey, fetchImpl = fetch, llm }) {
-  const current = Object.fromEntries(Object.keys(SUGGEST_KEYS).filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
+async function researchOnce({ modelName, rules, stats, experience, ignoreKeys = [], settings, apiKey, fetchImpl = fetch, llm }) {
+  const keys = Object.fromEntries(Object.entries(SUGGEST_KEYS).filter(([k]) => !ignoreKeys.includes(k)));
+  const current = Object.fromEntries(Object.keys(keys).filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
   const prompt = `You help tune an automated crypto futures day-trading strategy (Binance USD-M, BTC/ETH/BNB/XRP/SOL/DOGE).
 Strategy model: ${modelName}. Rules: ${rules}
 Results of the period: ${stats}
 ${experience ? `Track record (our own past trades with this model, and how earlier settings changes worked out): ${experience}\n` : ''}Current settings: ${JSON.stringify(current)}
 Search the web for well-supported ways traders improve the win rate and expectancy of this kind of setup (entry filters, stop placement, targets, session timing, risk management, fees). Combine what the sources say with our own track record: target the weak spots it shows, keep what works, and do not repeat a change that did not help.
 Reply with JSON only: {"suggestions":[{"title":"short title","why":"what the sources say and how it fits our track record (1-2 sentences, plain English)","change":{"settingKey":value} or null,"source_url":"https://..."}]}
-At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.stringify(SUGGEST_KEYS)}. Use null when the idea has no matching setting.`;
+At most 4 suggestions. "change" may only use these keys and ranges: ${JSON.stringify(keys)}. Use null when the idea has no matching setting.`;
   const res = await fetchImpl(`${OPENROUTER}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, 'HTTP-Referer': 'https://github.com/aliuppal/trading-bot', 'X-Title': 'CryptoQuant Pro' },

@@ -8,6 +8,9 @@ import { appendList } from './store.js';
 import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } from './liquidity.js';
 import { trackRecord, approvedEffects, experienceSuggestions } from './learn.js';
 
+/** Settings only the pattern models use; the Jev model ignores them, so suggestions for it skip them. */
+const PATTERN_ONLY = ['requireDisplacement', 'requireSweep', 'sessionFilter', 'stopMode', 'earlyExit', 'smt', 'ifvgMaxAge', 'minGapAtr', 'requireHtfTap'];
+
 const MIN_ORDER_USD = 10;
 const MAX_TRADES_KEPT = 200;
 const MAX_DECISIONS_KEPT = 1000;
@@ -1053,12 +1056,23 @@ export class TradingBot {
         : `${day}: no closed trades yet`;
       try {
         const experience = [rec.text, ...effects.map((e) => `earlier change ${e.text}`)].filter(Boolean).join(' | ');
-        const web = await researchSuggestions({ modelName: MODELS[model]?.name || model, rules: MODEL_RULES[model] || '', stats, experience, settings: s, apiKey: this.ai.apiKey, fetchImpl: this.fetch });
+        const web = await researchSuggestions({ modelName: MODELS[model]?.name || model, rules: MODEL_RULES[model] || '', stats, experience, ignoreKeys: model === 'jev' ? PATTERN_ONLY : [], settings: s, apiKey: this.ai.apiKey, fetchImpl: this.fetch });
         for (const w of web) {
           out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: w.title, detail: w.detail, patch: w.patch, sources: w.sources, origin: `web research (${w.model})`, status: w.patch ? 'pending' : 'info', createdAt: new Date(this.now()).toISOString() });
         }
       } catch (err) {
         out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: 'Web research unavailable', detail: err.message.slice(0, 200), patch: null, origin: 'web research', status: 'info', createdAt: new Date(this.now()).toISOString() });
+      }
+    }
+    // Jev model: pattern-only settings (displacement, sweep, session filter, stop mode, early exit...) do nothing, drop them
+    if (model === 'jev') {
+      for (let i = out.length - 1; i >= 0; i--) {
+        const p = out[i].patch;
+        if (!p) continue;
+        for (const k of PATTERN_ONLY) delete p[k];
+        if (Object.keys(p).length) continue;
+        if (out[i].origin?.startsWith('web research')) Object.assign(out[i], { patch: null, status: 'info' });
+        else out.splice(i, 1);
       }
     }
     const list = await this.suggestions();
