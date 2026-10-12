@@ -705,8 +705,53 @@ function renderPnl() {
       <td><div class="pnl-cell"><div class="bar"><i class="${g.total >= 0 ? 'pos' : 'neg'}" style="width:${(Math.abs(g.total) / max) * 50}%"></i></div>${pnlSpan(g.total)}</div></td>
     </tr>`).join('')
     || '<tr><td colspan="8" class="empty"><b>No closed trades yet</b>P&amp;L appears here once a trade hits its target or stop.</td></tr>';
+  renderCalendar();
   renderEquity();
 }
+
+// ---- P&L calendar: one month, Monday-first, each day tinted by its net P&L, week totals on the right
+let calMonth = new Date().toISOString().slice(0, 7); // YYYY-MM (UTC)
+function renderCalendar() {
+  const [y, m] = calMonth.split('-').map(Number);
+  const days = new Map(pnlGroups(trades, 'day').map((g) => [g.key, g]));
+  const inMonth = [...days.values()].filter((g) => g.key.startsWith(calMonth));
+  const max = Math.max(1, ...inMonth.map((g) => Math.abs(g.total)));
+  const total = inMonth.reduce((a, g) => a + g.total, 0);
+  const n = inMonth.reduce((a, g) => a + g.trades, 0);
+  $('calMonth').innerHTML = `${MONTHS[m - 1]} ${y} <span class="${total >= 0 ? 'up' : 'down'}">${n ? signedUsd(total) : ''}</span>`;
+  const first = new Date(Date.UTC(y, m - 1, 1));
+  const lead = (first.getUTCDay() + 6) % 7; // blank days before the 1st (Monday first)
+  const len = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const today = new Date().toISOString().slice(0, 10);
+  const money = (v) => (Math.abs(v) >= 1000 ? `${v < 0 ? '-' : '+'}$${(Math.abs(v) / 1000).toFixed(1)}k` : signedUsd(v));
+  let html = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Week'].map((d) => `<div class="cal-h">${d}</div>`).join('');
+  let week = { total: 0, trades: 0 };
+  const cells = Math.ceil((lead + len) / 7) * 7;
+  for (let i = 0; i < cells; i++) {
+    const d = i - lead + 1;
+    if (d < 1 || d > len) html += '<div class="cal-d off"></div>';
+    else {
+      const key = `${calMonth}-${String(d).padStart(2, '0')}`;
+      const g = days.get(key);
+      if (g) { week.total += g.total; week.trades += g.trades; }
+      const a = g ? Math.round(12 + (Math.abs(g.total) / max) * 38) : 0;
+      const tip = g ? `${periodLabel(key, 'day')}: ${signedUsd(g.total)} · ${g.trades} trade${g.trades === 1 ? '' : 's'} · ${g.wins}W / ${g.losses}L · ${g.r >= 0 ? '+' : ''}${g.r.toFixed(1)}R` : periodLabel(key, 'day');
+      html += `<div class="cal-d${g ? (g.total >= 0 ? ' pos' : ' neg') : ''}${key === today ? ' today' : ''}" title="${esc(tip)}" style="--a:${a}%"><span>${d}</span>${g ? `<b>${money(g.total)}</b><small>${g.trades} trade${g.trades === 1 ? '' : 's'}</small>` : ''}</div>`;
+    }
+    if (i % 7 === 6) {
+      html += `<div class="cal-w">${week.trades ? `<b class="${week.total >= 0 ? 'up' : 'down'}">${money(week.total)}</b><small>${week.trades} trades</small>` : '<small>—</small>'}</div>`;
+      week = { total: 0, trades: 0 };
+    }
+  }
+  $('calGrid').innerHTML = html;
+}
+function shiftMonth(k) {
+  const [y, m] = calMonth.split('-').map(Number);
+  calMonth = new Date(Date.UTC(y, m - 1 + k, 1)).toISOString().slice(0, 7);
+  renderCalendar();
+}
+$('calPrev').onclick = () => shiftMonth(-1);
+$('calNext').onclick = () => shiftMonth(1);
 
 $('pnlPeriod').onclick = (e) => {
   const b = e.target.closest('button');

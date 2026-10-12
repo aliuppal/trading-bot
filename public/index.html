@@ -138,6 +138,17 @@
             </div>
             <div class="equity-plot" id="equityPlot" role="img" aria-label="Equity curve"></div>
           </div>
+          <div class="cal">
+            <div class="equity-head">
+              <div><b>P&amp;L calendar</b><span class="sub"> · net P&amp;L per day (exit time, UTC)</span></div>
+              <div class="cal-nav">
+                <button type="button" class="btn btn-ghost" id="calPrev" aria-label="Previous month">&lsaquo;</button>
+                <b id="calMonth" class="num"></b>
+                <button type="button" class="btn btn-ghost" id="calNext" aria-label="Next month">&rsaquo;</button>
+              </div>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+          </div>
           <div class="pnl-toolbar">
             <div class="segmented" id="pnlPeriod" role="tablist" aria-label="P&amp;L period">
               <button type="button" role="tab" data-p="day" class="active" aria-selected="true">Day</button>
