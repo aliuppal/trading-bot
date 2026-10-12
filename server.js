@@ -170,6 +170,11 @@ app.post('/api/chat', wrap(async (req, res) => {
 app.post('/api/settings', wrap(async (req, res) => {
   const before = bot.state.settings.model || 'ifvg';
   const out = await bot.updateSettings(req.body || {});
+  // breakeven changed: open trades of the selected model pick it up too
+  if (req.body?.breakevenAtR !== undefined) {
+    await Promise.all(bots.slice(1).map((b) => b.load()));
+    await Promise.all(bots.map((b) => b.applyBreakeven(Number(out.breakevenAtR) || 0, out.model || 'ifvg')));
+  }
   if ((out.model || 'ifvg') !== before) {
     // model switched: scan every symbol with the new model right away, so the dashboard shows it at once
     await Promise.all(bots.slice(1).map((b) => b.load()));

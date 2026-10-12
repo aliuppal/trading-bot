@@ -694,3 +694,19 @@ test('weekend pause: off on Saturday, back on Monday; manual switch is respected
   assert.equal(await bot.weekendGuard(), 'resumed');
   assert.equal(bot.state.running, true);
 });
+
+test('reviewMinutes: 5m swings every 2 min (any model), scalps 3, 15m swings 30', async () => {
+  const { reviewMinutes } = await import('../src/bot.js');
+  assert.equal(reviewMinutes({ category: 'swing', granularity: 300 }), 2);
+  assert.equal(reviewMinutes({ category: 'swing', granularity: 300, reviewEvery: 5 }), 2);
+  assert.equal(reviewMinutes({ category: 'scalp', granularity: 60, reviewEvery: 3 }), 3);
+  assert.equal(reviewMinutes({ category: 'swing', granularity: 900 }), 30);
+});
+
+test('checkBracket: breakeven switched on mid-trade ignores price action before it', () => {
+  const t = { side: 'short', entryPrice: 100, stop: 110, initialStop: 110, target: 70, entryTime: new Date(0).toISOString(), breakevenAtR: 1, breakevenSince: new Date(5000).toISOString() };
+  // 1R (90) was reached at t=2000, before breakeven was switched on: no move, and no retroactive stop at the entry
+  assert.equal(checkBracket(t, [{ time: 2000, low: 89, high: 101 }, { time: 6000, low: 95, high: 101 }], 99, 7000), null);
+  // reached after it was switched on: the stop moves
+  assert.deepEqual(checkBracket(t, [{ time: 6000, low: 89, high: 99 }], 95, 7000), { breakevenAt: 6000 });
+});

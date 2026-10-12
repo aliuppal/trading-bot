@@ -476,7 +476,7 @@ const JEV_ONLY_QUESTIONS = {
   },
   style: {
     type: 'choice',
-    instructions: 'If trading: a quick scalp (1m structure, reviewed every 3 min) or a swing (5m structure, reviewed every 5 min)?',
+    instructions: 'If trading: a quick scalp (1m structure, reviewed every 3 min) or a swing (5m structure, reviewed every 2 min)?',
     criteria: { SCALP: 'A short, fast move to nearby liquidity', SWING: 'A larger move to further liquidity' },
   },
   size: JEV_QUESTIONS.size,

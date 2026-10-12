@@ -105,10 +105,12 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
   const initialStop = trade.initialStop ?? trade.stop;
   let beAt = trade.breakeven ? new Date(trade.breakevenAt || trade.entryTime).getTime() : null;
   let beLevel = breakevenLevel(trade);
+  // breakeven switched on while the trade was open: only price action from then on counts
+  const beSince = trade.breakevenSince ? Date.parse(trade.breakevenSince) : 0;
   const stopAt = (t) => (beAt !== null && t > beAt ? trade.entryPrice : initialStop);
   const stopHit = (lo, hi, stop) => (short ? hi >= stop : lo <= stop);
   const targetHit = (lo, hi) => (short ? lo <= trade.target : hi >= trade.target);
-  const reached = (lo, hi) => beLevel !== null && (short ? lo <= beLevel : hi >= beLevel);
+  const reached = (t, lo, hi) => beLevel !== null && t >= beSince && (short ? lo <= beLevel : hi >= beLevel);
   let pLevel = trade.partialLevel && !trade.partial ? trade.partialLevel : null;
   let partialAt = null;
   const partialHit = (lo, hi) => pLevel !== null && (short ? lo <= pLevel : hi >= pLevel);
@@ -121,7 +123,7 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
     const stop = stopAt(t);
     if (stopHit(lo, hi, stop)) return exit(stop);
     if (targetHit(lo, hi)) return { exitPrice: trade.target, reason: 'target', ...moved() };
-    if (reached(lo, hi)) { beAt = t; beLevel = null; }
+    if (reached(t, lo, hi)) { beAt = t; beLevel = null; }
     // first internal liquidity: part of the position is taken off and the stop goes to the entry
     if (partialHit(lo, hi)) { partialAt = t; pLevel = null; if (beAt === null) beAt = t; beLevel = null; }
   }
@@ -129,12 +131,13 @@ export function checkBracket(trade, candles, price, now = Date.now()) {
   return Object.keys(m).length ? m : null;
 }
 
-/** Minutes between Jev reviews of an open trade: 3 for scalps and 5m swings, 30 for 15m swings. */
+/** Minutes between Jev reviews of an open trade: 3 for scalps, 2 for 5m swings, 30 for 15m swings. */
 export function reviewMinutes(trade) {
-  if (trade.reviewEvery) return trade.reviewEvery; // Jev model: 3 min scalps, 5 min swings
   const g = trade.granularity || 900;
+  if (trade.category !== 'scalp' && g === 300) return 2; // 5m swings (all models)
+  if (trade.reviewEvery) return trade.reviewEvery; // Jev model: 3 min scalps
   if (trade.category === 'scalp' || g <= 60) return 3; // scalps (1m / 2m / 3m)
-  return g <= 300 ? 3 : 30;
+  return g < 300 ? 3 : 30;
 }
 
 /** Is the open trade due for a Jev review (period counted from the last review, or from the entry)? */
@@ -404,7 +407,8 @@ export class TradingBot {
     s.riskReward = Math.min(10, Math.max(0.5, Number(s.riskReward ?? 1)));
     // Breakeven trigger (in R) must sit before the target; 0 = off.
     s.breakevenAtR = Math.max(0, Number(s.breakevenAtR ?? 0));
-    if (s.breakevenAtR >= s.riskReward) s.breakevenAtR = 0;
+    // with a fixed R:R target the breakeven trigger must sit before it; liquidity targets are set per trade
+    if ((s.targetMode ?? 'rr') === 'rr' && s.breakevenAtR >= s.riskReward) s.breakevenAtR = 0;
     s.maxLeverage = Math.min(125, Math.max(1, Math.round(s.maxLeverage ?? 5))); // Binance caps each symbol lower (BTC 125x, alts 50-75x)
     s.minStopPct = Math.min(2, Math.max(0.05, Number(s.minStopPct ?? 0.15))); // smallest stop distance, % of price
     await this.save();
@@ -551,6 +555,19 @@ export class TradingBot {
       time: new Date(this.now()).toISOString(), price: fill, action: short ? 'BUY' : 'SELL', label: short ? 'PARTIAL SHORT' : 'PARTIAL LONG', source: 'bracket', executed: true, tradeId: trade.id,
       note: `Took ${Math.round(f * 100)}% off at first internal liquidity ${fill} (+${trade.partial.r}R, $${trade.partial.pnl}) · stop to breakeven`,
     });
+  }
+
+  /** Breakeven setting changed: open trades of the model (not yet at breakeven) use it from now on. */
+  async applyBreakeven(beR, model) {
+    const trades = await this.trades();
+    let n = 0;
+    for (const t of trades) {
+      if (t.status !== 'open' || t.breakeven || (t.model || 'ifvg') !== model || (Number(t.breakevenAtR) || 0) === beR) continue;
+      Object.assign(t, { breakevenAtR: beR, breakevenSince: new Date(this.now()).toISOString() });
+      n++;
+    }
+    if (n) await this.kv.set('trades', trades);
+    return n;
   }
 
   /** The trade reached its breakeven level: from here on its stop sits at the entry. */
@@ -891,7 +908,7 @@ export class TradingBot {
   /**
    * Jev model: no pattern. Every 3 min (per symbol, no open trade) Jev reads price, structure and liquidity and
    * decides BUY / SELL / HOLD and SCALP / SWING; the stop goes beyond the recent swing (1m for scalps, 5m for swings)
-   * and the target on liquidity. Open trades are reviewed every 3 min (scalps) / 5 min (swings) and Jev may close them.
+   * and the target on liquidity. Open trades are reviewed every 3 min (scalps) / 2 min (swings) and Jev may close them.
    * Fills entry (the decision log row) and returns the scan outcome class.
    */
   async runJevOnly(entry, s, { swingLeft, scalpLeft }) {
@@ -954,7 +971,7 @@ export class TradingBot {
       direction: side === 'long' ? 'bullish' : 'bearish',
       top: side === 'long' ? price : extreme, bottom: side === 'long' ? extreme : price, swingStop: extreme,
       id: `jev:${this.symbol}:${entry.time}`, granularity: g, category: style, model: 'jev', grade: 'JEV',
-      reviewEvery: style === 'scalp' ? 3 : 5, ageCandles: 0, formedAt: Date.parse(entry.time), invertedAt: Date.parse(entry.time),
+      reviewEvery: style === 'scalp' ? 3 : 2, ageCandles: 0, formedAt: Date.parse(entry.time), invertedAt: Date.parse(entry.time),
       qualityReasons: [`Jev model: Jev ${decision.action} ${Math.round(decision.confidence * 100)}%, ${style}`],
     };
     const res = await this.openTrade({ side, setup, decision, account, price, candles: sc, liquidity, zones: [] });
