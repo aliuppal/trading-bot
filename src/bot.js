@@ -167,6 +167,18 @@ const SIDE_FOR = { bullish: 'long', bearish: 'short' };
 const ENTRY_ACTION = { long: 'BUY', short: 'SELL' };
 const EXIT_ACTION = { long: 'SELL', short: 'BUY' };
 
+/** Models that use the IFVG scan and filters. */
+const isIfvg = (model) => model === 'ifvg' || model === 'ifvg_nojev';
+
+/**
+ * IFVG (no Jev): the rules decide. A qualifying setup is taken (BUY on bullish, SELL on bearish) and an opposite
+ * IFVG closes the open trade. Leverage 1 = the lowest leverage that fits the risk size.
+ */
+export function rulesDecision({ want, open, opposite, s = {} }) {
+  const action = open ? (opposite ? EXIT_ACTION[open.side || 'long'] : 'HOLD') : want ? ENTRY_ACTION[want] : 'HOLD';
+  return { action, confidence: 1, sizePct: action === 'HOLD' ? 0 : s.maxTradePct ?? 10, leverage: 1, reasoning: 'IFVG (no Jev): rules only, every qualifying setup is taken.', source: 'rules (no Jev)' };
+}
+
 const tfName = (s) => (s >= 3600 ? `${s / 3600}h` : `${s / 60}m`);
 const hhmm = (t) => new Date(t).toISOString().slice(11, 16);
 
@@ -870,7 +882,7 @@ export class TradingBot {
     const open = (await this.trades()).find((t) => t.status === 'open');
     if (model === 'jev') return this.jevModelView(s, open);
     // the selected model's own scan (IFVG, ICT 2022, Unicorn, AMD, Forever)
-    const scan = model === 'ifvg'
+    const scan = isIfvg(model)
       ? await scanSetups(this.market, s, this.now(), { pairMarket: this.pairMarket })
       : await scanModel(model, this.market, s, this.now(), { pairMarket: this.pairMarket });
     const indicators = summarize(scan.candles);
@@ -878,8 +890,17 @@ export class TradingBot {
     const name = MODELS[model]?.name || model;
     const base = {
       symbol: this.symbol, price: indicators.price, open: open ? open.side || 'long' : null, note: scan.note || null,
-      setup: st ? `${name}: ${st.category} ${st.granularity / 60}m ${st.direction}${model === 'ifvg' ? ' IFVG' : ' setup'}${st.grade ? ` (${st.grade})` : ''}` : null,
+      setup: st ? `${name}: ${st.category} ${st.granularity / 60}m ${st.direction}${isIfvg(model) ? ' IFVG' : ' setup'}${st.grade ? ` (${st.grade})` : ''}` : null,
     };
+    // IFVG (no Jev): the rules alone decide, nothing to ask
+    if (model === 'ifvg_nojev') {
+      const want = st ? SIDE_FOR[st.direction] : null;
+      return {
+        ...base, action: want ? ENTRY_ACTION[want] : 'HOLD', confidence: want ? 1 : null, noJev: true,
+        botAction: open ? `managing the open ${open.side || 'long'} (stop / target; an opposite IFVG closes it)`
+          : st ? `rules: ${want.toUpperCase()} on the next scan unless a filter or limit blocks it` : 'waiting for an IFVG setup',
+      };
+    }
     if (!this.ai.apiKey || this.ai.provider !== 'jev') return { ...base, error: 'Jev key not set' };
     const account = await this.broker.getAccount(indicators.price).catch(() => ({ cash: 0, equity: 0 }));
     const d = await askJev({
@@ -1073,7 +1094,7 @@ export class TradingBot {
         : `${day}: no closed trades yet`;
       try {
         const experience = [rec.text, ...effects.map((e) => `earlier change ${e.text}`)].filter(Boolean).join(' | ');
-        const web = await researchSuggestions({ modelName: MODELS[model]?.name || model, rules: MODEL_RULES[model] || '', stats, experience, ignoreKeys: model === 'jev' ? PATTERN_ONLY : [], settings: s, apiKey: this.ai.apiKey, fetchImpl: this.fetch });
+        const web = await researchSuggestions({ modelName: MODELS[model]?.name || model, rules: MODEL_RULES[model] || '', stats, experience, ignoreKeys: model === 'jev' ? PATTERN_ONLY : model === 'ifvg_nojev' ? ['minConfidence'] : [], settings: s, apiKey: this.ai.apiKey, fetchImpl: this.fetch });
         for (const w of web) {
           out.push({ id: `S${day}-${out.length}-${model}`, day, model, title: w.title, detail: w.detail, patch: w.patch, sources: w.sources, origin: `web research (${w.model})`, status: w.patch ? 'pending' : 'info', createdAt: new Date(this.now()).toISOString() });
         }
@@ -1082,11 +1103,12 @@ export class TradingBot {
       }
     }
     // Jev model: pattern-only settings (displacement, sweep, session filter, stop mode, early exit...) do nothing, drop them
-    if (model === 'jev') {
+    const skipKeys = model === 'jev' ? PATTERN_ONLY : model === 'ifvg_nojev' ? ['minConfidence'] : [];
+    if (skipKeys.length) {
       for (let i = out.length - 1; i >= 0; i--) {
         const p = out[i].patch;
         if (!p) continue;
-        for (const k of PATTERN_ONLY) delete p[k];
+        for (const k of skipKeys) delete p[k];
         if (Object.keys(p).length) continue;
         if (out[i].origin?.startsWith('web research')) Object.assign(out[i], { patch: null, status: 'info' });
         else out.splice(i, 1);
@@ -1151,7 +1173,7 @@ export class TradingBot {
         return entry;
       }
       const scanSettings = { ...s, swingEnabled: s.swingEnabled !== false && swingLeft, scalpEnabled: s.scalpEnabled !== false && scalpLeft };
-      const scan = model === 'ifvg'
+      const scan = isIfvg(model)
         ? await scanSetups(this.market, scanSettings, this.now(), { pairMarket: this.pairMarket })
         : await scanModel(model, this.market, scanSettings, this.now(), { pairMarket: this.pairMarket });
       let { setup } = scan;
@@ -1250,7 +1272,7 @@ export class TradingBot {
           }
         }
       }
-      if (model === 'ifvg' && setup && !setup.htf && !setup.sweep && setup.grade !== 'A+' && s.requireHtfTap !== false) {
+      if (isIfvg(model) && setup && !setup.htf && !setup.sweep && setup.grade !== 'A+' && s.requireHtfTap !== false) {
         scan.note = `${setup.category} ${setup.granularity / 60}m: ${setup.qualityReasons.at(-1)}, not A+ and no FVG tap`;
         scan.setup = null;
         setup = null;
@@ -1270,7 +1292,8 @@ export class TradingBot {
       const strictExit = s.earlyExit === 'displacement';
       const opposite = Boolean(open && want && want !== (open.side || 'long') && !asked && (!strictExit || setup.displacement));
       // Periodic risk review of the open trade: every 20 min (5m entries) / 60 min (15m entries).
-      const review = Boolean(open && !opposite && !strictExit && reviewDue(open, this.now()));
+      // IFVG (no Jev): no timed reviews, trades run to stop / target (an opposite IFVG still closes them)
+      const review = Boolean(open && !opposite && !strictExit && model !== 'ifvg_nojev' && reviewDue(open, this.now()));
 
       let reason = null; // why the AI is not consulted / an entry can't be taken
       if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
@@ -1296,7 +1319,7 @@ export class TradingBot {
           const tb = bracketFor(want, price, this.stopZone(setup), { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
           if (tb) targets = liquidityTargets(liquidity, want, price, tb.risk);
         }
-        const decision = await decide(
+        const decision = model === 'ifvg_nojev' ? rulesDecision({ want, open, opposite, s }) : await decide(
           {
             indicators,
             account,

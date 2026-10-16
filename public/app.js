@@ -801,6 +801,7 @@ function renderModel(s) {
   if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
   sel.value = s.model || 'ifvg';
   $('modelHint').textContent = s.model === 'jev' ? 'Jev decides and manages trades by itself: no pattern filter.'
+    : s.model === 'ifvg_nojev' ? 'IFVG setups, taken by the rules alone: no Jev confirmation or reviews.'
     : (s.model || 'ifvg') === 'ifvg' ? 'IFVG setups, Jev confirms each entry and manages the trade.'
     : `${modelName(s.model)} setups, Jev confirms each entry and manages the trade.`;
 }
@@ -812,7 +813,7 @@ $('viewStrategyBtn').onclick = () => {
   const m = status?.model || 'ifvg';
   $('strategyTitle').textContent = `Strategy · ${modelName(m)}`;
   $('modelRulesText').textContent = status?.modelRules?.[m] || '';
-  $('ifvgRules').hidden = m !== 'ifvg';
+  $('ifvgRules').hidden = m !== 'ifvg' && m !== 'ifvg_nojev';
   openModal('strategyModal');
 };
 // Configure strategy: General / Risk / Entry / Swing / Scalp tabs (all fields are still saved together)

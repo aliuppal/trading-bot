@@ -710,3 +710,13 @@ test('checkBracket: breakeven switched on mid-trade ignores price action before 
   // reached after it was switched on: the stop moves
   assert.deepEqual(checkBracket(t, [{ time: 6000, low: 89, high: 99 }], 95, 7000), { breakevenAt: 6000 });
 });
+
+test('rulesDecision (IFVG no Jev): takes the setup, closes on an opposite IFVG, otherwise holds', async () => {
+  const { rulesDecision } = await import('../src/bot.js');
+  assert.equal(rulesDecision({ want: 'long' }).action, 'BUY');
+  assert.equal(rulesDecision({ want: 'short' }).action, 'SELL');
+  assert.equal(rulesDecision({ want: 'short' }).confidence, 1);
+  assert.equal(rulesDecision({ want: null }).action, 'HOLD');
+  assert.equal(rulesDecision({ want: 'short', open: { side: 'long' }, opposite: true }).action, 'SELL');
+  assert.equal(rulesDecision({ want: 'long', open: { side: 'long' }, opposite: false }).action, 'HOLD');
+});

@@ -16,6 +16,7 @@ import { loadHtfZones, tfLabel, atr14 } from './strategy.js';
 
 export const MODELS = {
   ifvg: { name: 'IFVG', jev: 'assists' },
+  ifvg_nojev: { name: 'IFVG (no Jev)', jev: 'none' },
   jev: { name: 'Jev', jev: 'decides' },
   ict2022: { name: 'ICT 2022', jev: 'assists' },
   unicorn: { name: 'Unicorn', jev: 'assists' },
@@ -26,6 +27,7 @@ export const MODELS = {
 /** Short rule text per model, for Jev and the strategy pop-up. */
 export const MODEL_RULES = {
   ifvg: 'IFVG: first tap of an unmitigated HTF FVG (or an ITH/ITL sweep), then an inverse FVG on the entry timeframe within 3-7 candles counted from the first FVG of the series.',
+  ifvg_nojev: 'IFVG (no Jev): exactly the IFVG rules and filters, but every qualifying setup is taken without asking Jev. No Jev reviews: trades run to stop / target / breakeven, and an opposite IFVG closes them. Leverage is the lowest that fits the risk size.',
   jev: 'Jev: no pattern filter. Jev reads price, structure and liquidity and decides BUY / SELL / HOLD by itself, picks scalp or swing, and manages the trade (reviews every 3 min for scalps, 2 min for swings).',
   ict2022: 'ICT 2022: price sweeps a swing low (longs) / swing high (shorts), then a displacement candle closes through the most recent opposing swing (market structure shift). Entry on the retrace into the FVG of that displacement leg; stop beyond the swept extreme; target the liquidity on the other side.',
   unicorn: 'Unicorn: sweep of a swing, displacement through structure, and an FVG of that leg that overlaps the breaker (the last opposite candle before the move). Entry on the retrace into the breaker + FVG overlap; stop beyond the breaker; invalid on a close through the breaker.',
