@@ -9,7 +9,7 @@ import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } fr
 import { trackRecord, approvedEffects, experienceSuggestions } from './learn.js';
 
 /** Settings only the pattern models use; the Jev model ignores them, so suggestions for it skip them. */
-const PATTERN_ONLY = ['requireDisplacement', 'requireSweep', 'sessionFilter', 'stopMode', 'earlyExit', 'smt', 'ifvgMaxAge', 'minGapAtr', 'requireHtfTap'];
+const PATTERN_ONLY = ['requireDisplacement', 'requireSweep', 'stopMode', 'earlyExit', 'smt', 'ifvgMaxAge', 'minGapAtr', 'requireHtfTap'];
 
 const MIN_ORDER_USD = 10;
 const MAX_TRADES_KEPT = 200;
@@ -952,6 +952,7 @@ export class TradingBot {
     else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
     else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `Jev model: waiting for a free slot (${openAll}/${s.maxOpenTrades ?? 2} open)`;
     else if (!open && !swingLeft && !scalpLeft) reason = 'Daily swing and scalp limits reached';
+    else if (!open && s.sessionFilter && !inSession(this.now())) reason = 'Jev model: outside the London / New York session';
     this.state.lastScan = { time: entry.time, note: reason || (review ? 'Jev reviewing open trade (Jev model)' : 'Asked Jev (Jev model)') };
     if (reason) { Object.assign(entry, { action: 'HOLD', note: reason, executed: false }); return open ? 'inTrade' : 'other'; }
     if (!open) this.state.lastJevAsk = entry.time;

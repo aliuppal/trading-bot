@@ -272,6 +272,7 @@
             </div>
             <div class="cfg-group" data-group="general">
               <label title="Auto-trading switches off Saturday 00:00 UTC and back on Monday 00:00 UTC (if it was on)">Pause on weekends<select name="weekendPause"><option value="true">On (Sat-Sun off)</option><option value="false">Off (trade 7 days)</option></select></label>
+              <label title="On: new entries only during the London open (07:00-10:00 UTC) and New York open / morning (12:30-16:00 UTC). Open trades are managed at all hours.">Trading sessions<select name="sessionFilter"><option value="false">Off (trade all hours)</option><option value="true">On (London + New York opens only)</option></select></label>
               <label title="Before each decision Jev sees how this model did over the last 14 days (per symbol, side, scalp / swing, session and confidence)">Learn from past trades<select name="learnFromTrades"><option value="true">On (Jev sees the track record)</option><option value="false">Off</option></select></label>
               <label>Interval (min)<input name="intervalMinutes" type="number" min="1" step="1" /></label>
               <label>Min confidence<input name="minConfidence" type="number" min="0" max="1" step="0.05" /></label>
