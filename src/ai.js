@@ -192,7 +192,7 @@ export async function researchSuggestions({ llm = process.env.SUGGEST_MODEL || n
 async function researchOnce({ modelName, rules, stats, experience, ignoreKeys = [], settings, apiKey, fetchImpl = fetch, llm }) {
   const keys = Object.fromEntries(Object.entries(SUGGEST_KEYS).filter(([k]) => !ignoreKeys.includes(k)));
   const current = Object.fromEntries(Object.keys(keys).filter((k) => settings[k] !== undefined).map((k) => [k, settings[k]]));
-  const prompt = `You help tune an automated crypto futures day-trading strategy (Binance USD-M, BTC/ETH/BNB/XRP/SOL/DOGE).
+  const prompt = `You help tune an automated crypto futures day-trading strategy (Binance USD-M, BTC/ETH/BNB/XRP/SOL/DOGE and gold XAU).
 Strategy model: ${modelName}. Rules: ${rules}
 Results of the period: ${stats}
 ${experience ? `Track record (our own past trades with this model, and how earlier settings changes worked out): ${experience}\n` : ''}Current settings: ${JSON.stringify(current)}

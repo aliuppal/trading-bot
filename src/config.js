@@ -23,7 +23,7 @@ export const config = {
     baseUrl: process.env.BINANCE_BASE_URL || 'https://demo-fapi.binance.com',
     symbol: process.env.BINANCE_SYMBOL || 'BTCUSDC',
     // Every symbol the bot scans and trades; the first is the primary one (it holds the shared settings)
-    symbols: [...new Set([process.env.BINANCE_SYMBOL || 'BTCUSDC', ...(process.env.BINANCE_SYMBOLS || 'ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT,DOGEUSDT').split(',').map((x) => x.trim()).filter(Boolean)])],
+    symbols: [...new Set([process.env.BINANCE_SYMBOL || 'BTCUSDC', ...(process.env.BINANCE_SYMBOLS || 'ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT,DOGEUSDT,XAUUSDT').split(',').map((x) => x.trim()).filter(Boolean)])],
     leverage: num(process.env.BINANCE_LEVERAGE, 1),
   },
   startingCash: num(process.env.STARTING_CASH, 100000),
