@@ -301,6 +301,7 @@
             <div class="cfg-group" data-group="scalp" hidden>
               <label>Scalp trades<select name="scalpEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
               <label>Scalp trades / day<input name="maxScalpPerDay" type="number" min="0" max="50" step="1" /></label>
+              <label title="IFVG models: first tap of a 1h / 2h / 4h FVG, then an IFVG on 2m (preferred) or 1m, target the opposing 5m / 15m FVG 0.75R-5R away. Counts toward the scalp limit.">Mech entries<select name="mechEnabled"><option value="true">On (1h-4h tap, 2m / 1m IFVG, 5m / 15m FVG target)</option><option value="false">Off</option></select></label>
             </div>
             <button type="submit" class="btn btn-ghost cfg-save">Save settings</button>
           </form>

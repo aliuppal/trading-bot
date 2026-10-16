@@ -215,7 +215,7 @@ const px = fmtPx;
  */
 export function describeSetup(setup, side) {
   if (!setup) return '';
-  const parts = [`${setup.grade ? `${setup.grade} ` : ''}${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
+  const parts = [`${setup.grade ? `${setup.grade} ` : ''}${setup.entryModel === 'mech' ? 'MECH ' : ''}${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
   if (setup.qualityReasons?.length) parts.push(setup.qualityReasons.join(' + ').replace(' + -> ', ' -> '));
   // Jev model: no pattern, Jev's own call; the stop sits beyond the recent swing high/low.
   if (setup.model === 'jev') return [...parts, `stop beyond the ${tfName(setup.granularity)} swing ${setup.direction === 'bearish' ? 'high' : 'low'} ${px(setup.swingStop)}`].join(' · ');
@@ -229,7 +229,7 @@ export function describeSetup(setup, side) {
 const sig = (v) => Number(Number(v).toPrecision(8));
 const zoneSummary = (z) => z && {
   id: z.id, direction: z.direction, top: sig(z.top), bottom: sig(z.bottom),
-  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, seriesFvgs: z.seriesFvgs, grade: z.grade, qualityReasons: z.qualityReasons, clearPath: z.clearPath, granularity: z.granularity, category: z.category, displacement: z.displacement,
+  formedAt: z.formedAt, invertedAt: z.invertedAt, ageCandles: z.ageCandles, formationCandles: z.formationCandles, seriesFvgs: z.seriesFvgs, grade: z.grade, qualityReasons: z.qualityReasons, clearPath: z.clearPath, granularity: z.granularity, category: z.category, displacement: z.displacement, ...(z.entryModel && { entryModel: z.entryModel }),
   ...(z.htf && {
     htf: { tf: z.htf.tf, type: z.htf.type, top: sig(z.htf.top), bottom: sig(z.htf.bottom), tappedAt: z.htf.tappedAt },
   }),
@@ -404,7 +404,7 @@ export class TradingBot {
     s.partialPct = Math.min(90, s.partialPct || 0);
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
     // Swing / scalp on-off switches (a disabled type is not scanned at all)
-    for (const k of ['swingEnabled', 'scalpEnabled']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
+    for (const k of ['swingEnabled', 'scalpEnabled', 'mechEnabled']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
     s.entryTimeframes = 'all'; // all entry models, always
     s.ifvgMaxAge = Math.min(7, Math.max(3, Math.round(s.ifvgMaxAge ?? 7)));
     s.intervalMinutes = Math.max(1, s.intervalMinutes);
@@ -1208,6 +1208,18 @@ export class TradingBot {
           if (setup.grade === 'A+' && !setup.clearPath) setup.grade = 'A';
           // Hard rule: no trade with an opposing 30m / 1h / 2h / 4h FVG between entry and the target it would use.
           let tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk)?.price ?? b0.target) : b0.target;
+          // Mech: the target is the nearest opposing 5m / 15m FVG 0.75R-5R away (near edge, far edge when price is inside it)
+          let mech = null;
+          if (setup.entryModel === 'mech') {
+            const far = sd === 'short' ? price - 5 * b0.risk : price + 5 * b0.risk;
+            mech = pathBlockers(scan.zones || [], sd, price, far, ['5m', '15m']).map((z) => {
+              const inside = z.bottom < price && z.top > price;
+              const edge = sd === 'short' ? (inside ? z.bottom : z.top) : (inside ? z.top : z.bottom);
+              return { z, inside, edge, r: Math.abs(price - edge) / b0.risk };
+            }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price) && e.r >= 0.75)
+              .sort((x, y) => Math.abs(x.edge - price) - Math.abs(y.edge - price))[0] || null;
+            if (mech) tgt = mech.edge;
+          }
           let htfBlock = pathBlockers(scan.zones || [], sd, price, tgt, ['30m', '1h', '2h', '4h']);
           // An opposing 30m-4h FVG in the way becomes the target: its near edge, or its far edge (gap fill) when
           // price is already inside it. The trade is skipped only if that target is closer than 0.75R.
@@ -1228,9 +1240,16 @@ export class TradingBot {
               htfBlock = [{ ...first.z, tooClose: first.r }];
             }
           }
+          if (setup.entryModel === 'mech') {
+            if (!mech) htfBlock = [{ tf: '5m/15m', type: sd === 'short' ? 'bullish' : 'bearish', bottom: price, top: price, mechNone: true }];
+            else if (!setup.htfTarget && !htfBlock.length) {
+              setup.htfTarget = { price: mech.edge, tf: mech.z.tf, type: mech.z.type, inside: mech.inside };
+              setup.qualityReasons = [...(setup.qualityReasons || []), `mech target ${mech.z.tf} ${mech.z.type} FVG ${mech.inside ? 'far edge (gap fill)' : 'near edge'} ${fmtPx(mech.edge)} (${mech.r.toFixed(2)}R)`];
+            }
+          }
           // Scalps (HTF FVG tapped -> IFVG on 1m-3m): an opposing 5m / 15m FVG in the way can be the target too
           // (near edge, or far edge when price is inside it), if it is at least 0.75R away.
-          if (setup.category === 'scalp' && !setup.htfTarget && !htfBlock.length) {
+          if (setup.category === 'scalp' && setup.entryModel !== 'mech' && !setup.htfTarget && !htfBlock.length) {
             const ltf = pathBlockers(scan.zones || [], sd, price, tgt, ['5m', '15m']).map((z) => {
               const inside = z.bottom < price && z.top > price;
               const edge = sd === 'short' ? (inside ? z.bottom : z.top) : (inside ? z.top : z.bottom);
@@ -1267,7 +1286,9 @@ export class TradingBot {
           }
           if (htfBlock.length && setup) {
             const z = htfBlock[0];
-            scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: ${z.tf} ${z.type} FVG ${fmtPx(z.bottom)}-${fmtPx(z.top)} in the way${z.tooClose != null ? `, only ${z.tooClose.toFixed(2)}R to it` : ` of TP ${fmtPx(tgt)}`}`;
+            scan.note = z.mechNone
+              ? `mech ${setup.granularity / 60}m ${setup.direction} IFVG skipped: no opposing 5m / 15m FVG 0.75R-5R away to target`
+              : `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped: ${z.tf} ${z.type} FVG ${fmtPx(z.bottom)}-${fmtPx(z.top)} in the way${z.tooClose != null ? `, only ${z.tooClose.toFixed(2)}R to it` : ` of TP ${fmtPx(tgt)}`}`;
             scan.setup = null;
             setup = null;
           }

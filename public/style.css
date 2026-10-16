@@ -538,3 +538,4 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
   .cal-d b, .cal-w b { font-size: 10px; }
   .cal-nav b { min-width: 0; }
 }
+.pill.MECH { color: #A78BFA; background: rgba(167, 139, 250, .1); border-color: rgba(167, 139, 250, .3); }

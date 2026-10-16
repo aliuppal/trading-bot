@@ -25,8 +25,13 @@ const EXP = {
   stopMode: opt.stop || 'zone', earlyExit: opt.exit || 'jev', minGapAtr: Number(opt.gapatr || 0), requireSweep: Boolean(opt.sweep),
   smt: opt.smt || 'off', partialPct: Number(opt.partial || 0), sessionFilter: Boolean(opt.session), requireDisplacement: Boolean(opt.disp),
   targetMode: opt.target || 'rr',
+  mechEnabled: !opt.nomech, // mech: 1h/2h/4h tap -> 2m/1m IFVG -> opposing 5m/15m FVG (--nomech: off, --mechonly: mech alone)
 };
 const CACHE = opt.cache || null;
+const PRODUCT = opt.product || 'BTC-USD'; // --product=ETH-USD: any Coinbase product (SMT pair: ETH for BTC, BTC for the rest)
+const BINANCE = !PRODUCT.includes('-'); // e.g. XAUUSDT, BTCUSDT
+const PAIR = BINANCE ? (PRODUCT === 'BTCUSDT' ? 'ETHUSDT' : 'BTCUSDT') : PRODUCT === 'BTC-USD' ? 'ETH-USD' : 'BTC-USD';
+const candlesFor = (gran, start, end, product) => (BINANCE ? fetchBinance(gran, start, end, product) : fetchRange(gran, start, end, product));
 const MIN = 60000;
 
 class MemKV {
@@ -57,6 +62,19 @@ async function fetchRange(gran, start, end, product = 'BTC-USD') {
   return [...out.values()].sort((a, b) => a.time - b.time);
 }
 
+/** Binance USD-M futures candles in [start, end), oldest first (used when the product looks like a Binance symbol, e.g. XAUUSDT). */
+async function fetchBinance(gran, start, end, symbol) {
+  const iv = { 60: '1m', 300: '5m', 900: '15m', 3600: '1h', 86400: '1d' }[gran];
+  const out = [];
+  for (let t = start; t < end;) {
+    const rows = await getJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${iv}&startTime=${t}&endTime=${end - 1}&limit=1500`);
+    if (!rows.length) break;
+    for (const k of rows) out.push({ time: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] });
+    t = rows.at(-1)[0] + gran * 1000;
+  }
+  return out;
+}
+
 /** Index of the last element with time <= t (binary search). */
 function lastAtOrBefore(arr, t) {
   let lo = 0, hi = arr.length - 1, ans = -1;
@@ -81,14 +99,14 @@ async function main() {
   if (CACHE && fs.existsSync(CACHE)) ({ series, pairSeries } = JSON.parse(fs.readFileSync(CACHE, 'utf8')));
   else {
     series = {
-      60: await fetchRange(60, start - 320 * MIN, end + MIN),
-      300: await fetchRange(300, start - 320 * 5 * MIN, end + MIN),
-      900: await fetchRange(900, start - 320 * 15 * MIN, end + MIN),
-      3600: await fetchRange(3600, start - 320 * 60 * MIN, end + MIN),
-      86400: await fetchRange(86400, start - 35 * 86400000, end + MIN),
+      60: await candlesFor(60, start - 320 * MIN, end + MIN, PRODUCT),
+      300: await candlesFor(300, start - 320 * 5 * MIN, end + MIN, PRODUCT),
+      900: await candlesFor(900, start - 320 * 15 * MIN, end + MIN, PRODUCT),
+      3600: await candlesFor(3600, start - 320 * 60 * MIN, end + MIN, PRODUCT),
+      86400: await candlesFor(86400, start - 35 * 86400000, end + MIN, PRODUCT),
     };
     // ETH for SMT (5m / 15m sweeps)
-    pairSeries = { 300: await fetchRange(300, start - 320 * 5 * MIN, end + MIN, 'ETH-USD'), 900: await fetchRange(900, start - 320 * 15 * MIN, end + MIN, 'ETH-USD') };
+    pairSeries = { 300: await candlesFor(300, start - 320 * 5 * MIN, end + MIN, PAIR), 900: await candlesFor(900, start - 320 * 15 * MIN, end + MIN, PAIR) };
     if (CACHE) fs.writeFileSync(CACHE, JSON.stringify({ series, pairSeries }));
   }
   series[120] = aggregate(series[60], 120);
@@ -143,7 +161,7 @@ async function main() {
   const settings = {
     intervalMinutes: 1, granularity: 300, minConfidence: 0.6, maxPositionPct: 50, maxTradePct: 10,
     maxTradesPerDay: 20, maxSwingPerDay: 10, maxScalpPerDay: 10, ifvgMaxAge: 7, requireHtfTap: true,
-    entryTimeframes: 'all', scalpEnabled: true, swingEnabled: true, ...EXP, riskReward: RR, breakevenAtR: BE, minStopPct: MINSTOP, maxLeverage: 5,
+    entryTimeframes: 'all', scalpEnabled: !opt.mechonly, swingEnabled: !opt.mechonly, ...EXP, riskReward: RR, breakevenAtR: BE, minStopPct: MINSTOP, maxLeverage: 5,
   };
   const ai = MODE === 'jev'
     ? { provider: 'jev', apiKey: process.env.OPENROUTER_API_KEY, model: 'typesafe/jev-1.13' }
@@ -175,12 +193,13 @@ async function main() {
   console.log(`Account: $5,000 (simulated, 1x, ${FEE}% fee/side) · 1:${RR} R:R${BE ? ` · breakeven at +${BE}R` : ''} · min stop ${MINSTOP}%${ONLY.length ? ` · only ${ONLY.join('+')}` : ''}${NOSIGNAL ? ' · no early signal exits' : ''} · 10% per trade · limits 5 swing / 5 scalp / 10 per day\n`);
   if (!opt.quiet) console.log('Trades:');
   for (const t of opt.quiet ? [] : closed) {
-    console.log(`  ${t.entryTime.slice(5, 16).replace('T', ' ')} ${String(t.ifvg?.grade || '').padEnd(2)} ${(t.category || 'swing').padEnd(5)} ${t.side.padEnd(5)} ${String(t.granularity / 60 + 'm').padEnd(3)} ${t.entryPrice.toFixed(0)} -> ${t.exitPrice.toFixed(0)} ${String(t.exitReason).padEnd(9)} ${t.status.toUpperCase().padEnd(9)} ${(t.r > 0 ? '+' : '') + t.r}R ${fmt(t.pnl)}`);
+    console.log(`  ${t.entryTime.slice(5, 16).replace('T', ' ')} ${String(t.ifvg?.grade || '').padEnd(2)} ${(t.ifvg?.entryModel === 'mech' ? 'mech' : t.category || 'swing').padEnd(5)} ${t.side.padEnd(5)} ${String(t.granularity / 60 + 'm').padEnd(3)} ${t.entryPrice.toFixed(0)} -> ${t.exitPrice.toFixed(0)} ${String(t.exitReason).padEnd(9)} ${t.status.toUpperCase().padEnd(9)} ${(t.r > 0 ? '+' : '') + t.r}R ${fmt(t.pnl)}`);
     console.log(`        ${t.setupReason || ''}`);
   }
   for (const t of open) console.log(`  ${t.entryTime.slice(5, 16).replace('T', ' ')} ${t.side} still OPEN at the end (entry ${t.entryPrice.toFixed(0)})`);
   console.log(`\nSummary   ${stat(closed)}`);
-  for (const cat of ['swing', 'scalp']) console.log(`  ${cat.padEnd(6)}  ${stat(closed.filter((t) => (t.category || 'swing') === cat))}`);
+  for (const cat of ['swing', 'scalp']) console.log(`  ${cat.padEnd(6)}  ${stat(closed.filter((t) => (t.category || 'swing') === cat && t.ifvg?.entryModel !== 'mech'))}`);
+  console.log(`  mech    ${stat(closed.filter((t) => t.ifvg?.entryModel === 'mech'))}`);
   console.log(`  A+      ${stat(closed.filter((t) => t.ifvg?.grade === 'A+'))}`);
   for (const side of ['long', 'short']) console.log(`  ${side.padEnd(6)}  ${stat(closed.filter((t) => t.side === side))}`);
   console.log('By day (UTC, exit date):');

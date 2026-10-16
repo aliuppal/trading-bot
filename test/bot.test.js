@@ -720,3 +720,9 @@ test('rulesDecision (IFVG no Jev): takes the setup, closes on an opposite IFVG, 
   assert.equal(rulesDecision({ want: 'short', open: { side: 'long' }, opposite: true }).action, 'SELL');
   assert.equal(rulesDecision({ want: 'long', open: { side: 'long' }, opposite: false }).action, 'HOLD');
 });
+
+test('describeSetup labels mech entries', async () => {
+  const { describeSetup } = await import('../src/bot.js');
+  const txt = describeSetup({ entryModel: 'mech', grade: 'A', category: 'scalp', direction: 'bearish', granularity: 120, top: 2, bottom: 1, ageCandles: 0, formationCandles: 3 }, 'short');
+  assert.match(txt, /^A MECH SCALP short/);
+});
