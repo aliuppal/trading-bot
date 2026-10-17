@@ -1294,7 +1294,7 @@ export class TradingBot {
           }
         }
       }
-      if (isIfvg(model) && setup && !setup.htf && !setup.sweep && setup.grade !== 'A+' && s.requireHtfTap !== false) {
+      if (isIfvg(model) && setup && !setup.htf && !setup.sweep && s.requireHtfTap !== false) {
         scan.note = `${setup.category} ${setup.granularity / 60}m: ${setup.qualityReasons.at(-1)}, not A+ and no FVG tap`;
         scan.setup = null;
         setup = null;

@@ -106,13 +106,16 @@ test('swing setups are labelled swing', async () => {
   assert.equal(r.setup?.category, 'swing');
 });
 
-test('A+ setup: perfect IFVG + displacement + draw on liquidity is tradeable without an HTF tap', async () => {
+test('A+ setup still needs context: without an HTF tap or sweep it is skipped, with the check off it grades A+', async () => {
   const flatH1 = Array.from({ length: 40 }, (_, i) => flat(NOW - (40 - i) * H1, 65000)); // no HTF FVG at all
   const liqAbove = { draw: 'above', lrlr: { side: 'above', prices: [61000, 60800, 60600] }, above: [{ type: 'EQH', price: 61000 }], below: [] };
-  const r = await scanSetups(market({ 3600: flatH1, default: ifvgCandles(NOW) }), { entryTimeframes: '900', scalpEnabled: false }, NOW, { liquidity: liqAbove });
-  assert.equal(r.setup?.grade, 'A+', r.note);
-  assert.equal(r.setup.htf, null);
-  assert.match(r.setup.qualityReasons.join(' '), /perfect IFVG \(2 candles\).*displacement.*draw on liquidity above.*LRLR above/);
+  const mk = () => market({ 3600: flatH1, default: ifvgCandles(NOW) });
+  const r = await scanSetups(mk(), { entryTimeframes: '900', scalpEnabled: false, mechEnabled: false }, NOW, { liquidity: liqAbove });
+  assert.equal(r.setup, null, 'A+ without a tap or sweep is not taken');
+  assert.match(r.note, /no unmitigated 1h\/2h\/4h FVG tap and no ITL sweep/);
+  const off = await scanSetups(mk(), { entryTimeframes: '900', scalpEnabled: false, mechEnabled: false, requireHtfTap: false }, NOW, { liquidity: liqAbove });
+  assert.equal(off.setup?.grade, 'A+', off.note);
+  assert.match(off.setup.qualityReasons.join(' '), /perfect IFVG \(2 candles\).*displacement.*draw on liquidity above.*LRLR above/);
 });
 
 test('not A+ when the draw on liquidity is the other way: still needs the HTF tap', async () => {

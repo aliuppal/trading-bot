@@ -15,7 +15,7 @@ import { liquidityLevels, findSweep } from './liquidity.js';
 /**
  * Setup grade.
  *   A+  perfect IFVG (gap -> inversion in <= 5 candles) + displacement candle + draw on liquidity in the trade
- *       direction (an LRLR that way adds to it). Tradeable even without a higher-timeframe FVG tap.
+ *       direction (an LRLR that way adds to it). Like every setup it still needs context (FVG tap or sweep).
  *   A+  also: context (unmitigated FVG tap or ITH/ITL sweep) + displacement + LRLR in the trade direction.
  *   A   the normal setup: IFVG after a tap of a same-direction higher-timeframe FVG or an ITH/ITL sweep.
  */
@@ -214,8 +214,8 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
   const win = closed.slice(from);
   const swingStop = s.direction === 'bearish' ? Math.max(...win.map((c) => c.high)) : Math.min(...win.map((c) => c.low));
   if (opts.mech && !htf) { r.note = `${tag}: ${s.direction} IFVG, no first tap of a ${MECH_ZONES.join('/')} FVG`; return r; }
-  // A+ (perfect IFVG + displacement + toward liquidity) is tradeable without either.
-  if (settings.requireHtfTap !== false && !htf && !sweep && quality.grade !== 'A+') {
+  // Every setup needs context (a first FVG tap or a sweep), A+ included.
+  if (settings.requireHtfTap !== false && !htf && !sweep) {
     r.note = `${tag}: ${s.direction} IFVG, no unmitigated ${allowed.join('/')} FVG tap and no ${s.direction === 'bullish' ? 'ITL' : 'ITH'} sweep`;
     return r;
   }
