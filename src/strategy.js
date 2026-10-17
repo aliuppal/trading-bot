@@ -181,7 +181,9 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
   }
   // or a raid of intermediate-term liquidity: ITL before a long, ITH before a short
   const sweepTf = SWEEP_TF[category];
-  sweep = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction, since);
+  // the swept level sits beyond the entry: an ITL below it before a long, an ITH above it before a short
+  const entryPx = closed.at(-1).close;
+  sweep = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction, since, { entry: entryPx });
   if (sweep) sweep = { ...sweep, tf: tfLabel(sweepTf) };
   // SMT: the correlated market (BTC <-> ETH) did NOT take the same liquidity
   let smt = null;
@@ -191,7 +193,7 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
   }
   // The liquidity on the target side was just swept (sell-side low before a short, buy-side high before a long)
   // and no LRLR runs that way: the draw is used up, price tends to reverse. No trade.
-  const opp = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction === 'bullish' ? 'bearish' : 'bullish', since);
+  const opp = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction === 'bullish' ? 'bearish' : 'bullish', since, { entry: entryPx });
   const toward = s.direction === 'bullish' ? 'above' : 'below';
   if (opp && liquidity?.lrlr?.side !== toward) {
     r.note = `${tag}: ${s.direction} IFVG skipped: ${tfLabel(sweepTf)} ${opp.type} ${Number(opp.price.toPrecision(6))} on the target side was already swept and no LRLR ${toward}`;

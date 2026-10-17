@@ -106,3 +106,14 @@ test('ITL sweep: wick below the ITL and a close back above it', async () => {
   for (let i = 17; i < 22; i++) broke.push(sbar(i, 90, 94.5, 94, 92)); // closes below for good: a break, not a sweep
   assert.equal(findSweep(broke, 'bullish', 0), null);
 });
+
+test('ITL sweep counts only below the entry, and not once price closes back below it', async () => {
+  const { findSweep } = await import('../src/liquidity.js');
+  const lows = [100, 99, 99, 98, 99, 100, 99, 99, 95, 99, 100, 99, 99, 97, 99, 100, 100];
+  const c = lows.map((l, i) => sbar(i, l, l + 2));
+  c.push(sbar(17, 94, 99, 98, 96.5)); // raid of the ITL 95, closes back above
+  assert.equal(findSweep(c, 'bullish', 0, { entry: 96.5 }).price, 95, 'swept low below the long entry');
+  assert.equal(findSweep(c, 'bullish', 0, { entry: 94.8 }), null, 'swept low above the entry is not a sweep before this long');
+  const lost = [...c, sbar(18, 93, 96, 95.5, 94.5)]; // a later close back below 95: the sweep failed
+  assert.equal(findSweep(lost, 'bullish', 0, { entry: 96 }), null);
+});

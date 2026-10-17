@@ -41,24 +41,28 @@ export function intermediateSwings(candles, n = 2) {
 /**
  * Liquidity sweep before an entry: a candle at or after `since` traded beyond an ITL (bullish) / ITH (bearish)
  * and price closed back inside within 3 candles (a raid on the stops, not a break).
- * Only swing points confirmed before the sweep count. Returns { type: 'ITL'|'ITH', price, sweptAt } (latest) or null.
+ * Only swing points confirmed before the sweep count. The swept level must sit on the far side of the entry (an ITL
+ * below the entry before a long, an ITH above it before a short), and no candle may close back beyond it after the
+ * reclaim (that is a break, not a sweep). Returns { type: 'ITL'|'ITH', price, sweptAt } (latest) or null.
  */
-export function findSweep(candles, direction, since, { n = 2 } = {}) {
+export function findSweep(candles, direction, since, { n = 2, entry = null } = {}) {
   if (!candles?.length) return null;
   const it = intermediateSwings(candles, n);
   const bull = direction === 'bullish';
   const pts = bull ? it.lows : it.highs;
   let best = null;
   for (const p of pts) {
+    if (entry != null && (bull ? p.price >= entry : p.price <= entry)) continue;
     for (let j = p.index + n + 1; j < candles.length; j++) {
       const c = candles[j];
       const beyond = bull ? c.low < p.price : c.high > p.price;
       if (!beyond) continue;
       // first raid of this level decides
       if (c.time >= since) {
-        let back = false;
-        for (let k = j; k < Math.min(candles.length, j + 4); k++) if (bull ? candles[k].close > p.price : candles[k].close < p.price) { back = true; break; }
-        if (back && (!best || c.time > best.sweptAt)) best = { type: bull ? 'ITL' : 'ITH', price: p.price, sweptAt: c.time };
+        let back = -1;
+        for (let k = j; k < Math.min(candles.length, j + 4); k++) if (bull ? candles[k].close > p.price : candles[k].close < p.price) { back = k; break; }
+        const broke = back >= 0 && candles.slice(back + 1).some((x) => (bull ? x.close < p.price : x.close > p.price));
+        if (back >= 0 && !broke && (!best || c.time > best.sweptAt)) best = { type: bull ? 'ITL' : 'ITH', price: p.price, sweptAt: c.time };
       }
       break;
     }
