@@ -398,6 +398,51 @@ function reasonText(t) {
   return t.model === 'jev' ? r.replace(/ · \d+[mh] (bullish|bearish) IFVG [^)]*\)/, '') : r;
 }
 
+/**
+ * Readable setup: one line per point, timeframes and R only (no prices).
+ * Each item is { k: 'ok' | 'warn' | 'info', text }. Built from the setup's quality notes and the trade.
+ */
+function reasonItems(t) {
+  const z = t.ifvg || {};
+  const items = [];
+  const add = (k, text) => { if (text && !items.some((i) => i.text === text)) items.push({ k, text }); };
+  if (t.model === 'jev') add('info', 'Jev decided the trade (no pattern)');
+  if (z.htf) add('ok', `Tapped ${z.htf.tf} ${z.htf.type} FVG`);
+  for (const q of z.qualityReasons || []) {
+    let m;
+    if ((m = /^swept (\S+) (ITL|ITH)[^+]*?( with SMT)?$/.exec(q))) add('ok', `Swept ${m[1]} ${m[2] === 'ITL' ? 'low' : 'high'}${m[3] ? ' · SMT' : ''}`);
+    else if ((m = /^perfect IFVG \((\d+) candles?\)/.exec(q))) add('ok', `IFVG formed in ${m[1]} candles`);
+    else if (q === 'displacement') add('ok', 'Displacement candle');
+    else if ((m = /^draw on liquidity (above|below)/.exec(q))) add('ok', `Draw on liquidity ${m[1]}`);
+    else if ((m = /^LRLR (above|below)$/.exec(q))) add('ok', `LRLR ${m[1]}`);
+    else if (/^LRLR to TP/.test(q)) add('ok', 'LRLR runs to the target');
+    else if (q === 'clear path to TP') add('ok', 'Clear path to the target');
+    else if (/^path blocked by/.test(q)) {
+      const tfs = [...new Set([...q.matchAll(/(\d+[mh]) (?:bullish|bearish) FVG/g)].map((x) => x[1]))];
+      add('warn', `Path blocked by ${tfs.join(' & ') || 'an'} FVG${tfs.length > 1 ? 's' : ''}`);
+    } else if ((m = /^(?:scalp |mech )?target (\S+) (?:bullish|bearish) FVG (near edge|far edge)[^(]*\(([\d.]+)R\)/.exec(q))) add('info', `Target: ${m[1]} FVG ${m[2] === 'far edge' ? 'gap fill' : 'edge'} (${m[3]}R)`);
+    else if (/^long wick in the path ignored/.test(q)) add('warn', 'Wick in the path (ignored: liquidity pulls through)');
+    else if ((m = /^Jev model: Jev (BUY|SELL) (\d+)%/.exec(q))) add('ok', `Jev ${m[1]} ${m[2]}%`);
+  }
+  if (t.targetLevel && !items.some((i) => i.text.startsWith('Target'))) {
+    const lvl = String(t.targetLevel).replace(/ \(.*\)$/, '').replace(/\s[\d.,]+$/, '');
+    add('info', `Target: ${lvl}${t.rr ? ` (${t.rr}R)` : ''}`);
+  }
+  if (t.model !== 'ifvg_nojev' && t.model !== 'jev' && t.confidence != null && /jev/i.test(t.source || '')) add('info', `Jev ${t.side === 'short' ? 'SELL' : 'BUY'} ${Math.round(t.confidence * 100)}%`);
+  return items;
+}
+
+function reasonHtml(t) {
+  const z = t.ifvg || {};
+  const head = [z.grade === 'JEV' ? 'JEV' : z.grade, z.entryModel === 'mech' ? 'MECH' : null, (t.category || 'swing').toUpperCase(), t.side === 'short' ? 'short' : 'long']
+    .filter(Boolean).join(' ') + (z.granularity && t.model !== 'jev' ? ` · ${z.granularity / 60}m ${z.direction || ''} IFVG` : '');
+  const items = reasonItems(t);
+  if (!items.length) return reasonText(t) ? `<div class="ot-reason">${esc(reasonText(t))}</div>` : '';
+  const icon = { ok: '✓', warn: '!', info: '→' };
+  return `<div class="ot-reason" title="${esc(reasonText(t))}"><b class="rs-head">${esc(head)}</b>
+    <ul class="rs-list">${items.map((i) => `<li class="rs-${i.k}"><i>${icon[i.k]}</i>${esc(i.text)}</li>`).join('')}</ul></div>`;
+}
+
 function renderOpenTrade(t) {
   if (!t) return '';
   const price = (symOf(t) === chartSymbol ? candles.at(-1)?.close : t.lastPrice) ?? t.entryPrice;
@@ -414,7 +459,7 @@ function renderOpenTrade(t) {
     <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
     <div class="ot-risk">Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
     ${t.nextReviewAt ? `<div class="ot-risk">Next Jev review <b>${new Date(t.nextReviewAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></div>` : ''}
-    ${reasonText(t) ? `<div class="ot-reason">${esc(reasonText(t))}</div>` : ''}`;
+    ${reasonHtml(t)}`;
 }
 
 let settingsLoaded = false;
@@ -620,7 +665,7 @@ async function loadTrades() {
       <td class="r">${t.r != null ? `${t.r > 0 ? '+' : ''}${t.r}R` : '—'}</td>
       <td class="r">${t.pnl !== undefined ? `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${signedUsd(t.pnl)}</span>${t.fees != null ? `<div class="src" title="Binance realized profit before fees, and the entry + exit trading fees">gross ${signedUsd(t.grossPnl)} · fees ${usd(t.fees)}</div>` : ''}` : '—'}</td>
       <td class="src">${esc(t.source || '')}</td>
-      <td class="reason">${esc(reasonText(t))}</td></tr>`).join('');
+      <td class="reason" title="${esc(reasonText(t))}">${esc(reasonItems(t).map((i) => i.text).join(' · ') || reasonText(t))}</td></tr>`).join('');
     // thumbnails for the most recent trades
     trades.slice(0, 25).forEach(async (t, i) => {
       const shots = await getShots(t);

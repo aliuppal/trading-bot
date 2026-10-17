@@ -539,3 +539,13 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
   .cal-nav b { min-width: 0; }
 }
 .pill.MECH { color: #A78BFA; background: rgba(167, 139, 250, .1); border-color: rgba(167, 139, 250, .3); }
+
+/* readable setup checklist on the trade card */
+.ot-reason .rs-head { display: block; font: 600 12px/18px var(--font-mono); color: var(--text); margin-bottom: 6px; letter-spacing: .02em; }
+.rs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.rs-list li { display: flex; align-items: baseline; gap: 8px; font: 400 13px/18px var(--font-sans, inherit); color: var(--text-2); }
+.rs-list li i { flex: 0 0 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font: 700 10px/1 var(--font-mono); font-style: normal; }
+.rs-ok i { color: var(--green); background: rgba(16, 185, 129, .14); }
+.rs-warn i { color: #FBBF24; background: rgba(251, 191, 36, .14); }
+.rs-info i { color: var(--blue); background: rgba(6, 182, 212, .14); }
+.rs-warn { color: #FCD34D; }
