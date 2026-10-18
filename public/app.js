@@ -184,12 +184,19 @@ function drawChart() {
     const x1 = x(rrEnd) + step / 2;
     const yIn = y(open.entryPrice);
     const sl = open.initialStop ?? open.stop; // risk box keeps the original stop distance
+    // after breakeven there is no risk left: the red box and the original stop end where the stop moved to the entry
+    const beAt = open.breakeven && open.breakevenAt ? new Date(open.breakevenAt).getTime() : null;
+    const xRisk = beAt ? Math.max(x0, Math.min(x1, x(idxAt(beAt)) + step / 2)) : x1;
     ctx.fillStyle = 'rgba(16, 185, 129, .18)';
     ctx.fillRect(x0, Math.min(yIn, y(open.target)), x1 - x0, Math.abs(y(open.target) - yIn));
     ctx.fillStyle = 'rgba(244, 63, 94, .18)';
-    ctx.fillRect(x0, Math.min(yIn, y(sl)), x1 - x0, Math.abs(y(sl) - yIn));
-    [[open.target, css('--green'), 'TP'], [open.entryPrice, css('--text-2'), 'IN'], [open.stop, css('--red'), open.breakeven ? 'BE' : 'SL']].forEach(([p, col, name]) => {
-      ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.setLineDash(name === 'IN' ? [4, 3] : []);
+    ctx.fillRect(x0, Math.min(yIn, y(sl)), xRisk - x0, Math.abs(y(sl) - yIn));
+    if (beAt) {
+      ctx.strokeStyle = css('--red'); ctx.lineWidth = 1.2; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(x0, y(sl)); ctx.lineTo(xRisk, y(sl)); ctx.stroke(); ctx.setLineDash([]);
+    }
+    [[open.target, css('--green'), 'TP'], [open.entryPrice, css('--text-2'), beAt ? 'BE' : 'IN'], ...(beAt ? [] : [[open.stop, css('--red'), open.breakeven ? 'BE' : 'SL']])].forEach(([p, col, name]) => {
+      ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.setLineDash(name === 'IN' || (name === 'BE' && beAt) ? [4, 3] : []);
       ctx.beginPath(); ctx.moveTo(x0, y(p)); ctx.lineTo(x1, y(p)); ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = col; ctx.fillText(name, x1 + 4, y(p) + 4);
@@ -457,7 +464,7 @@ function renderOpenTrade(t) {
       <div><span>Target</span><em class="up">${px(t.target)}</em></div>
     </div>
     <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
-    <div class="ot-risk">Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
+    <div class="ot-risk">${t.breakeven ? `Stop at entry: <b>no risk</b> · aiming for <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>` : `Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>`}${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
     ${t.nextReviewAt && t.model !== 'ifvg_nojev' ? `<div class="ot-risk">Next Jev review <b>${new Date(t.nextReviewAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></div>` : ''}
     ${reasonHtml(t)}`;
 }
