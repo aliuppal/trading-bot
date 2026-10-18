@@ -3,8 +3,8 @@
 //   PDH / PDL   previous day high / low (UTC days)
 //   DH / DL     today's high / low so far
 //   PWH / PWL   previous week high / low (weeks start Monday, UTC)
-//   EQH / EQL   equal highs / lows: 2+ swing points within 0.05% of each other, not yet taken, on 5m / 15m / 30m / 1h
-//               (any trade) and 2h / 4h (targets for swing trades only)
+//   EQH / EQL   equal highs / lows: 2+ swing points within 0.05% of each other, not yet taken. Scalp targets on
+//               3m / 5m / 15m / 30m / 1h, swing targets on 30m / 1h / 2h / 4h
 //   HTF H / L   recent 1h and 4h swing highs / lows not yet taken
 //   SWH / SWL   recent 5m and 15m swing highs / lows not yet taken (the nearest target for a trade)
 //   LRLR        low-resistance liquidity run: 3+ stepped swing highs above price (each lower than the last)
@@ -136,9 +136,10 @@ function weekKey(t) {
  * where above / below are the levels sorted nearest first, and draw is the side with the nearest major liquidity.
  */
 export async function liquidityLevels(market, now = Date.now()) {
-  const [daily, h1, m15, h4, m5] = await Promise.all([
+  const [daily, h1, m15, h4, m5, m3] = await Promise.all([
     market.getCandles(86400, 30), market.getCandles(3600, 300), market.getCandles(900, 200), market.getCandles(14400, 100),
     market.getCandles(300, 200).catch(() => []),
+    market.getCandles(180, 200).catch(() => []),
   ]);
   const price = m15.at(-1)?.close ?? h1.at(-1)?.close;
   if (!price) return { price: null, levels: [], above: [], below: [], lrlr: null, draw: null };
@@ -159,13 +160,13 @@ export async function liquidityLevels(market, now = Date.now()) {
   const lw = lastWeek.filter((c) => weekKey(c.time) === weekKey(lastWeek.at(-1)?.time ?? 0));
   if (lw.length) { add('PWH', 'Previous week high', Math.max(...lw.map((c) => c.high))); add('PWL', 'Previous week low', Math.min(...lw.map((c) => c.low))); }
 
-  // equal highs / lows: 5m-1h for every trade, 2h / 4h for swings (EQ_TFS overrides the list for backtests)
-  const eqTfs = (process.env.EQ_TFS || '5m,15m,30m,1h,2h,4h').split(',');
+  // equal highs / lows: scalps 3m-1h, swings 30m-4h (EQ_TFS overrides the list for backtests)
+  const eqTfs = (process.env.EQ_TFS || '3m,5m,15m,30m,1h,2h,4h').split(',');
   const m30 = eqTfs.includes('30m') ? await market.getCandles(1800, 200).catch(() => []) : [];
   const h2 = eqTfs.includes('2h') ? await market.getCandles(7200, 200).catch(() => []) : [];
-  const eqSets = { '5m': m5, '15m': m15, '30m': m30, '1h': h1, '2h': h2, '4h': h4 };
-  // 2h / 4h equal highs / lows are far: targets for swing trades only
-  const swingOnly = (tf) => (tf === '2h' || tf === '4h' ? { swingOnly: true } : undefined);
+  const eqSets = { '3m': m3, '5m': m5, '15m': m15, '30m': m30, '1h': h1, '2h': h2, '4h': h4 };
+  // which trades may target it: 3m / 5m / 15m scalps only, 2h / 4h swings only, 30m / 1h both
+  const swingOnly = (tf) => (['2h', '4h'].includes(tf) ? { swingOnly: true } : ['3m', '5m', '15m'].includes(tf) ? { scalpOnly: true } : undefined);
   for (const [tf, c] of eqTfs.filter((t) => eqSets[t]?.length).map((t) => [t, eqSets[t]])) {
     const s = swings(c, 2);
     equalLevels(c, s.highs, 'high').forEach((e) => add('EQH', `Equal highs ${tf} (${e.touches}x)`, e.price, swingOnly(tf)));
@@ -198,7 +199,9 @@ export async function liquidityLevels(market, now = Date.now()) {
     if (!m) merged.push({ ...l });
     else {
       if (!m.type.split('+').includes(l.type)) { m.type += `+${l.type}`; m.label += ` / ${l.label}`; }
-      if (!l.swingOnly) delete m.swingOnly; // also a level any trade may use
+      // a level shared with another kind is open to both
+      if (!l.swingOnly) delete m.swingOnly;
+      if (!l.scalpOnly) delete m.scalpOnly;
     }
   }
   levels.length = 0;
@@ -247,7 +250,7 @@ export function liquidityTargets(liq, side, entry, risk, { minR = 0.75, maxR = 5
     for (const p of liq.lrlr.prices) cands.push({ type: 'LRLR', label: 'LRLR swing', price: p });
   }
   const ahead = cands
-    .filter((l) => (side === 'long' ? l.price > entry : l.price < entry) && (!l.swingOnly || category === 'swing'))
+    .filter((l) => (side === 'long' ? l.price > entry : l.price < entry) && !(l.swingOnly && category && category !== 'swing') && !(l.scalpOnly && category === 'swing'))
     .sort((x, y) => Math.abs(x.price - entry) - Math.abs(y.price - entry));
   for (const l of ahead) {
     const price = side === 'long' ? l.price * (1 - frontPct / 100) : l.price * (1 + frontPct / 100);
