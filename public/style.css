@@ -549,3 +549,7 @@ footer { text-align: center; color: var(--faint); font-size: 12px; padding: 8px 
 .rs-warn i { color: #FBBF24; background: rgba(251, 191, 36, .14); }
 .rs-info i { color: var(--blue); background: rgba(6, 182, 212, .14); }
 .rs-warn { color: #FCD34D; }
+.order-chips { margin-top: 10px; }
+.chip.warn { color: #FCD34D; border-color: rgba(251, 191, 36, .35); }
+.chip.ok { color: var(--green); border-color: rgba(16, 185, 129, .35); }
+.decision .rs-list { margin-top: 10px; }

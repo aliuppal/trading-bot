@@ -458,7 +458,7 @@ function renderOpenTrade(t) {
     </div>
     <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
     <div class="ot-risk">Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
-    ${t.nextReviewAt ? `<div class="ot-risk">Next Jev review <b>${new Date(t.nextReviewAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></div>` : ''}
+    ${t.nextReviewAt && t.model !== 'ifvg_nojev' ? `<div class="ot-risk">Next Jev review <b>${new Date(t.nextReviewAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></div>` : ''}
     ${reasonHtml(t)}`;
 }
 
@@ -545,12 +545,43 @@ async function renderJevReason() {
   const box = $('jevReason');
   if (!d) { box.className = 'decision'; box.innerHTML = `<div class="decision-head"><span>Jev · ${esc(chartSymbol)}</span></div><div class="sub">No Jev decision for ${esc(chartSymbol)} yet</div>`; return; }
   const lbl = decisionLabel(d);
+  const rules = /^rules/.test(d.source || '');
   box.className = `decision ${esc(d.action || '')}`;
-  box.innerHTML = `<div class="decision-head"><span>Jev · <b>${esc(chartSymbol)}</b> <span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span>${d.confidence !== undefined ? ` ${confBadge(d.confidence)}` : ''}</span>
+  // the note of an executed entry is "<setup> | <order>": show the setup as a checklist and the order as chips
+  const [setupText, orderText] = String(d.note || '').split(' | ');
+  const items = d.setup?.qualityReasons ? reasonItems({ ifvg: d.setup, model: status?.model, side: d.action === 'SELL' ? 'short' : 'long' }) : [];
+  const icon = { ok: '✓', warn: '!', info: '→' };
+  const body = items.length
+    ? `<ul class="rs-list">${items.map((i) => `<li class="rs-${i.k}"><i>${icon[i.k]}</i>${esc(i.text)}</li>`).join('')}</ul>`
+    : `<div class="sub">${esc(setupText || '')}</div>`;
+  box.innerHTML = `<div class="decision-head"><span>${rules ? 'Rules' : 'Jev'} · <b>${esc(chartSymbol)}</b> <span class="pill ${esc(labelClass(lbl))}">${esc(lbl)}</span>${!rules && d.confidence !== undefined ? ` ${confBadge(d.confidence)}` : ''}</span>
     <span class="num">${fmtTime(d.time)}</span></div>
-    ${d.reasoning ? jevOddsHtml(d.reasoning) : ''}
-    <div class="sub">${esc(d.note || '')}${d.executed ? ' <span class="ok">✓ executed</span>' : ''}</div>
-    ${nextReviewHtml()}`;
+    ${rules ? '<div class="sub">Rules only: the setup qualified, so it was taken (no Jev)</div>' : d.reasoning ? jevOddsHtml(d.reasoning) : ''}
+    ${body}
+    ${orderText ? orderChipsHtml(orderText, d.executed) : d.executed ? '<div class="sub"><span class="ok">✓ executed</span></div>' : ''}
+    ${rules ? '' : nextReviewHtml()}`;
+}
+
+/** The order part of an entry note as chips: size and leverage, risk, stop / target, breakeven. */
+function orderChipsHtml(text, executed) {
+  const m = (re) => re.exec(text);
+  const money = (v) => `$${Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  const pos = m(/(SHORT|BUY|LONG) \$([\d.]+)(?: \((\d+)x, margin \$([\d.]+)\))?/);
+  const risk = m(/risking \$([\d.]+)/);
+  const sl = m(/SL ([\d.]+)/);
+  const tp = m(/TP ([\d.]+) \(1:([\d.]+)\)/);
+  const be = m(/breakeven at \+([\d.]+)R/);
+  const limit = m(/(size cut to [^·|]+|leverage moved to [^·|]+)/);
+  const chips = [
+    pos && `<span class="chip">${pos[1] === 'SHORT' ? 'Short' : 'Long'} <b>${money(pos[2])}</b>${pos[3] ? ` · <b>${pos[3]}x</b> · margin ${money(pos[4])}` : ''}</span>`,
+    risk && `<span class="chip">Risk <b>${money(risk[1])}</b></span>`,
+    sl && `<span class="chip">Stop <b>${px(Number(sl[1]))}</b></span>`,
+    tp && `<span class="chip">Target <b>${px(Number(tp[1]))}</b> · ${tp[2]}R</span>`,
+    be && `<span class="chip">Breakeven at <b>+${be[1]}R</b></span>`,
+    limit && `<span class="chip warn">${esc(limit[1].trim())}</span>`,
+  ].filter(Boolean);
+  if (!chips.length) return `<div class="sub">${esc(text)}${executed ? ' <span class="ok">✓ executed</span>' : ''}</div>`;
+  return `<div class="odds-chips order-chips">${chips.join('')}${executed ? '<span class="chip ok">✓ executed</span>' : ''}</div>`;
 }
 
 /** Next Jev review of the open trade on the charted symbol (local time). */
