@@ -399,6 +399,39 @@ test('BinanceFuturesBroker signs requests, opens/covers shorts reduce-only, read
   assert.throws(() => new BinanceFuturesBroker({ key: 'K', secret: 'S', baseUrl: 'https://fapi.binance.com' }), /non-demo/);
 });
 
+test('BinanceFuturesBroker: -2027 (position too large for the leverage) moves to a tier that fits, or cuts the size', async () => {
+  const { BinanceFuturesBroker } = await import('../src/brokers/binance.js');
+  const tiers = [{ initialLeverage: 125, notionalCap: 5000 }, { initialLeverage: 50, notionalCap: 25000 }, { initialLeverage: 20, notionalCap: 100000 }];
+  let lev = 1;
+  const fakeFetch = async (url) => {
+    const u = new URL(url);
+    const p = Object.fromEntries(u.searchParams);
+    const json = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
+    if (u.pathname === '/fapi/v1/exchangeInfo') return json({ symbols: [{ symbol: 'BTCUSDT', filters: [{ filterType: 'MARKET_LOT_SIZE', stepSize: '0.001' }] }] });
+    if (u.pathname === '/fapi/v1/leverage') { lev = Number(p.leverage); return json({ leverage: lev }); }
+    if (u.pathname === '/fapi/v1/leverageBracket') return json([{ symbol: 'BTCUSDT', brackets: tiers }]);
+    if (u.pathname === '/fapi/v1/order') {
+      const cap = tiers.find((t) => t.initialLeverage === lev)?.notionalCap ?? Infinity;
+      if (Number(p.quantity) * 50000 > cap) return json({ code: -2027, msg: 'Exceeded the maximum allowable position at current leverage.' }, 400);
+      return json({ orderId: 9, status: 'FILLED', executedQty: p.quantity, avgPrice: '50000', cumQuote: String(50000 * p.quantity), updateTime: 1 });
+    }
+    if (u.pathname === '/fapi/v2/account') return json({ availableBalance: '9000', totalMarginBalance: '10000' });
+    if (u.pathname === '/fapi/v2/positionRisk') return json([{ symbol: 'BTCUSDT', positionAmt: '0', markPrice: '50000' }]);
+    return json({ code: -1, msg: 'nope' }, 404);
+  };
+  const b = new BinanceFuturesBroker({ key: 'K', secret: 'S', getPrice: async () => 50000 }, fakeFetch);
+  // $15k at 125x is over the 125x cap ($5k): 50x holds it with $300 margin, full size kept
+  const a = await b.openShort({ notional: 15000, price: 50000, leverage: 125 });
+  assert.equal(a.qty, 0.3);
+  assert.equal(a.leverage, 50);
+  assert.match(a.limitNote, /leverage moved to 50x/);
+  // $150k is over every cap: the most allowed is 20x x $98k (cap) -> size cut
+  const c = await b.openShort({ notional: 150000, price: 50000, leverage: 125 });
+  assert.equal(c.leverage, 20);
+  assert.ok(c.qty < 3 && c.qty > 1.9, `cut size ${c.qty}`);
+  assert.match(c.limitNote, /size cut to/);
+});
+
 test('leverage: Jev picks it, capped by Max leverage; position = margin x leverage', async () => {
   const s = setup({ fetchImpl: geminiResponse({ action: 'BUY', confidence: 0.8, size_pct: 5, leverage: 10, reasoning: 'clean setup' }) });
   s.broker.supportsLeverage = true; // pretend the simulator is a leveraged futures broker

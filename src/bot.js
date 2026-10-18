@@ -756,7 +756,9 @@ export class TradingBot {
     // A 30m-4h FVG inside the bracket (between entry and target) is where price reacts first: target its near edge.
     const hz = htfTargetInBracket(zones, side, entryPrice, b.target, b.risk);
     if (hz) { b.target = hz.price; b.rr = hz.r; targetLevel = `${hz.zone.tf} ${hz.zone.type} FVG ${fmtPx(hz.price)} (HTF in bracket)`; }
-    const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}${trimmed}` };
+    // Binance moved the leverage tier or cut the size to fit its position limit: margin follows the filled position
+    if (order.limitNote) margin = Number((notional / leverage).toFixed(2));
+    const plan = { note: `${label} $${notional.toFixed(2)}${leverage > 1 ? ` (${leverage}x, margin $${margin.toFixed(2)})` : ''}${sizing}${trimmed}${order.limitNote ? ` · ${order.limitNote}` : ''}` };
     const trade = {
       id: `T${this.now()}-${this.symbol}`,
       symbol: this.symbol,

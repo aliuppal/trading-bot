@@ -34,7 +34,9 @@ export class BinanceFuturesBroker {
     const res = await this.fetch(`${this.baseUrl}${path}?${q}`, { method, headers: { 'X-MBX-APIKEY': this.key } });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || (data.code && data.code < 0)) {
-      throw new Error(`Binance ${method} ${path} -> ${res.status}: ${data.msg || JSON.stringify(data).slice(0, 200)}`);
+      const err = new Error(`Binance ${method} ${path} -> ${res.status}: ${data.msg || JSON.stringify(data).slice(0, 200)}`);
+      err.code = data.code;
+      throw err;
     }
     return data;
   }
@@ -111,21 +113,69 @@ export class BinanceFuturesBroker {
     };
   }
 
+  /** Leverage tiers of the symbol, highest leverage first: [{ lev, cap }] (cap = max position value at that leverage). Cached 1h. */
+  async brackets() {
+    if (this.bracketCache && Date.now() - this.bracketCache.at < 3600000) return this.bracketCache.list;
+    const data = await this.req('GET', '/fapi/v1/leverageBracket', { symbol: this.symbol });
+    const row = (Array.isArray(data) ? data : [data]).find((x) => x.symbol === this.symbol) || data[0] || data;
+    const list = (row?.brackets || []).map((b) => ({ lev: Number(b.initialLeverage), cap: Number(b.notionalCap) })).sort((a, b) => b.lev - a.lev);
+    this.bracketCache = { at: Date.now(), list };
+    return list;
+  }
+
+  /**
+   * Binance -2027 ("maximum allowable position at current leverage"): each leverage tier caps the position value.
+   * Pick the highest leverage whose cap holds the full position and whose margin fits the available balance; if none
+   * does, the largest position any tier allows. Returns { lev, qty, capped }.
+   */
+  async fitToBrackets(qty, price) {
+    const tiers = await this.brackets();
+    const cash = (await this.getAccount(price).catch(() => null))?.cash ?? Infinity;
+    const want = qty * price;
+    const usable = cash * 0.95;
+    const full = tiers.find((t) => t.cap >= want && want / t.lev <= usable);
+    if (full) return { lev: full.lev, qty, capped: false };
+    // the most any tier allows: limited by its cap and by the margin it needs
+    const best = tiers.map((t) => ({ lev: t.lev, value: Math.min(t.cap * 0.98, usable * t.lev) })).sort((a, b) => b.value - a.value)[0];
+    if (!best || !(best.value > 0)) throw new Error('No Binance leverage tier fits this position');
+    return { lev: best.lev, qty: Math.min(qty, best.value / price), capped: true };
+  }
+
   /** action: buy | sell | short | cover. Closing orders (sell a long, cover a short) are reduce-only. */
   async order(action, qty, source = 'manual', reason, leverage) {
     await this.init();
     if (leverage) await this.setLeverage(leverage);
-    const quantity = this.roundQty(qty);
+    let quantity = this.roundQty(qty);
     if (!(quantity > 0)) throw new Error(`Order too small (min ${this.step} BTC, $50)`);
-    const o = await this.req('POST', '/fapi/v1/order', {
+    const closing = action === 'sell' || action === 'cover';
+    const send = (q) => this.req('POST', '/fapi/v1/order', {
       symbol: this.symbol,
       side: ACTION_SIDE[action],
       type: 'MARKET',
-      quantity,
-      reduceOnly: action === 'sell' || action === 'cover' ? 'true' : undefined,
+      quantity: q,
+      reduceOnly: closing ? 'true' : undefined,
       newClientOrderId: `${source}-${action}-${Date.now()}`,
       newOrderRespType: 'RESULT',
     });
+    let o;
+    let limitNote = null;
+    try {
+      o = await send(quantity);
+    } catch (err) {
+      // too large for the current leverage tier: move to a tier that holds it (or shrink to the most allowed), retry once
+      if (closing || err.code !== -2027) throw err;
+      const px = await this.getPrice();
+      const fit = await this.fitToBrackets(quantity, px);
+      this.currentLeverage = null;
+      await this.setLeverage(fit.lev);
+      const q2 = this.roundQty(fit.qty);
+      if (!(q2 > 0)) throw err;
+      o = await send(q2);
+      limitNote = fit.capped
+        ? `size cut to ${q2} (${(q2 / quantity * 100).toFixed(0)}%) to fit Binance's limit at ${this.currentLeverage}x`
+        : `leverage moved to ${this.currentLeverage}x to fit Binance's position limit`;
+      quantity = q2;
+    }
     // The actual fills (price, fee, realized P&L) from Binance's own trade records.
     const fills = await this.fills(o.orderId);
     const filled = fills ? fills.qty : Number(o.executedQty) || quantity;
@@ -143,7 +193,8 @@ export class BinanceFuturesBroker {
       status: String(o.status || 'NEW').toLowerCase(),
       source,
       ...(reason && { reason }),
-      ...(leverage && { leverage: this.currentLeverage || leverage }),
+      ...((leverage || limitNote) && { leverage: this.currentLeverage || leverage }),
+      ...(limitNote && { limitNote }),
     };
   }
 
