@@ -67,7 +67,7 @@ async function fetchBinance(gran, start, end, symbol) {
   const iv = { 60: '1m', 300: '5m', 900: '15m', 3600: '1h', 86400: '1d' }[gran];
   const out = [];
   for (let t = start; t < end;) {
-    const rows = await getJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${iv}&startTime=${t}&endTime=${end - 1}&limit=1500`);
+    const rows = await getJson(`${opt.demo ? 'https://demo-fapi.binance.com' : 'https://fapi.binance.com'}/fapi/v1/klines?symbol=${symbol}&interval=${iv}&startTime=${t}&endTime=${end - 1}&limit=1500`);
     if (!rows.length) break;
     for (const k of rows) out.push({ time: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] });
     t = rows.at(-1)[0] + gran * 1000;
@@ -174,6 +174,7 @@ async function main() {
   for (now = start + 1000; now <= end; now += MIN) {
     await bot.runOnceUnlocked();
     steps++;
+    if (opt.trace) console.log(`TRACE ${new Date(now).toISOString().slice(11, 16)} ${bot.state.lastScan?.note || ''}`.slice(0, 300)); // --trace: why each minute did / did not trade
     const day = new Date(now).toISOString().slice(0, 10);
     if (day !== lastDay) { lastDay = day; process.stderr.write(`  simulating ${day}...\n`); }
   }

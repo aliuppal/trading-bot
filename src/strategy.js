@@ -273,6 +273,15 @@ async function scanCore(market, settings, now, liquidity, opts = {}) {
     for (const [i, g] of MECH_TIMEFRAMES.entries()) {
       const { setup, candles } = mres[g];
       if (!setup) continue;
+      // Mech needs its target: an opposing 5m / 15m FVG 0.75R-5R away. Without one the setup is left to the scalp rules.
+      const sd = setup.direction === 'bullish' ? 'long' : 'short';
+      const entry = candles.at(-1).close;
+      const risk = Math.max(Math.abs(entry - (sd === 'short' ? setup.top : setup.bottom)), entry * ((settings.minStopPct ?? 0.15) / 100));
+      const hasTarget = pathBlockers(zones, sd, entry, sd === 'short' ? entry - 5 * risk : entry + 5 * risk, ['5m', '15m']).some((z) => {
+        const edge = sd === 'short' ? (z.top < entry ? z.top : z.bottom) : (z.bottom > entry ? z.bottom : z.top);
+        return (sd === 'short' ? edge < entry : edge > entry) && Math.abs(entry - edge) / risk >= 0.75;
+      });
+      if (!hasTarget) { mres[g].note = `mech ${tfLabel(g)}: ${setup.direction} IFVG, no opposing 5m/15m FVG target, left to the scalp rules`; continue; }
       const higher = MECH_TIMEFRAMES.slice(0, i).find((h) => mres[h].forming[setup.direction]);
       if (higher) return { setup: null, waiting: true, zones, candles, granularity: g, note: `mech ${tfLabel(g)} ${setup.direction} IFVG ready, waiting for the ${tfLabel(higher)} IFVG forming now` };
       return { setup, candles, granularity: g, zones, note: null, waiting: false };
