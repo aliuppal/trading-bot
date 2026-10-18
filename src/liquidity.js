@@ -3,7 +3,8 @@
 //   PDH / PDL   previous day high / low (UTC days)
 //   DH / DL     today's high / low so far
 //   PWH / PWL   previous week high / low (weeks start Monday, UTC)
-//   EQH / EQL   equal highs / lows: 2+ swing points on 15m or 1h within 0.05% of each other, not yet taken
+//   EQH / EQL   equal highs / lows: 2+ swing points within 0.05% of each other, not yet taken, on 5m / 15m / 30m / 1h
+//               (any trade) and 2h / 4h (targets for swing trades only)
 //   HTF H / L   recent 1h and 4h swing highs / lows not yet taken
 //   SWH / SWL   recent 5m and 15m swing highs / lows not yet taken (the nearest target for a trade)
 //   LRLR        low-resistance liquidity run: 3+ stepped swing highs above price (each lower than the last)
@@ -142,7 +143,7 @@ export async function liquidityLevels(market, now = Date.now()) {
   const price = m15.at(-1)?.close ?? h1.at(-1)?.close;
   if (!price) return { price: null, levels: [], above: [], below: [], lrlr: null, draw: null };
   const levels = [];
-  const add = (type, label, p) => { if (Number.isFinite(p)) levels.push({ type, label, price: roundPx(p) }); };
+  const add = (type, label, p, extra) => { if (Number.isFinite(p)) levels.push({ type, label, price: roundPx(p), ...extra }); };
 
   const today = dayKey(now);
   const days = daily.filter((c) => dayKey(c.time) < today);
@@ -158,10 +159,17 @@ export async function liquidityLevels(market, now = Date.now()) {
   const lw = lastWeek.filter((c) => weekKey(c.time) === weekKey(lastWeek.at(-1)?.time ?? 0));
   if (lw.length) { add('PWH', 'Previous week high', Math.max(...lw.map((c) => c.high))); add('PWL', 'Previous week low', Math.min(...lw.map((c) => c.low))); }
 
-  for (const [tf, c] of [['15m', m15], ['1h', h1]]) {
+  // equal highs / lows: 5m-1h for every trade, 2h / 4h for swings (EQ_TFS overrides the list for backtests)
+  const eqTfs = (process.env.EQ_TFS || '5m,15m,30m,1h,2h,4h').split(',');
+  const m30 = eqTfs.includes('30m') ? await market.getCandles(1800, 200).catch(() => []) : [];
+  const h2 = eqTfs.includes('2h') ? await market.getCandles(7200, 200).catch(() => []) : [];
+  const eqSets = { '5m': m5, '15m': m15, '30m': m30, '1h': h1, '2h': h2, '4h': h4 };
+  // 2h / 4h equal highs / lows are far: targets for swing trades only
+  const swingOnly = (tf) => (tf === '2h' || tf === '4h' ? { swingOnly: true } : undefined);
+  for (const [tf, c] of eqTfs.filter((t) => eqSets[t]?.length).map((t) => [t, eqSets[t]])) {
     const s = swings(c, 2);
-    equalLevels(c, s.highs, 'high').forEach((e) => add('EQH', `Equal highs ${tf} (${e.touches}x)`, e.price));
-    equalLevels(c, s.lows, 'low').forEach((e) => add('EQL', `Equal lows ${tf} (${e.touches}x)`, e.price));
+    equalLevels(c, s.highs, 'high').forEach((e) => add('EQH', `Equal highs ${tf} (${e.touches}x)`, e.price, swingOnly(tf)));
+    equalLevels(c, s.lows, 'low').forEach((e) => add('EQL', `Equal lows ${tf} (${e.touches}x)`, e.price, swingOnly(tf)));
   }
   for (const [tf, c] of [['1h', h1], ['4h', h4]]) {
     const s = swings(c, 3);
@@ -188,7 +196,10 @@ export async function liquidityLevels(market, now = Date.now()) {
   for (const l of levels) {
     const m = merged.find((x) => Math.abs(x.price - l.price) / l.price < 0.0002);
     if (!m) merged.push({ ...l });
-    else if (!m.type.split('+').includes(l.type)) { m.type += `+${l.type}`; m.label += ` / ${l.label}`; }
+    else {
+      if (!m.type.split('+').includes(l.type)) { m.type += `+${l.type}`; m.label += ` / ${l.label}`; }
+      if (!l.swingOnly) delete m.swingOnly; // also a level any trade may use
+    }
   }
   levels.length = 0;
   levels.push(...merged);
@@ -227,7 +238,7 @@ export function liquidityTarget(liq, side, entry, risk, opts = {}) {
  * Every liquidity level in the trade direction that makes a valid target (minR-maxR x risk), nearest first:
  * the options Jev chooses the target from. Returns [{ price, level, r }].
  */
-export function liquidityTargets(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0, max = 6 } = {}) {
+export function liquidityTargets(liq, side, entry, risk, { minR = 0.75, maxR = 5, frontPct = 0, max = 6, category = null } = {}) {
   if (!liq || !risk) return [];
   const out = [];
   const toward = side === 'long' ? 'above' : 'below';
@@ -236,7 +247,7 @@ export function liquidityTargets(liq, side, entry, risk, { minR = 0.75, maxR = 5
     for (const p of liq.lrlr.prices) cands.push({ type: 'LRLR', label: 'LRLR swing', price: p });
   }
   const ahead = cands
-    .filter((l) => (side === 'long' ? l.price > entry : l.price < entry))
+    .filter((l) => (side === 'long' ? l.price > entry : l.price < entry) && (!l.swingOnly || category === 'swing'))
     .sort((x, y) => Math.abs(x.price - entry) - Math.abs(y.price - entry));
   for (const l of ahead) {
     const price = side === 'long' ? l.price * (1 - frontPct / 100) : l.price * (1 + frontPct / 100);

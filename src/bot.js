@@ -744,7 +744,7 @@ export class TradingBot {
       // Jev's pick when it chose one (still on the right side of the fill, >= 0.5R), else the nearest valid level
       const p = decision?.targetPick;
       const pr = p && (side === 'short' ? entryPrice - p.price : p.price - entryPrice) / b.risk;
-      const lt = pr >= 0.5 ? { ...p, r: Number(pr.toFixed(2)), byJev: true } : liquidityTarget(liquidity, side, entryPrice, b.risk);
+      const lt = pr >= 0.5 ? { ...p, r: Number(pr.toFixed(2)), byJev: true } : liquidityTarget(liquidity, side, entryPrice, b.risk, { category: setup.category });
       if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.label || lt.level.type} ${fmtPx(lt.price)}${lt.byJev ? ' (Jev pick)' : ''}`; }
     }
     // HTF FVG chosen as the target at scan time (it was in the way): recompute from the actual fill
@@ -1209,7 +1209,7 @@ export class TradingBot {
           // A+ needs a clear path; without it an untapped "A+" is not tradeable.
           if (setup.grade === 'A+' && !setup.clearPath) setup.grade = 'A';
           // Hard rule: no trade with an opposing 30m / 1h / 2h / 4h FVG between entry and the target it would use.
-          let tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk)?.price ?? b0.target) : b0.target;
+          let tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk, { category: setup.category })?.price ?? b0.target) : b0.target;
           // Mech: the target is the nearest opposing 5m / 15m FVG 0.75R-5R away (near edge, far edge when price is inside it)
           let mech = null;
           if (setup.entryModel === 'mech') {
@@ -1341,7 +1341,7 @@ export class TradingBot {
         let targets = [];
         if (setup && !open && (s.targetMode ?? 'rr') === 'liquidity') {
           const tb = bracketFor(want, price, this.stopZone(setup), { rr: s.riskReward ?? 1, minRiskPct: s.minStopPct ?? 0.15 });
-          if (tb) targets = liquidityTargets(liquidity, want, price, tb.risk);
+          if (tb) targets = liquidityTargets(liquidity, want, price, tb.risk, { category: setup.category });
         }
         const decision = model === 'ifvg_nojev' ? rulesDecision({ want, open, opposite, s }) : await decide(
           {
