@@ -124,6 +124,15 @@ app.get('/api/jev/last', wrap(async (req, res) => {
   res.json(mine.find((d) => /^jev/.test(d.source || '') && d.reasoning) || mine.find((d) => d.reasoning) || mine[0] || null);
 }));
 app.get('/api/trades', wrap(async (req, res) => res.json(await bot.allTrades())));
+// Repair a closed trade's exit from a real Binance order (P&L, fees, R, result recomputed from its fills).
+app.post('/api/trades/:id/fix-exit', wrap(async (req, res) => {
+  const id = String(req.params.id);
+  const t = (await bot.allTrades()).find((x) => x.id === id);
+  if (!t) throw new Error(`Trade ${id} not found`);
+  const b = botFor(t.symbol || bot.symbol);
+  if (b !== bot) await b.load();
+  res.json(await b.fixExit(id, req.body?.orderId, req.body?.reason));
+}));
 app.get('/api/trades/:id/shots', wrap(async (req, res) => {
   const id = String(req.params.id);
   const t = (await bot.allTrades()).find((x) => x.id === id);

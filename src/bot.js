@@ -561,6 +561,44 @@ export class TradingBot {
     return this.closeTrade(open, order?.price ?? price, fired ? fired.reason : 'manual', candles, { order });
   }
 
+  /**
+   * Repair a closed trade whose exit was booked against the wrong order: take the exit from a real Binance order
+   * (its fills: price, qty, fee, realized P&L) and recompute P&L, fees, R and the result like closeTrade does.
+   */
+  async fixExit(id, orderId, reason) {
+    const trades = await this.trades();
+    const i = trades.findIndex((t) => t.id === id);
+    if (i < 0) throw new Error(`Trade ${id} not found on ${this.symbol}`);
+    const t = trades[i];
+    if (t.status === 'open') throw new Error('Trade is still open');
+    const f = await this.broker.fills?.(String(orderId));
+    if (!f) throw new Error(`No fills found for order ${orderId}`);
+    const short = t.side === 'short';
+    const part = Math.min(1, f.qty / t.qty);
+    let pnl = f.realizedPnl - (t.entryFee || 0) * part - f.commission;
+    if (t.partial) pnl += t.partial.pnl;
+    if (t.trimPnl) pnl += t.trimPnl;
+    const fees = (t.entryFee || 0) * part + f.commission;
+    const risk = Math.abs(t.entryPrice - (t.initialStop ?? t.stop));
+    const pt = t.partial;
+    const exitReason = reason || t.exitReason;
+    Object.assign(t, {
+      exitPrice: f.price,
+      exitOrderId: String(orderId),
+      exitReason,
+      status: exitReason === 'breakeven' ? (pt && pnl > 0 ? 'win' : 'breakeven') : Math.abs(pnl) < 0.005 ? 'breakeven' : pnl > 0 ? 'win' : 'loss',
+      pnl: Number(pnl.toFixed(2)),
+      fees: Number(fees.toFixed(2)),
+      grossPnl: Number((pnl + fees).toFixed(2)),
+      r: Number(((((short ? -1 : 1) * (f.price - t.entryPrice)) / risk) * (pt ? 1 - pt.fraction : 1) + (pt ? pt.r * pt.fraction : 0)).toFixed(2)),
+      note: `Exit corrected to Binance order ${orderId} (${f.qty} @ ${f.price}, realized ${f.realizedPnl.toFixed(2)}, fee ${f.commission.toFixed(2)})`,
+    });
+    trades[i] = t;
+    await this.kv.set('trades', trades);
+    await this.log({ time: new Date(this.now()).toISOString(), price: f.price, action: 'HOLD', source: 'bracket', executed: false, tradeId: t.id, note: t.note });
+    return t;
+  }
+
   /** First internal liquidity reached: close partialPct % of the position at market (the bracket keeps the rest). */
   async takePartial(trade, at) {
     const short = trade.side === 'short';

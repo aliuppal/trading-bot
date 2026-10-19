@@ -613,6 +613,20 @@ test('exchange bracket: SL/TP placed on the exchange, breakeven moves the stop, 
   assert.ok(ex.cancelled.includes(t.stopAlgoId), 'leftover stop cancelled');
 });
 
+test('fixExit rebooks a closed trade from a real exchange order: P&L, fees, R and result', async () => {
+  const s = setup();
+  const t0 = { id: 'T1', symbol: s.bot.symbol, side: 'short', status: 'loss', entryPrice: 82738.2, initialStop: 82955.2, stop: 82955.2, target: 82533, qty: 0.46, entryFee: 15.22, exitPrice: 81995, pnl: -8.91, exitReason: 'target', entryTime: new Date(NOW).toISOString(), exitTime: new Date(NOW + 60000).toISOString() };
+  await s.bot.kv.set('trades', [t0]);
+  s.bot.broker = { ...s.bot.broker, fills: async (id) => (id === '1218089567' ? { qty: 0.46, price: 81995, quote: 37717.7, commission: 16.97, realizedPnl: 322.76 } : null) };
+  const t = await s.bot.fixExit('T1', '1218089567');
+  assert.equal(t.status, 'win');
+  assert.equal(t.pnl, Number((322.76 - 15.22 - 16.97).toFixed(2)));
+  assert.equal(t.fees, Number((15.22 + 16.97).toFixed(2)));
+  assert.equal(t.r, Number(((82738.2 - 81995) / 217).toFixed(2)));
+  assert.equal(t.exitOrderId, '1218089567');
+  await assert.rejects(() => s.bot.fixExit('T1', 'nope'), /No fills/);
+});
+
 test('exchange bracket safety net: price past the target but the position still open -> the bot closes it at market', async () => {
   const s = setup();
   await s.bot.updateSettings({ riskReward: 2, breakevenAtR: 0 });
