@@ -580,6 +580,41 @@ test('exchange bracket: SL/TP placed on the exchange, breakeven moves the stop, 
   assert.ok(ex.cancelled.includes(t.stopAlgoId), 'leftover stop cancelled');
 });
 
+test('exchange bracket safety net: price past the target but the position still open -> the bot closes it at market', async () => {
+  const s = setup();
+  await s.bot.updateSettings({ riskReward: 2, breakevenAtR: 0 });
+  const ex = { pos: 0, algos: {}, nextId: 1, cancelled: [], closes: [] };
+  s.bot.broker = {
+    name: 'binance', supportsBrackets: true,
+    getAccount: async (p) => ({ cash: 100000, btc: Math.max(0, ex.pos), shortBtc: Math.max(0, -ex.pos), price: p, equity: 100000 }),
+    placeOrder: async ({ side, notional, qty, price }) => {
+      if (side === 'sell') { ex.pos -= qty; ex.closes.push({ qty, price }); return { id: 'C1', qty, price, fee: 1 }; }
+      const q = Math.floor((notional / price) * 1000) / 1000; ex.pos += q; return { id: 'E1', qty: q, price, fee: 1 };
+    },
+    placeBracket: async ({ stop, target }) => { const a = String(ex.nextId++), b = String(ex.nextId++); ex.algos[a] = { trigger: stop }; ex.algos[b] = { trigger: target }; return { stopAlgoId: a, targetAlgoId: b }; },
+    moveStop: async () => String(ex.nextId++),
+    cancelAlgo: async (id) => { ex.cancelled.push(id); },
+    algoStatus: async () => ({ status: 'NEW', actualOrderId: null }), // the take-profit never triggered
+    positionAmt: async () => ex.pos,
+    fills: async () => null,
+  };
+  await s.bot.runOnce();
+  let [t] = await s.bot.trades();
+  assert.equal(t.exchangeBracket, true);
+  // price runs past the target, the exchange take-profit stays NEW and the position is still open
+  const past = t.target + (t.target - t.entryPrice) * 0.2;
+  s.bot.now = () => NOW + 120000;
+  const closed = await s.bot.manageOpen(s.candles, past);
+  assert.equal(closed.exitReason, 'target');
+  assert.equal(closed.status, 'win');
+  assert.equal(ex.closes.length, 1, 'closed at market by the bot');
+  assert.ok(ex.cancelled.includes(t.stopAlgoId) && ex.cancelled.includes(t.targetAlgoId), 'exchange orders cancelled');
+  const log = (await s.bot.decisions(5)).find((d) => /did not close/.test(d.note || ''));
+  assert.match(log.note, /take-profit NEW/);
+  [t] = await s.bot.trades();
+  assert.equal(t.status, 'win');
+});
+
 test('daily scan counter tallies every scan and where it stopped', async () => {
   const { scanOutcome } = await import('../src/bot.js');
   assert.equal(scanOutcome('No setup · swing 15m: no fresh IFVG · scalp 1m: no fresh IFVG'), 'noIfvg');

@@ -516,6 +516,19 @@ export class TradingBot {
     const amt = await this.broker.positionAmt();
     const stillOpen = open.side === 'short' ? amt < 0 : amt > 0;
     if (stillOpen) {
+      // Safety net: the live price is already beyond the target or the stop, but the exchange order has not closed the
+      // position (it did not trigger, or it is gone). Close it at market ourselves and record why.
+      const short = open.side === 'short';
+      const pastT = Number.isFinite(price) && (short ? price <= open.target : price >= open.target);
+      const pastS = Number.isFinite(price) && (short ? price >= open.stop : price <= open.stop);
+      if (pastT || pastS) {
+        const [sl, tp] = await Promise.all([this.broker.algoStatus(open.stopAlgoId), this.broker.algoStatus(open.targetAlgoId)]);
+        await this.log({
+          time: new Date(this.now()).toISOString(), price, action: 'HOLD', source: 'bracket', executed: false, tradeId: open.id,
+          note: `Exchange ${pastT ? 'take-profit' : 'stop'} did not close the ${open.side} (price ${price} is past ${pastT ? `TP ${open.target}` : `SL ${open.stop}`}; exchange stop ${sl?.status || 'not found'}, take-profit ${tp?.status || 'not found'}): closing at market`,
+        });
+        return this.closeTrade(open, price, pastT ? 'target' : open.breakeven ? 'breakeven' : 'stop', candles);
+      }
       const hit = checkBracket(open, candles, price, this.now());
       if (hit?.partialAt && !open.partial) await this.takePartial(open, hit.partialAt, candles);
       if (hit?.breakevenAt && !open.breakeven) {
