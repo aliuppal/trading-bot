@@ -489,7 +489,19 @@ export class TradingBot {
     const open = (await this.trades()).find((t) => t.status === 'open');
     if (!open) return null;
     const candles = await this.market.getCandles(open.granularity || this.state.settings.granularity, 200);
-    const closed = await this.manageOpen(candles, candles.at(-1).close);
+    let closed;
+    try {
+      closed = await this.manageOpen(candles, candles.at(-1).close);
+    } catch (err) {
+      // make failures while managing an open trade visible (once per trade and message, not every minute)
+      const key = `${open.id}:${err.message}`;
+      if (this.state.lastManageError !== key) {
+        this.state.lastManageError = key;
+        await this.log({ time: new Date(this.now()).toISOString(), action: 'ERROR', source: 'bracket', executed: false, tradeId: open.id, note: `Managing the open ${open.side}: ${err.message}` });
+        await this.save();
+      }
+      throw err;
+    }
     return closed && { closed };
   }
 

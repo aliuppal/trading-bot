@@ -162,19 +162,32 @@ export class BinanceFuturesBroker {
     try {
       o = await send(quantity);
     } catch (err) {
-      // too large for the current leverage tier: move to a tier that holds it (or shrink to the most allowed), retry once
-      if (closing || err.code !== -2027) throw err;
-      const px = await this.getPrice();
-      const fit = await this.fitToBrackets(quantity, px);
-      this.currentLeverage = null;
-      await this.setLeverage(fit.lev);
-      const q2 = this.roundQty(fit.qty);
-      if (!(q2 > 0)) throw err;
-      o = await send(q2);
-      limitNote = fit.capped
-        ? `size cut to ${q2} (${(q2 / quantity * 100).toFixed(0)}%) to fit Binance's limit at ${this.currentLeverage}x`
-        : `leverage moved to ${this.currentLeverage}x to fit Binance's position limit`;
-      quantity = q2;
+      if (closing && (err.code === -2022 || /reduce ?only/i.test(err.message))) {
+        // a close rejected as reduce-only (e.g. a stuck exchange take-profit still holds the position): retry once as a
+        // plain market order of at most the open position, which in one-way mode still only closes it
+        const q2 = this.roundQty(Math.min(quantity, Math.abs(await this.positionAmt())));
+        if (!(q2 > 0)) throw err;
+        o = await this.req('POST', '/fapi/v1/order', {
+          symbol: this.symbol, side: ACTION_SIDE[action], type: 'MARKET', quantity: q2,
+          newClientOrderId: `${source}-${action}-${Date.now()}`, newOrderRespType: 'RESULT',
+        });
+        limitNote = 'closed without reduce-only (an exchange order was still holding the position)';
+        quantity = q2;
+      } else {
+        // too large for the current leverage tier: move to a tier that holds it (or shrink to the most allowed), retry once
+        if (closing || err.code !== -2027) throw err;
+        const px = await this.getPrice();
+        const fit = await this.fitToBrackets(quantity, px);
+        this.currentLeverage = null;
+        await this.setLeverage(fit.lev);
+        const q2 = this.roundQty(fit.qty);
+        if (!(q2 > 0)) throw err;
+        o = await send(q2);
+        limitNote = fit.capped
+          ? `size cut to ${q2} (${(q2 / quantity * 100).toFixed(0)}%) to fit Binance's limit at ${this.currentLeverage}x`
+          : `leverage moved to ${this.currentLeverage}x to fit Binance's position limit`;
+        quantity = q2;
+      }
     }
     // The actual fills (price, fee, realized P&L) from Binance's own trade records.
     const fills = await this.fills(o.orderId);
