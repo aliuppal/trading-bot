@@ -249,7 +249,9 @@ export class BinanceFuturesBroker {
     await this.init();
     const a = await this.req('POST', '/fapi/v1/algoOrder', {
       algoType: 'CONDITIONAL', symbol: this.symbol, side, type, triggerPrice: this.fmtPrice(trigger),
-      closePosition: 'true', workingType: 'CONTRACT_PRICE', priceProtect: 'true',
+      // priceProtect off: on the demo exchange mark and last price drift apart and a protected order stays stuck in
+      // TRIGGERING (fired but never filled); the bot's own safety net still closes a position past its levels
+      closePosition: 'true', workingType: 'CONTRACT_PRICE', priceProtect: 'false',
     });
     return String(a.algoId);
   }

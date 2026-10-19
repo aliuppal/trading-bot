@@ -432,6 +432,26 @@ test('BinanceFuturesBroker: -2027 (position too large for the leverage) moves to
   assert.match(c.limitNote, /size cut to/);
 });
 
+test('BinanceFuturesBroker: stop and take-profit are close-position algo orders without price protection', async () => {
+  const { BinanceFuturesBroker } = await import('../src/brokers/binance.js');
+  const algos = [];
+  const fakeFetch = async (url, opts) => {
+    const u = new URL(url);
+    const json = (body) => ({ ok: true, status: 200, json: async () => body });
+    if (u.pathname === '/fapi/v1/exchangeInfo') return json({ symbols: [{ symbol: 'BTCUSDT', filters: [{ filterType: 'PRICE_FILTER', tickSize: '0.1' }] }] });
+    if (u.pathname === '/fapi/v1/leverage') return json({ leverage: 1 });
+    if (u.pathname === '/fapi/v1/algoOrder' && opts.method === 'POST') { algos.push(Object.fromEntries(u.searchParams)); return json({ algoId: algos.length }); }
+    return json({});
+  };
+  const b = new BinanceFuturesBroker({ key: 'K', secret: 'S', getPrice: async () => 50000 }, fakeFetch);
+  const ids = await b.placeBracket({ side: 'short', stop: 50500, target: 49000 });
+  assert.deepEqual(ids, { stopAlgoId: '1', targetAlgoId: '2' });
+  assert.deepEqual(algos.map((a) => [a.type, a.side, a.triggerPrice, a.closePosition, a.priceProtect]), [
+    ['STOP_MARKET', 'BUY', '50500.0', 'true', 'false'],
+    ['TAKE_PROFIT_MARKET', 'BUY', '49000.0', 'true', 'false'],
+  ]);
+});
+
 test('BinanceFuturesBroker: a rejected reduce-only close is retried only when it really reduces the position', async () => {
   const { BinanceFuturesBroker } = await import('../src/brokers/binance.js');
   let position = -0.46; // short
