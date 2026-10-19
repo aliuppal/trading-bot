@@ -165,7 +165,12 @@ export class BinanceFuturesBroker {
       if (closing && (err.code === -2022 || /reduce ?only/i.test(err.message))) {
         // a close rejected as reduce-only (e.g. a stuck exchange take-profit still holds the position): retry once as a
         // plain market order of at most the open position, which in one-way mode still only closes it
-        const q2 = this.roundQty(Math.min(quantity, Math.abs(await this.positionAmt())));
+        // only when this order really reduces the open position (a SELL against a long, a BUY against a short):
+        // otherwise Binance was right to reject it (e.g. a "sell" while short would add to the short)
+        const amt = await this.positionAmt();
+        const reduces = ACTION_SIDE[action] === 'BUY' ? amt < 0 : amt > 0;
+        if (!reduces) throw err;
+        const q2 = this.roundQty(Math.min(quantity, Math.abs(amt)));
         if (!(q2 > 0)) throw err;
         o = await this.req('POST', '/fapi/v1/order', {
           symbol: this.symbol, side: ACTION_SIDE[action], type: 'MARKET', quantity: q2,

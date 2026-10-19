@@ -432,6 +432,39 @@ test('BinanceFuturesBroker: -2027 (position too large for the leverage) moves to
   assert.match(c.limitNote, /size cut to/);
 });
 
+test('BinanceFuturesBroker: a rejected reduce-only close is retried only when it really reduces the position', async () => {
+  const { BinanceFuturesBroker } = await import('../src/brokers/binance.js');
+  let position = -0.46; // short
+  const sent = [];
+  const fakeFetch = async (url) => {
+    const u = new URL(url);
+    const p = Object.fromEntries(u.searchParams);
+    const json = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
+    if (u.pathname === '/fapi/v1/exchangeInfo') return json({ symbols: [{ symbol: 'BTCUSDT', filters: [{ filterType: 'MARKET_LOT_SIZE', stepSize: '0.001' }] }] });
+    if (u.pathname === '/fapi/v1/leverage') return json({ leverage: 1 });
+    if (u.pathname === '/fapi/v2/positionRisk') return json([{ symbol: 'BTCUSDT', positionAmt: String(position), markPrice: '50000' }]);
+    if (u.pathname === '/fapi/v1/order') {
+      if (p.reduceOnly === 'true') return json({ code: -2022, msg: 'ReduceOnly Order is rejected.' }, 400);
+      sent.push(p);
+      position += (p.side === 'BUY' ? 1 : -1) * Number(p.quantity);
+      return json({ orderId: 5, status: 'FILLED', executedQty: p.quantity, avgPrice: '50000', cumQuote: String(50000 * p.quantity), updateTime: 1 });
+    }
+    return json({ code: -1, msg: 'nope' }, 404);
+  };
+  const b = new BinanceFuturesBroker({ key: 'K', secret: 'S', getPrice: async () => 50000 }, fakeFetch);
+  // a "sell" (close a long) while short must NOT be retried: it would add to the short
+  await assert.rejects(() => b.placeOrder({ side: 'sell', qty: 0.012 }), /ReduceOnly/);
+  assert.equal(sent.length, 0);
+  assert.equal(position, -0.46);
+  // covering the short is retried as a plain BUY capped at the position
+  const c = await b.coverShort({ qty: 0.5 });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].side, 'BUY');
+  assert.equal(Number(sent[0].quantity), 0.46);
+  assert.equal(Math.abs(position) < 1e-9, true);
+  assert.match(c.limitNote, /without reduce-only/);
+});
+
 test('leverage: Jev picks it, capped by Max leverage; position = margin x leverage', async () => {
   const s = setup({ fetchImpl: geminiResponse({ action: 'BUY', confidence: 0.8, size_pct: 5, leverage: 10, reasoning: 'clean setup' }) });
   s.broker.supportsLeverage = true; // pretend the simulator is a leveraged futures broker
