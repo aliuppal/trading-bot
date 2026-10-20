@@ -18,7 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Prices come from the venue the bot trades on: Binance BTCUSDC for BROKER=binance, else Coinbase BTC-USD.
 const market = config.broker === 'binance' ? coinbase.binanceMarket(config.binance) : coinbase;
 
-const kv = createKV({ dataDir: config.dataDir, redis: config.redis, supabase: config.supabase });
+const kv = createKV({ dataDir: config.dataDir, redis: config.redis, supabase: config.supabase, neon: config.neon });
 const local = new LocalBroker({ kv, startingCash: config.startingCash, getPrice: market.getPrice });
 // BROKER=binance: Binance USD-M futures demo account (BTCUSDT, longs and shorts). Default: built-in simulation.
 const broker = config.broker === 'binance'
@@ -64,6 +64,7 @@ const wrap = (fn) => (req, res) =>
 // Serverless instances don't share memory: always start from the persisted bot state.
 app.use('/api', (req, res, next) => {
   if (bot.busy) return next(); // a cycle in this process holds the freshest state
+  kv.beginRequest?.(); // Neon: cached reads last one request only
   bot.load().then(() => next(), (err) => res.status(500).json({ error: `Storage: ${err.message}` }));
 });
 

@@ -241,8 +241,138 @@ export class SupabaseKV {
   }
 }
 
-/** Supabase if configured, else Upstash Redis, else local JSON files. */
-export function createKV({ dataDir, redis, supabase }) {
+const SORT = { 'entry_time.desc': 'entry_time desc', 'time.desc': 'time desc' };
+
+/**
+ * Neon (serverless Postgres) over HTTPS, same tables as Supabase (neon/schema.sql). List reads are kept for the
+ * rest of the request (beginRequest() clears them) and our own writes update that copy, so one cron tick reads each
+ * list once instead of once per symbol per check: far less data transfer.
+ */
+export class NeonKV {
+  constructor({ url }, sqlImpl = null) {
+    this.sql = sqlImpl;
+    this.url = url;
+    this.name = 'neon';
+    this.cache = new Map();
+  }
+
+  async q(text, params = []) {
+    if (!this.sql) {
+      const { neon } = await import('@neondatabase/serverless');
+      this.sql = neon(this.url);
+    }
+    return this.sql.query(text, params);
+  }
+
+  /** New request: forget cached reads (another instance may have written meanwhile). */
+  beginRequest() { this.cache.clear(); }
+
+  cached(key, ttlMs = 20000) {
+    const c = this.cache.get(key);
+    return c && Date.now() - c.at < ttlMs ? clone(c.value) : undefined;
+  }
+
+  remember(key, value) { this.cache.set(key, { at: Date.now(), value: clone(value) }); }
+
+  /** Insert or update rows (all with the same columns) in one statement. */
+  async upsert(table, rows) {
+    if (!rows.length) return;
+    const cols = Object.keys(rows[0]);
+    const list = cols.join(', ');
+    const update = cols.filter((c) => c !== 'id').map((c) => `${c} = excluded.${c}`).join(', ');
+    await this.q(`insert into ${table} (${list}) select ${list} from jsonb_populate_recordset(null::${table}, $1::jsonb)
+      on conflict (id) do update set ${update}`, [JSON.stringify(rows)]);
+  }
+
+  async get(key, fallback) {
+    const hit = this.cached(key);
+    if (hit !== undefined) return hit;
+    let value;
+    const list = LISTS[key];
+    if (list) {
+      const rows = await this.q(`select data from ${key} order by ${SORT[list.order]} limit ${list.limit}`);
+      value = rows.length ? rows.map((r) => r.data) : clone(fallback);
+    } else if (key === 'bot') {
+      const rows = await this.q('select data from settings where id = $1', ['bot']);
+      value = rows.length ? rows[0].data : clone(fallback);
+    } else if (key.startsWith('shot_')) {
+      const rows = await this.q('select entry_image, exit_image from trades where id = $1', [key.slice(5)]);
+      if (!rows.length) return clone(fallback);
+      const { entry_image: entry, exit_image: exit } = rows[0];
+      return { ...(entry && { entry }), ...(exit && { exit }) }; // images are not cached
+    } else {
+      const rows = await this.q('select value from kv where key = $1', [key]);
+      value = rows.length ? rows[0].value : clone(fallback);
+    }
+    if (!key.startsWith('lock_')) this.remember(key, value);
+    return clone(value);
+  }
+
+  async set(key, value) {
+    const list = LISTS[key];
+    if (list) {
+      if (!value.length) await this.q(`delete from ${key}`); // reset
+      else await this.upsert(key, value.map(list.row));
+    } else if (key === 'bot') {
+      await this.upsert('settings', [settingsRow(value)]);
+    } else if (key.startsWith('shot_')) {
+      await this.q('update trades set entry_image = $2, exit_image = $3 where id = $1', [key.slice(5), value.entry ?? null, value.exit ?? null]);
+      return;
+    } else {
+      await this.q(`insert into kv (key, value, updated_at) values ($1, $2::jsonb, now())
+        on conflict (key) do update set value = excluded.value, updated_at = now()`, [key, JSON.stringify(value)]);
+    }
+    this.remember(key, value);
+  }
+
+  /** Cheap change marker for a list table: id and time of the most recently written row. */
+  async latest(key) {
+    if (!LISTS[key]) return null;
+    const rows = await this.q(`select id, updated_at from ${key} order by updated_at desc limit 1`);
+    return rows[0] ? `${rows[0].id}@${new Date(rows[0].updated_at).toISOString()}` : '';
+  }
+
+  /** Insert one row into a list table (decisions, orders, trades). */
+  async append(key, item) {
+    const list = LISTS[key];
+    if (!list) {
+      const all = await this.get(key, []);
+      all.unshift(item);
+      return this.set(key, all);
+    }
+    await this.upsert(key, [list.row(item)]);
+    const c = this.cache.get(key);
+    if (c) { c.value.unshift(clone(item)); c.value.splice(list.limit); }
+  }
+
+  /** Atomic lock: the insert does nothing while another holder has the row. Stale locks expire. */
+  async tryLock(name, ttlMs = 90000) {
+    const key = `lock_${name}`;
+    const insert = () => this.q('insert into kv (key, value, updated_at) values ($1, $2::jsonb, now()) on conflict (key) do nothing returning key',
+      [key, JSON.stringify({ until: Date.now() + ttlMs })]);
+    if ((await insert()).length) return true;
+    const rows = await this.q('select value from kv where key = $1', [key]);
+    if (rows[0] && rows[0].value.until > Date.now()) return false;
+    await this.q('delete from kv where key = $1', [key]); // stale: take it over
+    return (await insert()).length > 0;
+  }
+
+  async unlock(name) {
+    await this.q('delete from kv where key = $1', [`lock_${name}`]);
+  }
+
+  async del(key) {
+    this.cache.delete(key);
+    if (LISTS[key]) return this.q(`delete from ${key}`);
+    if (key === 'bot') return this.q('delete from settings where id = $1', ['bot']);
+    if (key.startsWith('shot_')) return this.set(key, {});
+    return this.q('delete from kv where key = $1', [key]);
+  }
+}
+
+/** Neon if DATABASE_URL is set, else Supabase, else Upstash Redis, else local JSON files. */
+export function createKV({ dataDir, redis, supabase, neon }) {
+  if (neon?.url) return new NeonKV(neon);
   if (supabase?.url && supabase?.key) return new SupabaseKV(supabase);
   if (redis?.url && redis?.token) return new RedisKV(redis);
   return new FileKV(dataDir);
