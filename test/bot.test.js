@@ -633,6 +633,38 @@ test('exchange bracket: SL/TP placed on the exchange, breakeven moves the stop, 
   assert.ok(ex.cancelled.includes(t.stopAlgoId), 'leftover stop cancelled');
 });
 
+test('manageOpen reconciles with the exchange: stale / duplicate records closed, their exchange orders cancelled', async () => {
+  const s = setup();
+  const cancelled = [];
+  let allCancelled = 0;
+  let pos = -100; // a live short on the exchange
+  s.bot.broker = {
+    name: 'binance', supportsBrackets: true,
+    positionAmt: async () => pos,
+    cancelAlgo: async (id) => { cancelled.push(id); },
+    cancelAllAlgos: async () => { allCancelled++; },
+    getAccount: async (p) => ({ cash: 1e5, btc: 0, shortBtc: Math.max(0, -pos), price: p, equity: 1e5 }),
+    algoStatus: async () => ({ status: 'NEW', actualOrderId: null }),
+    fills: async () => null,
+  };
+  const mk = (id, min, extra) => ({ id, symbol: s.bot.symbol, side: 'short', status: 'open', broker: 'binance', entryPrice: 100, stop: 101, initialStop: 101, target: 98, qty: 100, notional: 10000, entryTime: new Date(NOW + min * 60000).toISOString(), ...extra });
+  await s.bot.kv.set('trades', [mk('NEW', 8, { exchangeBracket: true, stopAlgoId: 's2', targetAlgoId: 't2' }), mk('OLD', 0, { exchangeBracket: true, stopAlgoId: 's1', targetAlgoId: 't1' })]);
+  // the newest record is the live position: the older duplicate is closed and its orders cancelled
+  await s.bot.manageOpen(s.candles, 100);
+  let t = await s.bot.trades();
+  assert.equal(t.find((x) => x.id === 'OLD').status !== 'open', true);
+  assert.equal(t.find((x) => x.id === 'NEW').status, 'open');
+  assert.deepEqual(cancelled, ['s1', 't1']);
+  assert.equal(allCancelled, 0, 'position still live: nothing else cancelled');
+  // closed outside the bot: a record without exchange orders is closed once the exchange is flat, leftovers cancelled
+  await s.bot.kv.set('trades', [mk('X', 9, {}), ...t]);
+  pos = 0;
+  await s.bot.manageOpen(s.candles, 99);
+  t = await s.bot.trades();
+  assert.equal(t.filter((x) => x.status === 'open').length, 0);
+  assert.equal(allCancelled, 1);
+});
+
 test('fixExit rebooks a closed trade from a real exchange order: P&L, fees, R and result', async () => {
   const s = setup();
   const t0 = { id: 'T1', symbol: s.bot.symbol, side: 'short', status: 'loss', entryPrice: 82738.2, initialStop: 82955.2, stop: 82955.2, target: 82533, qty: 0.46, entryFee: 15.22, exitPrice: 81995, pnl: -8.91, exitReason: 'target', entryTime: new Date(NOW).toISOString(), exitTime: new Date(NOW + 60000).toISOString() };

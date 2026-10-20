@@ -507,8 +507,26 @@ export class TradingBot {
 
   /** Close the open trade if its stop or target was hit. Returns the closed trade or null. */
   async manageOpen(candles, price) {
-    const open = (await this.trades()).find((t) => t.status === 'open');
+    const opens = (await this.trades()).filter((t) => t.status === 'open');
+    const open = opens[0];
     if (!open) return null;
+    // Real broker: reconcile the records with the exchange position (one position per symbol, newest record first).
+    // Records the exchange no longer holds (closed outside the bot, or duplicates) are closed and their stop /
+    // target orders cancelled, so they cannot close a later position.
+    if (this.broker.positionAmt && opens.every((t) => t.broker === this.broker.name)) {
+      const live = (t, amt) => (t.side === 'short' ? amt < 0 : amt > 0);
+      const amt = await this.broker.positionAmt();
+      const stale = opens.filter((t, i) => i > 0 || (!live(t, amt) && !t.exchangeBracket));
+      if (stale.length) {
+        let last = null;
+        for (const t of stale) {
+          if (t.exchangeBracket && this.broker.cancelAlgo) await Promise.all([this.broker.cancelAlgo(t.stopAlgoId), this.broker.cancelAlgo(t.targetAlgoId)]);
+          last = await this.closeTrade(t, price, 'manual', candles, { order: null });
+        }
+        if (!live(open, amt) && this.broker.cancelAllAlgos) await this.broker.cancelAllAlgos(); // flat: no leftovers
+        return last;
+      }
+    }
     if (open.exchangeBracket && open.broker === this.broker.name && this.broker.supportsBrackets) {
       return this.manageExchangeBracket(open, candles, price);
     }

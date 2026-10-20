@@ -269,6 +269,11 @@ export class BinanceFuturesBroker {
     try { await this.req('DELETE', '/fapi/v1/algoOrder', { algoId }); } catch { /* already triggered / gone */ }
   }
 
+  /** Cancel every open stop / take-profit (algo) order on the symbol, including ones whose ids were lost. */
+  async cancelAllAlgos() {
+    try { await this.req('DELETE', '/fapi/v1/algoOpenOrders', { symbol: this.symbol }); } catch { /* none open */ }
+  }
+
   /** Replace the stop-loss (e.g. move to breakeven). Returns the new algo id. */
   async moveStop(trade, newStop) {
     await this.cancelAlgo(trade.stopAlgoId);
