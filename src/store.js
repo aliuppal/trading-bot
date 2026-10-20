@@ -370,8 +370,189 @@ export class NeonKV {
   }
 }
 
-/** Neon if DATABASE_URL is set, else Supabase, else Upstash Redis, else local JSON files. */
+/** Trade fields that change on every review: not worth waking the archive database for. */
+const VOLATILE = new Set(['lastReviewAt', 'reviews', 'lastPrice', 'nextReviewAt']);
+const material = (t) => JSON.stringify(Object.keys(t).sort().filter((k) => !VOLATILE.has(k)).map((k) => [k, t[k]]));
+const LIST_KEEP = 300; // decisions / orders kept in Redis (newest first)
+
+/**
+ * Upstash Redis for everything the bot reads and writes every minute (bot state, settings, trades list, decisions,
+ * locks), Neon (Postgres) only as the archive: a trade row when it materially changes (opened, closed, stop moved),
+ * chart snapshots, executed / error decisions. The cron then never wakes Neon, so its compute can scale to zero.
+ *
+ * Each key carries a version stamp (hash "versions", read once per request): a warm instance keeps values in memory
+ * and re-downloads a key only when its stamp changed. During a bot cycle (startBatch / flush) the plain keys are
+ * written together in one MSET.
+ */
+export class HybridKV {
+  constructor({ redis, neon }) {
+    this.r = redis instanceof RedisKV ? redis : new RedisKV(redis);
+    this.neon = neon instanceof NeonKV ? neon : new NeonKV(neon);
+    this.name = 'redis+neon';
+    this.mem = new Map(); // key -> { ver, value } (kept across requests on a warm instance)
+    this.vers = null; // versions read at the start of this request
+    this.batch = null; // deferred plain writes during a bot cycle
+  }
+
+  rk(k) { return this.r.prefix + k; }
+
+  cmd(args) { return this.r.cmd(args); }
+
+  /** Several commands in one HTTP request (Upstash REST pipeline). */
+  async pipeline(cmds) {
+    const res = await this.r.fetch(`${this.r.url}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.r.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(cmds),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !Array.isArray(data)) throw new Error(`Redis pipeline: HTTP ${res.status}`);
+    const err = data.find((x) => x.error);
+    if (err) throw new Error(`Redis pipeline: ${err.error}`);
+    return data.map((x) => x.result);
+  }
+
+  /** Start of a request: read every key's version stamp (one command). */
+  async beginRequest() {
+    const flat = (await this.cmd(['HGETALL', this.rk('versions')])) || [];
+    this.vers = {};
+    for (let i = 0; i < flat.length; i += 2) this.vers[flat[i]] = String(flat[i + 1]);
+  }
+
+  async versions() {
+    if (!this.vers) await this.beginRequest();
+    return this.vers;
+  }
+
+  fresh(key) {
+    const m = this.mem.get(key);
+    return m && this.vers && m.ver === this.vers[key] ? clone(m.value) : undefined;
+  }
+
+  stamp() { return `${Date.now()}${Math.floor(Math.random() * 1000)}`; }
+
+  keep(key, value, ver) {
+    if (this.vers) this.vers[key] = ver;
+    this.mem.set(key, { ver, value: clone(value) });
+  }
+
+  /** Bot cycle: collect plain writes and send them in one go at flush(). */
+  startBatch() { this.batch = new Map(); }
+
+  async flush() {
+    const b = this.batch;
+    this.batch = null;
+    if (!b?.size) return;
+    const mset = ['MSET'];
+    const hset = ['HSET', this.rk('versions')];
+    for (const [key, { value, ver }] of b) { mset.push(this.rk(key), JSON.stringify(value)); hset.push(key, ver); }
+    await this.pipeline([mset, hset]);
+  }
+
+  /** Read several plain keys in one MGET (the bot states at the start of a cycle). */
+  async prefetch(keys) {
+    const vers = await this.versions();
+    const need = keys.filter((k) => this.fresh(k) === undefined && k in vers);
+    if (need.length) {
+      const vals = await this.cmd(['MGET', ...need.map((k) => this.rk(k))]);
+      need.forEach((k, i) => { if (vals[i] != null) this.keep(k, JSON.parse(vals[i]), vers[k]); });
+    }
+  }
+
+  /** First use of a key in Redis: copy it from Neon once (then Redis owns it). */
+  async seed(key, fallback) {
+    const value = await this.neon.get(key, fallback);
+    const ver = this.stamp();
+    if (key === 'decisions' || key === 'orders') {
+      const list = (value || []).slice(0, LIST_KEEP);
+      await this.pipeline([['DEL', this.rk(key)], ...(list.length ? [['RPUSH', this.rk(key), ...list.map((x) => JSON.stringify(x))]] : []), ['HSET', this.rk('versions'), key, ver]]);
+      this.keep(key, list, ver);
+      return clone(list);
+    }
+    await this.pipeline([['SET', this.rk(key), JSON.stringify(value ?? null)], ['HSET', this.rk('versions'), key, ver]]);
+    this.keep(key, value ?? null, ver);
+    return value == null ? clone(fallback) : clone(value);
+  }
+
+  async get(key, fallback) {
+    if (key.startsWith('shot_')) return this.neon.get(key, fallback); // chart images live in Neon only
+    const vers = await this.versions();
+    const hit = this.fresh(key);
+    if (hit !== undefined) return hit == null ? clone(fallback) : hit;
+    if (!(key in vers)) return key.startsWith('lock_') ? clone(fallback) : this.seed(key, fallback);
+    let value;
+    if (key === 'decisions' || key === 'orders') {
+      value = ((await this.cmd(['LRANGE', this.rk(key), 0, LIST_KEEP - 1])) || []).map((x) => JSON.parse(x));
+    } else {
+      const raw = await this.cmd(['GET', this.rk(key)]);
+      value = raw == null ? null : JSON.parse(raw);
+    }
+    this.keep(key, value, vers[key]);
+    return value == null ? clone(fallback) : clone(value);
+  }
+
+  async set(key, value) {
+    if (key.startsWith('shot_')) return this.neon.set(key, value);
+    const ver = this.stamp();
+    if (key === 'trades') {
+      // archive only the rows that materially changed (opened, closed, stop / target moved...)
+      const prev = new Map((await this.get('trades', [])).map((t) => [t.id, material(t)]));
+      const changed = value.filter((t) => prev.get(t.id) !== material(t));
+      if (!value.length) await this.neon.q('delete from trades');
+      else if (changed.length) await this.neon.upsert('trades', changed.map(LISTS.trades.row));
+      await this.pipeline([['SET', this.rk(key), JSON.stringify(value)], ['HSET', this.rk('versions'), key, ver]]);
+    } else if (key === 'decisions' || key === 'orders') {
+      const list = value.slice(0, LIST_KEEP);
+      await this.pipeline([['DEL', this.rk(key)], ...(list.length ? [['RPUSH', this.rk(key), ...list.map((x) => JSON.stringify(x))]] : []), ['HSET', this.rk('versions'), key, ver]]);
+      if (!value.length) await this.neon.q(`delete from ${key}`);
+    } else if (this.batch) {
+      this.batch.set(key, { value, ver });
+    } else {
+      await this.pipeline([['SET', this.rk(key), JSON.stringify(value)], ['HSET', this.rk('versions'), key, ver]]);
+    }
+    this.keep(key, value, ver);
+  }
+
+  /** Newest-first list item (decisions, orders): Redis always, Neon archive for executed / error decisions and orders. */
+  async append(key, item) {
+    if (key !== 'decisions' && key !== 'orders') {
+      const all = await this.get(key, []);
+      all.unshift(item);
+      return this.set(key, all);
+    }
+    await this.versions();
+    if (!(key in this.vers)) await this.seed(key, []);
+    const ver = this.stamp();
+    await this.pipeline([['LPUSH', this.rk(key), JSON.stringify(item)], ['LTRIM', this.rk(key), 0, LIST_KEEP - 1], ['HSET', this.rk('versions'), key, ver]]);
+    const m = this.mem.get(key);
+    if (m) { m.value.unshift(clone(item)); m.value.splice(LIST_KEEP); this.keep(key, m.value, ver); }
+    if (key === 'orders' || item.executed || item.action === 'ERROR') await this.neon.append(key, item).catch(() => {});
+  }
+
+  /** Change marker for the dashboard: the key's version stamp (no extra request). */
+  async latest(key) {
+    return (await this.versions())[key] || '';
+  }
+
+  async tryLock(name, ttlMs = 90000) {
+    return (await this.cmd(['SET', this.rk(`lock_${name}`), String(Date.now() + ttlMs), 'NX', 'PX', ttlMs])) === 'OK';
+  }
+
+  async unlock(name) {
+    await this.cmd(['DEL', this.rk(`lock_${name}`)]);
+  }
+
+  async del(key) {
+    if (key.startsWith('shot_')) return this.neon.del(key);
+    this.mem.delete(key);
+    await this.pipeline([['DEL', this.rk(key)], ['HSET', this.rk('versions'), key, this.stamp()]]);
+    if (key === 'trades' || key === 'decisions' || key === 'orders') await this.neon.del(key);
+  }
+}
+
+/** Redis + Neon if both are set, else Neon, else Supabase, else Upstash Redis, else local JSON files. */
 export function createKV({ dataDir, redis, supabase, neon }) {
+  if (neon?.url && redis?.url && redis?.token) return new HybridKV({ redis, neon });
   if (neon?.url) return new NeonKV(neon);
   if (supabase?.url && supabase?.key) return new SupabaseKV(supabase);
   if (redis?.url && redis?.token) return new RedisKV(redis);

@@ -48,8 +48,15 @@ if (config.broker === 'binance') {
 const botFor = (sym) => bots.find((b) => b.symbol === sym) || bot;
 /** One locked pass over every symbol (stops / targets, scans, Jev). */
 const tickAll = () => bot.locked(async () => {
+  // Redis + Neon storage: read every bot's state in one go, write them back together at the end
+  kv.startBatch?.();
+  await kv.prefetch?.(['bot', ...bots.slice(1).map((b) => `bot_${b.symbol}`), 'trades']);
   const out = [];
-  for (const b of bots) out.push(await b.tickUnlocked().catch((e) => ({ action: 'ERROR', note: `${b.symbol}: ${e.message}` })));
+  try {
+    for (const b of bots) out.push(await b.tickUnlocked().catch((e) => ({ action: 'ERROR', note: `${b.symbol}: ${e.message}` })));
+  } finally {
+    await kv.flush?.();
+  }
   return out;
 });
 
@@ -64,8 +71,9 @@ const wrap = (fn) => (req, res) =>
 // Serverless instances don't share memory: always start from the persisted bot state.
 app.use('/api', (req, res, next) => {
   if (bot.busy) return next(); // a cycle in this process holds the freshest state
-  kv.beginRequest?.(); // Neon: cached reads last one request only
-  bot.load().then(() => next(), (err) => res.status(500).json({ error: `Storage: ${err.message}` }));
+  // Neon: cached reads last one request only; Redis + Neon: read the version stamps once
+  Promise.resolve(kv.beginRequest?.()).then(() => bot.load())
+    .then(() => next(), (err) => res.status(500).json({ error: `Storage: ${err.message}` }));
 });
 
 app.get('/api/status', wrap(async (req, res) => {
