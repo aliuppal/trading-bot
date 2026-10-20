@@ -108,6 +108,37 @@ test('HybridKV: trades go to Neon only when a row materially changes; other inst
   assert.equal((await kv.get('trades', []))[0].status, 'win', 'stale memory replaced after the version changed');
 });
 
+test('HybridKV: writing one symbol\'s trades keeps the other symbols\' trades (upsert by id), repair restores from Neon', async () => {
+  const { kv } = make({});
+  await kv.beginRequest();
+  const x = { id: 'TX', symbol: 'XRPUSDT', side: 'short', status: 'open', entryTime: '2026-10-20T16:10:00Z', entryPrice: 1.32, qty: 1 };
+  const d = { id: 'TD', symbol: 'DOGEUSDT', side: 'short', status: 'open', entryTime: '2026-10-20T16:12:00Z', entryPrice: 0.08, qty: 1 };
+  const b = { id: 'TB', symbol: 'BNBUSDT', side: 'short', status: 'open', entryTime: '2026-10-20T16:14:00Z', entryPrice: 733, qty: 1 };
+  await kv.set('trades', [x]);
+  await kv.set('trades', [d]); // the DOGE bot writes back only its own trades
+  await kv.set('trades', [{ ...b, status: 'loss', exitTime: '2026-10-20T16:16:00Z' }]);
+  await kv.beginRequest();
+  assert.deepEqual((await kv.get('trades', [])).map((t) => t.id), ['TB', 'TD', 'TX'], 'all symbols kept, newest first');
+  assert.equal((await kv.get('trades', [])).find((t) => t.id === 'TB').status, 'loss');
+});
+
+test('HybridKV: repairTrades adds archived trades back and keeps the further-along copy', async () => {
+  const r = fakeRedis();
+  const archived = [
+    { id: 'TX', symbol: 'XRPUSDT', status: 'loss', entryTime: '2026-10-20T16:10:00Z', exitTime: '2026-10-20T16:30:00Z' },
+    { id: 'TD', symbol: 'DOGEUSDT', status: 'open', entryTime: '2026-10-20T16:12:00Z' },
+  ];
+  const n = fakeNeon({ trades: archived });
+  const kv = new HybridKV({ redis: new RedisKV({ url: 'https://r', token: 't' }, r.fetchImpl), neon: n.kv });
+  await kv.beginRequest();
+  await kv.set('trades', [{ id: 'TX', symbol: 'XRPUSDT', status: 'open', entryTime: '2026-10-20T16:10:00Z' }, { id: 'TB', symbol: 'BNBUSDT', status: 'open', entryTime: '2026-10-20T16:14:00Z' }]);
+  const out = await kv.repairTrades();
+  assert.equal(out.after, 3);
+  const list = await kv.get('trades', []);
+  assert.deepEqual(list.map((t) => t.id), ['TB', 'TD', 'TX']);
+  assert.equal(list.find((t) => t.id === 'TX').status, 'loss', 'closed in the archive wins over a stale open copy');
+});
+
 test('HybridKV: decisions newest first in Redis; only executed / error ones archived in Neon', async () => {
   const { kv, n } = make({});
   await kv.beginRequest();

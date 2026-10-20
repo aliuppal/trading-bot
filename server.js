@@ -133,6 +133,11 @@ app.get('/api/jev/last', wrap(async (req, res) => {
   res.json(mine.find((d) => /^jev/.test(d.source || '') && d.reasoning) || mine.find((d) => d.reasoning) || mine[0] || null);
 }));
 app.get('/api/trades', wrap(async (req, res) => res.json(await bot.allTrades())));
+// Redis + Neon storage: rebuild the trades list from the Neon archive.
+app.post('/api/storage/repair-trades', wrap(async (req, res) => {
+  if (typeof kv.repairTrades !== 'function') throw new Error(`Storage ${kv.name} has no trade archive to repair from`);
+  res.json(await bot.locked(() => kv.repairTrades()) ?? { error: 'A bot cycle is running, try again in a few seconds' });
+}));
 // Repair a closed trade's exit from a real Binance order (P&L, fees, R, result recomputed from its fills).
 app.post('/api/trades/:id/fix-exit', wrap(async (req, res) => {
   const id = String(req.params.id);

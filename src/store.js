@@ -374,6 +374,9 @@ export class NeonKV {
 const VOLATILE = new Set(['lastReviewAt', 'reviews', 'lastPrice', 'nextReviewAt']);
 const material = (t) => JSON.stringify(Object.keys(t).sort().filter((k) => !VOLATILE.has(k)).map((k) => [k, t[k]]));
 const LIST_KEEP = 300; // decisions / orders kept in Redis (newest first)
+const TRADES_KEEP = 600; // trades kept in Redis (all symbols, newest entry first)
+/** Newest entry first, capped. */
+const mergeTrades = (list) => list.sort((a, b) => String(b.entryTime || '').localeCompare(String(a.entryTime || ''))).slice(0, TRADES_KEEP);
 
 /**
  * Upstash Redis for everything the bot reads and writes every minute (bot state, settings, trades list, decisions,
@@ -495,16 +498,30 @@ export class HybridKV {
     if (key.startsWith('shot_')) return this.neon.set(key, value);
     const ver = this.stamp();
     if (key === 'trades') {
-      // archive only the rows that materially changed (opened, closed, stop / target moved...)
-      const prev = new Map((await this.get('trades', [])).map((t) => [t.id, material(t)]));
+      // Like the database stores, writing trades upserts them by id: a bot writes back the list it read (often only
+      // its own symbol's trades) and the other trades must stay. An empty list is a reset.
+      const current = await this.get('trades', []);
+      const prev = new Map(current.map((t) => [t.id, material(t)]));
       const changed = value.filter((t) => prev.get(t.id) !== material(t));
       if (!value.length) await this.neon.q('delete from trades');
       else if (changed.length) await this.neon.upsert('trades', changed.map(LISTS.trades.row));
+      const byId = new Map(current.map((t) => [t.id, t]));
+      for (const t of value) byId.set(t.id, t);
+      value = value.length ? mergeTrades([...byId.values()]) : [];
       await this.pipeline([['SET', this.rk(key), JSON.stringify(value)], ['HSET', this.rk('versions'), key, ver]]);
     } else if (key === 'decisions' || key === 'orders') {
-      const list = value.slice(0, LIST_KEEP);
+      // upsert by id like the database stores (an empty list is a reset)
+      let list = [];
+      if (value.length) {
+        const current = await this.get(key, []);
+        const idOf = (x) => x.id || `D${Date.parse(x.time)}`;
+        const byId = new Map(current.map((x) => [idOf(x), x]));
+        for (const x of value) byId.set(idOf(x), x);
+        list = [...byId.values()].sort((a, b) => String(b.time || '').localeCompare(String(a.time || ''))).slice(0, LIST_KEEP);
+      }
       await this.pipeline([['DEL', this.rk(key)], ...(list.length ? [['RPUSH', this.rk(key), ...list.map((x) => JSON.stringify(x))]] : []), ['HSET', this.rk('versions'), key, ver]]);
       if (!value.length) await this.neon.q(`delete from ${key}`);
+      value = list;
     } else if (this.batch) {
       this.batch.set(key, { value, ver });
     } else {
@@ -527,6 +544,25 @@ export class HybridKV {
     const m = this.mem.get(key);
     if (m) { m.value.unshift(clone(item)); m.value.splice(LIST_KEEP); this.keep(key, m.value, ver); }
     if (key === 'orders' || item.executed || item.action === 'ERROR') await this.neon.append(key, item).catch(() => {});
+  }
+
+  /**
+   * Rebuild the Redis trades list from the Neon archive: every archived trade is added back, and a trade present in
+   * both keeps the Neon copy when it is further along (closed there but open here), else the Redis copy.
+   */
+  async repairTrades() {
+    const archived = (await this.neon.q(`select data from trades order by entry_time desc limit ${TRADES_KEEP}`)).map((r) => r.data);
+    const current = await this.get('trades', []);
+    const byId = new Map(archived.map((t) => [t.id, t]));
+    for (const t of current) {
+      const a = byId.get(t.id);
+      byId.set(t.id, a && a.status !== 'open' && t.status === 'open' ? a : t);
+    }
+    const list = mergeTrades([...byId.values()]);
+    const ver = this.stamp();
+    await this.pipeline([['SET', this.rk('trades'), JSON.stringify(list)], ['HSET', this.rk('versions'), 'trades', ver]]);
+    this.keep('trades', list, ver);
+    return { archived: archived.length, before: current.length, after: list.length, open: list.filter((t) => t.status === 'open').length };
   }
 
   /** Change marker for the dashboard: the key's version stamp (no extra request). */
