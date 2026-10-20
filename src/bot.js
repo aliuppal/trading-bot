@@ -580,6 +580,51 @@ export class TradingBot {
   }
 
   /**
+   * The trade's full result from the exchange: the entry order's fills plus every closing fill since entry (up to the
+   * entry quantity). Returns { exitPrice, pnl, fees, grossPnl, r, bookedFromFills } or null when the exchange cannot
+   * tell yet (not a real-broker trade, or the position is not fully closed).
+   */
+  async exchangeBook(t) {
+    const b = this.broker;
+    if ((t.broker ?? 'local') !== b.name || !b.closingFills || !b.fills || !t.orderId) return null;
+    const entry = await b.fills(String(t.orderId));
+    if (!entry?.qty) return null;
+    const closes = await b.closingFills({ sinceMs: Date.parse(t.entryTime), side: t.side === 'short' ? 'BUY' : 'SELL', qty: entry.qty, excludeOrderId: t.orderId });
+    if (!closes || closes.qty < entry.qty * 0.98) return null;
+    const fees = entry.commission + closes.commission;
+    const pnl = closes.realizedPnl - fees;
+    const risk = Math.abs(t.entryPrice - (t.initialStop ?? t.stop));
+    return {
+      exitPrice: closes.price,
+      pnl: Number(pnl.toFixed(2)),
+      fees: Number(fees.toFixed(2)),
+      grossPnl: Number(closes.realizedPnl.toFixed(2)),
+      r: Number((((t.side === 'short' ? -1 : 1) * (closes.price - t.entryPrice)) / risk).toFixed(2)),
+      bookedFromFills: true,
+    };
+  }
+
+  /** Re-book a closed trade from the exchange fills (all closing fills since entry). */
+  async rebook(id) {
+    const trades = await this.trades();
+    const i = trades.findIndex((t) => t.id === id);
+    if (i < 0) throw new Error(`Trade ${id} not found on ${this.symbol}`);
+    const t = trades[i];
+    if (t.status === 'open') throw new Error('Trade is still open');
+    const booked = await this.exchangeBook(t);
+    if (!booked) throw new Error('The exchange fills do not show this position fully closed');
+    const before = t.pnl;
+    Object.assign(t, booked, {
+      status: Math.abs(booked.pnl) < 0.005 ? 'breakeven' : booked.pnl > 0 ? 'win' : 'loss',
+      note: `Re-booked from every Binance closing fill since entry (P&L ${before} -> ${booked.pnl})`,
+    });
+    trades[i] = t;
+    await this.kv.set('trades', trades);
+    await this.log({ time: new Date(this.now()).toISOString(), price: booked.exitPrice, action: 'HOLD', source: 'bracket', executed: false, tradeId: t.id, note: t.note });
+    return t;
+  }
+
+  /**
    * Repair a closed trade whose exit was booked against the wrong order: take the exit from a real Binance order
    * (its fills: price, qty, fee, realized P&L) and recompute P&L, fees, R and the result like closeTrade does.
    */
@@ -737,6 +782,10 @@ export class TradingBot {
       r: Number((((dir * (exitPrice - trade.entryPrice)) / Math.abs(trade.entryPrice - (trade.initialStop ?? trade.stop))) * (pt ? 1 - pt.fraction : 1) + (pt ? pt.r * pt.fraction : 0)).toFixed(2)),
       ...(note && { note }),
     });
+    // Real exchange: book the full result from every fill that closed the position (stop / target, partial, trim,
+    // a bot or manual close), not just the last order: a stop that fills in parts is counted completely.
+    const booked = await this.exchangeBook(trade).catch(() => null);
+    if (booked) Object.assign(trade, booked, { status: reason === 'breakeven' && booked.pnl <= 0 ? 'breakeven' : Math.abs(booked.pnl) < 0.005 ? 'breakeven' : booked.pnl > 0 ? 'win' : 'loss' });
     const trades = await this.trades();
     const i = trades.findIndex((t) => t.id === trade.id);
     if (i >= 0) trades[i] = trade;

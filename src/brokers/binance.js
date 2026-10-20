@@ -241,6 +241,35 @@ export class BinanceFuturesBroker {
     return null;
   }
 
+  /**
+   * Every fill that closed a position opened at `sinceMs` (side BUY closes a short, SELL a long), in time order, up to
+   * `qty`: the exchange stop / take-profit, partial and trim fills, the bot's or a manual close. Returns
+   * { qty, quote, price, commission, realizedPnl, lastTime } or null when nothing closed it yet.
+   */
+  async closingFills({ sinceMs, side, qty, excludeOrderId }) {
+    const rows = await this.req('GET', '/fapi/v1/userTrades', { symbol: this.symbol, startTime: Math.max(0, Math.floor(sinceMs) - 1000), limit: 1000 });
+    const out = { qty: 0, quote: 0, commission: 0, realizedPnl: 0, lastTime: null };
+    for (const r of rows.filter((x) => x.side === side && String(x.orderId) !== String(excludeOrderId)).sort((a, b) => a.time - b.time)) {
+      if (out.qty >= qty - 1e-9) break;
+      const take = Math.min(Number(r.qty), qty - out.qty);
+      const f = take / Number(r.qty);
+      out.qty += take;
+      out.quote += Number(r.quoteQty) * f;
+      out.commission += Number(r.commission) * f;
+      out.realizedPnl += Number(r.realizedPnl) * f;
+      out.lastTime = r.time;
+    }
+    if (!(out.qty > 0)) return null;
+    return {
+      qty: Number(out.qty.toFixed(8)),
+      quote: Number(out.quote.toFixed(4)),
+      price: Number((out.quote / out.qty).toPrecision(10)),
+      commission: Number(out.commission.toFixed(6)),
+      realizedPnl: Number(out.realizedPnl.toFixed(6)),
+      lastTime: out.lastTime,
+    };
+  }
+
   // ---- exchange-side bracket (real stop-loss / take-profit orders via the Algo Order API) ----
 
   get supportsBrackets() { return true; }

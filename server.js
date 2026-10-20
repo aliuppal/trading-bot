@@ -138,6 +138,15 @@ app.post('/api/storage/repair-trades', wrap(async (req, res) => {
   if (typeof kv.repairTrades !== 'function') throw new Error(`Storage ${kv.name} has no trade archive to repair from`);
   res.json(await bot.locked(() => kv.repairTrades()) ?? { error: 'A bot cycle is running, try again in a few seconds' });
 }));
+// Re-book a closed trade from every Binance closing fill since its entry (partial stops, manual closes...).
+app.post('/api/trades/:id/rebook', wrap(async (req, res) => {
+  const id = String(req.params.id);
+  const t = (await bot.allTrades()).find((x) => x.id === id);
+  if (!t) throw new Error(`Trade ${id} not found`);
+  const b = botFor(t.symbol || bot.symbol);
+  if (b !== bot) await b.load();
+  res.json(await b.rebook(id));
+}));
 // Repair a closed trade's exit from a real Binance order (P&L, fees, R, result recomputed from its fills).
 app.post('/api/trades/:id/fix-exit', wrap(async (req, res) => {
   const id = String(req.params.id);

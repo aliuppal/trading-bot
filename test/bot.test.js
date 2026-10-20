@@ -665,6 +665,37 @@ test('manageOpen reconciles with the exchange: stale / duplicate records closed,
   assert.equal(allCancelled, 1);
 });
 
+test('a closed trade is booked from every closing fill since entry (stop filled in two parts)', async () => {
+  const s = setup();
+  // the ETH case: short 26.884 @ 2436.77, stop filled 10.903 @ 2442.11, the rest 15.981 @ 2446.73
+  const fills = {
+    E1: { qty: 26.884, quote: 26.884 * 2436.77, price: 2436.77, commission: 26.2, realizedPnl: 0 },
+  };
+  const closes = [
+    { qty: 10.903, price: 2442.11, commission: 10.65, realizedPnl: -10.903 * (2442.11 - 2436.77) },
+    { qty: 15.981, price: 2446.73, commission: 15.64, realizedPnl: -15.981 * (2446.73 - 2436.77) },
+  ];
+  s.bot.broker = {
+    ...s.bot.broker, name: 'binance',
+    fills: async (id) => fills[id] || null,
+    closingFills: async ({ qty, side }) => {
+      assert.equal(side, 'BUY');
+      const q = closes.reduce((a, c) => a + c.qty, 0);
+      const quote = closes.reduce((a, c) => a + c.qty * c.price, 0);
+      return { qty: Math.min(q, qty), quote, price: quote / q, commission: closes.reduce((a, c) => a + c.commission, 0), realizedPnl: closes.reduce((a, c) => a + c.realizedPnl, 0) };
+    },
+  };
+  const t = { id: 'T1', symbol: s.bot.symbol, side: 'short', status: 'loss', broker: 'binance', orderId: 'E1', entryPrice: 2436.77, initialStop: 2440.4896, stop: 2440.4896, qty: 15.981, entryTime: new Date(NOW).toISOString(), exitTime: new Date(NOW + 9 * 60000).toISOString(), exitPrice: 2446.73, pnl: -190.39 };
+  await s.bot.kv.set('trades', [t]);
+  const r = await s.bot.rebook('T1');
+  const gross = -(10.903 * (2442.11 - 2436.77) + 15.981 * (2446.73 - 2436.77));
+  assert.equal(r.grossPnl, Number(gross.toFixed(2)));
+  assert.equal(r.fees, Number((26.2 + 10.65 + 15.64).toFixed(2)));
+  assert.equal(r.pnl, Number((gross - 26.2 - 10.65 - 15.64).toFixed(2)));
+  assert.ok(r.exitPrice > 2442 && r.exitPrice < 2446, `average exit ${r.exitPrice}`);
+  assert.equal(r.status, 'loss');
+});
+
 test('fixExit rebooks a closed trade from a real exchange order: P&L, fees, R and result', async () => {
   const s = setup();
   const t0 = { id: 'T1', symbol: s.bot.symbol, side: 'short', status: 'loss', entryPrice: 82738.2, initialStop: 82955.2, stop: 82955.2, target: 82533, qty: 0.46, entryFee: 15.22, exitPrice: 81995, pnl: -8.91, exitReason: 'target', entryTime: new Date(NOW).toISOString(), exitTime: new Date(NOW + 60000).toISOString() };
