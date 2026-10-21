@@ -172,7 +172,11 @@ export class BinanceFuturesBroker {
         if (!reduces) throw Object.assign(new Error('Position already closed on the exchange'), { code: 'ALREADY_FLAT' });
         const q2 = this.roundQty(Math.min(quantity, Math.abs(amt)));
         if (!(q2 > 0)) throw Object.assign(new Error('Position already closed on the exchange'), { code: 'ALREADY_FLAT' });
-        o = await send(q2);
+        try {
+          o = await send(q2);
+        } catch (e2) {
+          throw new Error(`${e2.message} (after cancelling the symbol's orders: ${await this.openOrdersSummary()})`);
+        }
         limitNote = 'retried after cancelling the exchange stop / take-profit that held the position';
         quantity = q2;
       } else {
@@ -297,7 +301,19 @@ export class BinanceFuturesBroker {
 
   /** Cancel every open stop / take-profit (algo) order on the symbol, including ones whose ids were lost. */
   async cancelAllAlgos() {
+    // conditional (algo) orders, and any regular open orders (older-style stops / limits) on the symbol
     try { await this.req('DELETE', '/fapi/v1/algoOpenOrders', { symbol: this.symbol }); } catch { /* none open */ }
+    try { await this.req('DELETE', '/fapi/v1/allOpenOrders', { symbol: this.symbol }); } catch { /* none open */ }
+  }
+
+  /** What is still open on the symbol (for error messages): algo and regular order counts and the position. */
+  async openOrdersSummary() {
+    const algos = await this.req('GET', '/fapi/v1/openAlgoOrders', { symbol: this.symbol }).catch((e) => ({ error: e.message }));
+    const regular = await this.req('GET', '/fapi/v1/openOrders', { symbol: this.symbol }).catch((e) => ({ error: e.message }));
+    const positions = await this.req('GET', '/fapi/v2/positionRisk', { symbol: this.symbol }).catch(() => []);
+    const count = (x) => (Array.isArray(x) ? x.length : Array.isArray(x?.orders) ? x.orders.length : x?.error ? `? (${String(x.error).slice(0, 60)})` : '?');
+    const pos = (Array.isArray(positions) ? positions : []).map((p) => `${p.positionSide || 'BOTH'} ${p.positionAmt}`).join(', ');
+    return `open algo orders ${count(algos)}, open orders ${count(regular)}, position ${pos || '?'}`;
   }
 
   /** Replace the stop-loss (e.g. move to breakeven). Returns the new algo id. */
