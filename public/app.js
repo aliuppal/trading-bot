@@ -550,7 +550,12 @@ async function renderJevReason() {
   const d = await api(`/api/jev/last?symbol=${encodeURIComponent(sym)}`).catch(() => null);
   if (sym !== chartSymbol) return; // symbol changed meanwhile
   const box = $('jevReason');
-  if (!d) { box.className = 'decision'; box.innerHTML = `<div class="decision-head"><span>Jev · ${esc(chartSymbol)}</span></div><div class="sub">No Jev decision for ${esc(chartSymbol)} yet</div>`; return; }
+  if (!d) {
+    const noJev = status?.model === 'ifvg_nojev';
+    box.className = 'decision';
+    box.innerHTML = `<div class="decision-head"><span>${noJev ? 'Rules' : 'Jev'} · ${esc(chartSymbol)}</span></div><div class="sub">${noJev ? `No trade taken on ${esc(chartSymbol)} yet with IFVG (no Jev): Jev is not asked or reviewing on this model` : `No Jev decision for ${esc(chartSymbol)} yet`}</div>`;
+    return;
+  }
   const lbl = decisionLabel(d);
   const rules = /^rules/.test(d.source || '');
   box.className = `decision ${esc(d.action || '')}`;
@@ -594,7 +599,8 @@ function orderChipsHtml(text, executed) {
 /** Next Jev review of the open trade on the charted symbol (local time). */
 function nextReviewHtml() {
   const t = chartOpen();
-  if (!t?.nextReviewAt) return '';
+  // IFVG (no Jev): trades are never reviewed by Jev (they run to stop / target; an opposite IFVG closes them)
+  if (!t?.nextReviewAt || t.model === 'ifvg_nojev' || status?.model === 'ifvg_nojev') return '';
   const at = new Date(t.nextReviewAt);
   const mins = Math.max(0, Math.round((at - Date.now()) / 60000));
   return `<div class="sub next-review">Next Jev review <b>${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b> (${mins ? `in ${mins} min` : 'due now'})</div>`;

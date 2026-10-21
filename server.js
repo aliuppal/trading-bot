@@ -130,6 +130,8 @@ app.get('/api/decisions', wrap(async (req, res) => res.json(await bot.decisions(
 app.get('/api/jev/last', wrap(async (req, res) => {
   const sym = String(req.query.symbol || bot.symbol);
   const mine = (await bot.decisions(1000)).filter((d) => (d.symbol || 'BTCUSDC') === sym);
+  // IFVG (no Jev): the newest rules decision (Jev is not asked on this model; an old Jev answer would mislead)
+  if ((bot.state.settings.model || 'ifvg') === 'ifvg_nojev') return res.json(mine.find((d) => /^rules/.test(d.source || '')) || null);
   res.json(mine.find((d) => /^jev/.test(d.source || '') && d.reasoning) || mine.find((d) => d.reasoning) || mine[0] || null);
 }));
 app.get('/api/trades', wrap(async (req, res) => res.json(await bot.allTrades())));
