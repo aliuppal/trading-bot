@@ -174,11 +174,18 @@ export class BinanceFuturesBroker {
         if (!(q2 > 0)) throw Object.assign(new Error('Position already closed on the exchange'), { code: 'ALREADY_FLAT' });
         try {
           o = await send(q2);
+          limitNote = 'retried after cancelling the exchange stop / take-profit that held the position';
         } catch (e2) {
-          throw new Error(`${e2.message} (after cancelling the symbol's orders: ${await this.openOrdersSummary()})`);
+          // The demo exchange sometimes keeps rejecting a correct reduce-only close even with nothing else open.
+          // Then, and only when nothing is open on the symbol (no stop / take-profit can fill at the same moment),
+          // close with a plain market order of exactly the current position, and correct any remainder or overshoot.
+          const open = await this.openCounts();
+          if (open.algos !== 0 || open.regular !== 0) throw new Error(`${e2.message} (${await this.openOrdersSummary()})`);
+          o = await this.closeExactly(action, source);
+          if (!o) throw Object.assign(new Error('Position already closed on the exchange'), { code: 'ALREADY_FLAT' });
+          limitNote = 'reduce-only refused by the exchange: closed with an exact-size market order';
         }
-        limitNote = 'retried after cancelling the exchange stop / take-profit that held the position';
-        quantity = q2;
+        quantity = Number(o.executedQty) || q2;
       } else {
         // too large for the current leverage tier: move to a tier that holds it (or shrink to the most allowed), retry once
         if (closing || err.code !== -2027) throw err;
@@ -304,6 +311,36 @@ export class BinanceFuturesBroker {
     // conditional (algo) orders, and any regular open orders (older-style stops / limits) on the symbol
     try { await this.req('DELETE', '/fapi/v1/algoOpenOrders', { symbol: this.symbol }); } catch { /* none open */ }
     try { await this.req('DELETE', '/fapi/v1/allOpenOrders', { symbol: this.symbol }); } catch { /* none open */ }
+  }
+
+  /** Numbers of open algo (stop / take-profit) and regular orders on the symbol; null when it cannot be read. */
+  async openCounts() {
+    const n = (x) => (Array.isArray(x) ? x.length : Array.isArray(x?.orders) ? x.orders.length : null);
+    const algos = n(await this.req('GET', '/fapi/v1/openAlgoOrders', { symbol: this.symbol }).catch(() => null));
+    const regular = n(await this.req('GET', '/fapi/v1/openOrders', { symbol: this.symbol }).catch(() => null));
+    return { algos, regular };
+  }
+
+  /**
+   * Close the whole position with a plain market order of exactly its size (used only when reduce-only is refused and
+   * nothing else is open on the symbol), then re-check: a remainder is closed, an overshoot is reversed. Returns the
+   * main order (raw Binance response) or null when there was nothing to close.
+   */
+  async closeExactly(action, source) {
+    const side = ACTION_SIDE[action];
+    const plain = (s, q) => this.req('POST', '/fapi/v1/order', {
+      symbol: this.symbol, side: s, type: 'MARKET', quantity: q, newClientOrderId: `${source}-${action}-${Date.now()}`, newOrderRespType: 'RESULT',
+    });
+    let amt = await this.positionAmt();
+    if (!(side === 'BUY' ? amt < 0 : amt > 0)) return null;
+    const main = await plain(side, this.roundQty(Math.abs(amt)));
+    for (let i = 0; i < 2; i++) {
+      amt = await this.positionAmt();
+      if (Math.abs(amt) < this.step / 2) break;
+      // remainder in the same direction: close it; overshoot to the other side: reverse it
+      await plain(amt > 0 ? 'SELL' : 'BUY', this.roundQty(Math.abs(amt)));
+    }
+    return main;
   }
 
   /** What is still open on the symbol (for error messages): algo and regular order counts and the position. */

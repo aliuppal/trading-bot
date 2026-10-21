@@ -497,6 +497,38 @@ test('BinanceFuturesBroker: closes are always reduce-only; a rejected close canc
   assert.equal(sent.length, n);
 });
 
+test('BinanceFuturesBroker: demo refuses every reduce-only close with nothing open -> exact-size market close, remainder fixed', async () => {
+  const { BinanceFuturesBroker } = await import('../src/brokers/binance.js');
+  let position = -37.787; // the ETH leftover short
+  const sent = [];
+  const fakeFetch = async (url, opts) => {
+    const u = new URL(url);
+    const p = Object.fromEntries(u.searchParams);
+    const json = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
+    if (u.pathname === '/fapi/v1/exchangeInfo') return json({ symbols: [{ symbol: 'BTCUSDT', filters: [{ filterType: 'MARKET_LOT_SIZE', stepSize: '0.001' }] }] });
+    if (u.pathname === '/fapi/v1/leverage') return json({ leverage: 1 });
+    if (u.pathname === '/fapi/v2/positionRisk') return json([{ symbol: 'BTCUSDT', positionSide: 'BOTH', positionAmt: String(position), markPrice: '2400' }]);
+    if (opts.method === 'DELETE') return json({ code: 200 });
+    if (u.pathname === '/fapi/v1/openAlgoOrders' || u.pathname === '/fapi/v1/openOrders') return json([]);
+    if (u.pathname === '/fapi/v1/order') {
+      if (p.reduceOnly === 'true') return json({ code: -2022, msg: 'ReduceOnly Order is rejected.' }, 400); // demo quirk
+      sent.push(p);
+      // the first plain order fills a little short of the request (a remainder the broker must close)
+      const q = sent.length === 1 ? Number(p.quantity) - 0.5 : Number(p.quantity);
+      position += (p.side === 'BUY' ? 1 : -1) * q;
+      return json({ orderId: sent.length, status: 'FILLED', executedQty: String(q), avgPrice: '2400', cumQuote: String(2400 * q), updateTime: 1 });
+    }
+    return json({ code: -1, msg: 'nope' }, 404);
+  };
+  const b = new BinanceFuturesBroker({ key: 'K', secret: 'S', getPrice: async () => 2400 }, fakeFetch);
+  const c = await b.coverShort({ qty: 37.787 });
+  assert.equal(sent[0].side, 'BUY');
+  assert.equal(Number(sent[0].quantity), 37.787);
+  assert.equal(sent[1].side, 'BUY', 'remainder closed');
+  assert.ok(Math.abs(position) < 1e-9, `flat, got ${position}`);
+  assert.match(c.limitNote, /exact-size market order/);
+});
+
 test('the bot closes an exchange position it has no record of (reduce-only) and logs it', async () => {
   const s = setup();
   let pos = 0.46; // a leftover long the bot does not know about
