@@ -163,20 +163,17 @@ export class BinanceFuturesBroker {
       o = await send(quantity);
     } catch (err) {
       if (closing && (err.code === -2022 || /reduce ?only/i.test(err.message))) {
-        // a close rejected as reduce-only (e.g. a stuck exchange take-profit still holds the position): retry once as a
-        // plain market order of at most the open position, which in one-way mode still only closes it
-        // only when this order really reduces the open position (a SELL against a long, a BUY against a short):
-        // otherwise Binance was right to reject it (e.g. a "sell" while short would add to the short)
+        // A close is ALWAYS reduce-only, so it can never open or flip a position. Binance rejects it while one of the
+        // symbol's stop / take-profit orders is holding (triggering on) the position: cancel those, then retry
+        // reduce-only for whatever is still open in this direction. Nothing left = the exchange already closed it.
+        await this.cancelAllAlgos();
         const amt = await this.positionAmt();
         const reduces = ACTION_SIDE[action] === 'BUY' ? amt < 0 : amt > 0;
-        if (!reduces) throw err;
+        if (!reduces) throw Object.assign(new Error('Position already closed on the exchange'), { code: 'ALREADY_FLAT' });
         const q2 = this.roundQty(Math.min(quantity, Math.abs(amt)));
-        if (!(q2 > 0)) throw err;
-        o = await this.req('POST', '/fapi/v1/order', {
-          symbol: this.symbol, side: ACTION_SIDE[action], type: 'MARKET', quantity: q2,
-          newClientOrderId: `${source}-${action}-${Date.now()}`, newOrderRespType: 'RESULT',
-        });
-        limitNote = 'closed without reduce-only (an exchange order was still holding the position)';
+        if (!(q2 > 0)) throw Object.assign(new Error('Position already closed on the exchange'), { code: 'ALREADY_FLAT' });
+        o = await send(q2);
+        limitNote = 'retried after cancelling the exchange stop / take-profit that held the position';
         quantity = q2;
       } else {
         // too large for the current leverage tier: move to a tier that holds it (or shrink to the most allowed), retry once
@@ -356,7 +353,10 @@ export class BinanceFuturesBroker {
           price: Number(o.avgPrice) || null,
           notional: Number(o.cumQuote) || null,
           status: String(o.status).toLowerCase(),
-          source: source === 'ai' ? 'ai' : 'manual',
+          // ai = the bot; manual = the app's Buy / Sell buttons; otherwise Binance itself (a triggered stop /
+          // take-profit) or an order placed on the Binance website
+          source: source === 'ai' ? 'ai' : source === 'manual' ? 'manual'
+            : /STOP/.test(o.origType || o.type) ? 'exchange stop' : /TAKE_PROFIT/.test(o.origType || o.type) ? 'exchange take-profit' : 'binance',
         };
       })
       .sort((a, b) => new Date(b.time) - new Date(a.time))

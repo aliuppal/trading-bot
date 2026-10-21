@@ -452,37 +452,69 @@ test('BinanceFuturesBroker: stop and take-profit are close-position algo orders 
   ]);
 });
 
-test('BinanceFuturesBroker: a rejected reduce-only close is retried only when it really reduces the position', async () => {
+test('BinanceFuturesBroker: closes are always reduce-only; a rejected close cancels the stop / take-profit and retries reduce-only', async () => {
   const { BinanceFuturesBroker } = await import('../src/brokers/binance.js');
   let position = -0.46; // short
+  let algosHold = true; // an exchange stop / take-profit is holding the position
   const sent = [];
-  const fakeFetch = async (url) => {
+  let algoCancels = 0;
+  const fakeFetch = async (url, opts) => {
     const u = new URL(url);
     const p = Object.fromEntries(u.searchParams);
     const json = (body, status = 200) => ({ ok: status === 200, status, json: async () => body });
     if (u.pathname === '/fapi/v1/exchangeInfo') return json({ symbols: [{ symbol: 'BTCUSDT', filters: [{ filterType: 'MARKET_LOT_SIZE', stepSize: '0.001' }] }] });
     if (u.pathname === '/fapi/v1/leverage') return json({ leverage: 1 });
     if (u.pathname === '/fapi/v2/positionRisk') return json([{ symbol: 'BTCUSDT', positionAmt: String(position), markPrice: '50000' }]);
+    if (u.pathname === '/fapi/v1/algoOpenOrders' && opts.method === 'DELETE') { algoCancels++; algosHold = false; return json({ code: 200 }); }
     if (u.pathname === '/fapi/v1/order') {
-      if (p.reduceOnly === 'true') return json({ code: -2022, msg: 'ReduceOnly Order is rejected.' }, 400);
+      if (p.reduceOnly === 'true' && algosHold) return json({ code: -2022, msg: 'ReduceOnly Order is rejected.' }, 400);
       sent.push(p);
-      position += (p.side === 'BUY' ? 1 : -1) * Number(p.quantity);
+      const signed = (p.side === 'BUY' ? 1 : -1) * Number(p.quantity);
+      if (p.reduceOnly === 'true' && Math.sign(signed) === Math.sign(position)) return json({ code: -2022, msg: 'ReduceOnly Order is rejected.' }, 400);
+      position += signed;
       return json({ orderId: 5, status: 'FILLED', executedQty: p.quantity, avgPrice: '50000', cumQuote: String(50000 * p.quantity), updateTime: 1 });
     }
     return json({ code: -1, msg: 'nope' }, 404);
   };
   const b = new BinanceFuturesBroker({ key: 'K', secret: 'S', getPrice: async () => 50000 }, fakeFetch);
-  // a "sell" (close a long) while short must NOT be retried: it would add to the short
-  await assert.rejects(() => b.placeOrder({ side: 'sell', qty: 0.012 }), /ReduceOnly/);
-  assert.equal(sent.length, 0);
+  // a "sell" (close a long) while short: never sent as a plain order, the short is untouched
+  await assert.rejects(() => b.placeOrder({ side: 'sell', qty: 0.012 }), /already closed/i);
+  assert.equal(sent.filter((x) => x.reduceOnly !== 'true').length, 0, 'no non-reduce-only order ever');
   assert.equal(position, -0.46);
-  // covering the short is retried as a plain BUY capped at the position
+  // covering: the stop / take-profit holding the position is cancelled, then a reduce-only BUY capped at the position
+  algosHold = true;
   const c = await b.coverShort({ qty: 0.5 });
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].side, 'BUY');
-  assert.equal(Number(sent[0].quantity), 0.46);
+  assert.ok(algoCancels >= 1);
+  assert.equal(sent.at(-1).side, 'BUY');
+  assert.equal(sent.at(-1).reduceOnly, 'true');
+  assert.equal(Number(sent.at(-1).quantity), 0.46);
   assert.equal(Math.abs(position) < 1e-9, true);
-  assert.match(c.limitNote, /without reduce-only/);
+  assert.match(c.limitNote, /cancelling the exchange stop/);
+  // nothing left to close: reported as already flat, nothing sent
+  const n = sent.length;
+  algosHold = true;
+  await assert.rejects(() => b.coverShort({ qty: 0.1 }), (e) => e.code === 'ALREADY_FLAT');
+  assert.equal(sent.length, n);
+});
+
+test('the bot closes an exchange position it has no record of (reduce-only) and logs it', async () => {
+  const s = setup();
+  let pos = 0.46; // a leftover long the bot does not know about
+  const orders = [];
+  s.bot.broker = {
+    ...s.bot.broker, name: 'binance',
+    positionAmt: async () => pos,
+    cancelAllAlgos: async () => {},
+    placeOrder: async ({ side, qty }) => { orders.push({ side, qty }); pos -= qty; return { id: 'F1', qty, price: 82000, realizedPnl: 12 }; },
+    coverShort: async ({ qty }) => { orders.push({ side: 'cover', qty }); pos += qty; return { id: 'F2', qty, price: 82000 }; },
+  };
+  await s.bot.kv.set('trades', []);
+  const r = await s.bot.flattenUnknown();
+  assert.deepEqual(orders, [{ side: 'sell', qty: 0.46 }]);
+  assert.equal(pos, 0);
+  assert.equal(r.flattened.qty, 0.46);
+  assert.match((await s.bot.decisions(1))[0].note, /had no record of/);
+  assert.equal(await s.bot.flattenUnknown(), null, 'flat: nothing to do');
 });
 
 test('leverage: Jev picks it, capped by Max leverage; position = margin x leverage', async () => {

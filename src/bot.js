@@ -487,7 +487,7 @@ export class TradingBot {
       || this.now() - new Date(this.state.lastRun).getTime() >= this.state.settings.intervalMinutes * 60000 - 5000;
     if (this.state.running && due) return this.runOnceUnlocked();
     const open = (await this.trades()).find((t) => t.status === 'open');
-    if (!open) return null;
+    if (!open) return this.flattenUnknown();
     const candles = await this.market.getCandles(open.granularity || this.state.settings.granularity, 200);
     let closed;
     try {
@@ -503,6 +503,33 @@ export class TradingBot {
       throw err;
     }
     return closed && { closed };
+  }
+
+  /**
+   * Real exchange, no open trade on record for this symbol, but the exchange holds a position: it is not the bot's
+   * (a leftover of a partial fill, or opened outside the bot). Close it reduce-only, cancel the symbol's stop /
+   * take-profit orders and log it, so the account only ever holds positions the bot shows.
+   */
+  async flattenUnknown() {
+    const b = this.broker;
+    if (!b.positionAmt || !b.placeOrder || !b.coverShort) return null;
+    const amt = await b.positionAmt();
+    if (!amt) return null;
+    const price = Number(await this.market.getPrice?.().catch(() => null)) || null;
+    if (b.cancelAllAlgos) await b.cancelAllAlgos();
+    let order = null;
+    try {
+      order = amt < 0
+        ? await b.coverShort({ qty: Math.abs(amt), price, source: 'ai', reason: 'unknown position' })
+        : await b.placeOrder({ side: 'sell', qty: amt, price, source: 'ai', reason: 'unknown position' });
+    } catch (err) {
+      if (err.code !== 'ALREADY_FLAT') throw err;
+    }
+    await this.log({
+      time: new Date(this.now()).toISOString(), price: order?.price ?? price, action: amt < 0 ? 'BUY' : 'SELL', source: 'bracket', executed: Boolean(order),
+      note: `Closed a ${amt < 0 ? 'short' : 'long'} of ${Math.abs(amt)} the bot had no record of${order ? ` at ${order.price}${order.realizedPnl != null ? ` (realized ${Number(order.realizedPnl).toFixed(2)})` : ''}` : ''}`,
+    });
+    return order ? { flattened: { qty: amt, price: order.price } } : null;
   }
 
   /** Close the open trade if its stop or target was hit. Returns the closed trade or null. */
@@ -730,19 +757,32 @@ export class TradingBot {
     let note = '';
     let qty = order?.qty ?? trade.qty;
     if (!external) {
-      // closing ourselves (review / signal): remove the exchange stop and target first
-      if (trade.exchangeBracket && broker.cancelAlgo) await Promise.all([broker.cancelAlgo(trade.stopAlgoId), broker.cancelAlgo(trade.targetAlgoId)]);
-      const account = await broker.getAccount(exitPrice);
-      qty = Math.min(trade.qty, short ? account.shortBtc || 0 : account.btc);
+      // closing ourselves (review / signal / safety net): remove the exchange stop and target first
+      if (trade.exchangeBracket && broker.cancelAllAlgos) await broker.cancelAllAlgos();
+      else if (trade.exchangeBracket && broker.cancelAlgo) await Promise.all([broker.cancelAlgo(trade.stopAlgoId), broker.cancelAlgo(trade.targetAlgoId)]);
+      if (broker.positionAmt) {
+        // real exchange, one position per symbol: close ALL of it in this direction (the close is reduce-only, so it
+        // can never flip the position), leftovers from partial fills included
+        const amt = await broker.positionAmt();
+        qty = (short ? amt < 0 : amt > 0) ? Math.abs(amt) : 0;
+      } else {
+        const account = await broker.getAccount(exitPrice);
+        qty = Math.min(trade.qty, short ? account.shortBtc || 0 : account.btc);
+      }
     }
     if (external) {
       if (!order) note = 'Closed outside the bot (no matching exchange order)';
     } else if (qty * exitPrice >= 1) {
-      order = short
-        ? await broker.coverShort({ qty, price: exitPrice, source: 'ai', reason })
-        : await broker.placeOrder({ side: 'sell', qty, price: exitPrice, source: 'ai', reason });
+      try {
+        order = short
+          ? await broker.coverShort({ qty, price: exitPrice, source: 'ai', reason })
+          : await broker.placeOrder({ side: 'sell', qty, price: exitPrice, source: 'ai', reason });
+      } catch (err) {
+        if (err.code !== 'ALREADY_FLAT') throw err;
+        note = 'Already closed on the exchange (its stop / take-profit filled first)';
+      }
     } else {
-      note = 'Position was already closed manually';
+      note = 'Position was already closed on the exchange';
     }
     // Use the broker's actual fill price when it reports one (Binance), else the stop / target level.
     if (Number(order?.price) > 0) exitPrice = Number(order.price);
@@ -1292,7 +1332,8 @@ export class TradingBot {
       if (open) {
         const oc = await this.market.getCandles(open.granularity || s.granularity, 200);
         if (await this.manageOpen(oc, oc.at(-1).close)) persist = true;
-      }
+      } else if (await this.flattenUnknown()) persist = true; // exchange position the bot has no record of
+
 
       // 2. Multi-timeframe scan. A category whose daily limit is used up is not scanned.
       const before = await this.allTrades(); // daily limits count every symbol
