@@ -51,6 +51,9 @@ export const SCALP_TIMEFRAMES = [180, 120, 60];
 /** Mech entries: IFVG on 2m (preferred) > 1m after a first tap of a 1h / 2h / 4h FVG, target the opposing 5m / 15m FVG. */
 export const MECH_TIMEFRAMES = [120, 60];
 export const MECH_ZONES = ['1h', '2h', '4h'];
+/** Continuation entries: pullback into a 5m / 15m FVG in the draw-on-liquidity direction, IFVG on 3m (preferred) > 2m > 1m. */
+export const CONT_TIMEFRAMES = [180, 120, 60];
+export const CONT_ZONES = ['5m', '15m'];
 /** Which zone timeframes may trigger each entry timeframe. */
 export const ZONES_FOR_ENTRY = {
   60: ['5m', '15m', '30m'], // scalp entries
@@ -169,13 +172,13 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
   const closed = closedCandles(candles, g, now);
   const formation = settings.ifvgMaxAge ?? 7; // gap formed -> inverted within 3-7 candles
   const s = latestSetup(closed, { maxAge: 2, maxGapAge: formation, minGapPct: minGapFor(g), displacement: settings.requireDisplacement === true });
-  const tag = `${opts.mech ? 'mech' : category} ${tfLabel(g)}`;
+  const tag = `${opts.mech ? 'mech' : opts.cont ? 'cont' : category} ${tfLabel(g)}`;
   if (!s) { r.note = `${tag}: no fresh IFVG`; return r; }
   let htf = null;
   let sweep = null;
-  const allowed = opts.mech ? MECH_ZONES : ZONES_FOR_ENTRY[g];
+  const allowed = opts.mech ? MECH_ZONES : opts.cont ? CONT_ZONES : ZONES_FOR_ENTRY[g];
   const since = closed.at(-1).time - TAP_WINDOW_MINUTES[category] * 60000;
-  if (settings.requireHtfTap !== false || opts.mech) {
+  if (settings.requireHtfTap !== false || opts.mech || opts.cont) {
     // first touch of an unmitigated same-direction FVG
     htf = findHtfTap(closed.filter((c) => c.time >= since), zones.filter((z) => allowed.includes(z.tf)), s.direction);
   }
@@ -213,13 +216,18 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
   const from = Math.max(0, (s.formedIndex ?? closed.length - 8) - 5);
   const win = closed.slice(from);
   const swingStop = s.direction === 'bearish' ? Math.max(...win.map((c) => c.high)) : Math.min(...win.map((c) => c.low));
+  if (opts.cont) {
+    // continuation: the IFVG goes the way of the current draw on liquidity, after a pullback into a 5m / 15m FVG
+    if (liquidity?.draw !== toward) { r.note = `${tag}: ${s.direction} IFVG, draw on liquidity is ${liquidity?.draw || 'unclear'}, not ${toward}`; return r; }
+    if (!htf) { r.note = `${tag}: ${s.direction} IFVG, no pullback into a ${CONT_ZONES.join('/')} ${s.direction} FVG`; return r; }
+  }
   if (opts.mech && !htf) { r.note = `${tag}: ${s.direction} IFVG, no first tap of a ${MECH_ZONES.join('/')} FVG`; return r; }
   // Every setup needs context (a first FVG tap or a sweep), A+ included.
   if (settings.requireHtfTap !== false && !htf && !sweep) {
     r.note = `${tag}: ${s.direction} IFVG, no unmitigated ${allowed.join('/')} FVG tap and no ${s.direction === 'bullish' ? 'ITL' : 'ITH'} sweep`;
     return r;
   }
-  r.setup = { ...s, id: `${opts.mech ? 'mech:' : ''}${g}:${s.id}`, granularity: g, category, htf, sweep, smt, gapAtr, swingStop, ...quality, ...(opts.mech && { entryModel: 'mech' }) };
+  r.setup = { ...s, id: `${opts.mech ? 'mech:' : opts.cont ? 'cont:' : ''}${g}:${s.id}`, granularity: g, category, htf, sweep, smt, gapAtr, swingStop, ...quality, ...(opts.mech && { entryModel: 'mech' }), ...(opts.cont && { entryModel: 'cont' }) };
   return r;
 }
 
@@ -243,6 +251,7 @@ async function scanCore(market, settings, now, liquidity, opts = {}) {
   const scalpOn = settings.scalpEnabled !== false;
   const swingOn = settings.swingEnabled !== false;
   const mechOn = settings.mechEnabled !== false; // on unless switched off (Configure > Scalp)
+  const contOn = settings.contEnabled === true; // continuation: off unless switched on
   // 3m/5m/15m zones are always loaded too: they are checked for gaps in the path to the target.
   const zoneTfs = [...new Set(['3m', '5m', '15m', ...(needTap ? [...(scalpOn ? ['30m'] : []), ...(swingOn ? ['30m', '1h', '2h', '4h'] : [])] : []), ...(mechOn ? MECH_ZONES : [])])];
   const zones = await loadHtfZones(market, zoneTfs, now);
@@ -287,6 +296,20 @@ async function scanCore(market, settings, now, liquidity, opts = {}) {
       return { setup, candles, granularity: g, zones, note: null, waiting: false };
     }
     notes.push(...MECH_TIMEFRAMES.map((g) => mres[g].note).filter(Boolean));
+  }
+
+  // Continuation: draw on liquidity -> pullback into a 5m / 15m FVG -> 3m > 2m > 1m IFVG the draw's way (counts as a scalp)
+  if (contOn) {
+    const cres = {};
+    for (const g of CONT_TIMEFRAMES) cres[g] = await evaluate(market, g, 'scalp', zones, settings, now, liquidity, { ...opts, cont: true });
+    for (const [i, g] of CONT_TIMEFRAMES.entries()) {
+      const { setup, candles } = cres[g];
+      if (!setup) continue;
+      const higher = CONT_TIMEFRAMES.slice(0, i).find((h) => cres[h].forming[setup.direction]);
+      if (higher) return { setup: null, waiting: true, zones, candles, granularity: g, note: `cont ${tfLabel(g)} ${setup.direction} IFVG ready, waiting for the ${tfLabel(higher)} IFVG forming now` };
+      return { setup, candles, granularity: g, zones, note: null, waiting: false };
+    }
+    notes.push(...CONT_TIMEFRAMES.map((g) => cres[g].note).filter(Boolean));
   }
 
   // Scalp: 3m > 2m > 1m IFVG after a 5m / 15m / 30m FVG tap; a lower timeframe waits while a higher one is forming.

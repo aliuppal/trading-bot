@@ -25,7 +25,8 @@ const EXP = {
   stopMode: opt.stop || 'zone', earlyExit: opt.exit || 'jev', minGapAtr: Number(opt.gapatr || 0), requireSweep: Boolean(opt.sweep),
   smt: opt.smt || 'off', partialPct: Number(opt.partial || 0), sessionFilter: Boolean(opt.session), requireDisplacement: Boolean(opt.disp),
   targetMode: opt.target || 'rr',
-  mechEnabled: !opt.nomech, // mech: 1h/2h/4h tap -> 2m/1m IFVG -> opposing 5m/15m FVG (--nomech: off, --mechonly: mech alone)
+  ...((opt.cont || opt.contonly) && { contEnabled: true }), // continuation entries (--contonly: continuation alone)
+  mechEnabled: !opt.nomech && !opt.contonly, // mech: 1h/2h/4h tap -> 2m/1m IFVG -> opposing 5m/15m FVG (--nomech: off, --mechonly: mech alone)
 };
 const CACHE = opt.cache || null;
 const PRODUCT = opt.product || 'BTC-USD'; // --product=ETH-USD: any Coinbase product (SMT pair: ETH for BTC, BTC for the rest)
@@ -161,7 +162,7 @@ async function main() {
   const settings = {
     intervalMinutes: 1, granularity: 300, minConfidence: 0.6, maxPositionPct: 50, maxTradePct: 10,
     maxTradesPerDay: 20, maxSwingPerDay: 10, maxScalpPerDay: 10, ifvgMaxAge: 7, requireHtfTap: true,
-    entryTimeframes: 'all', scalpEnabled: !opt.mechonly, swingEnabled: !opt.mechonly, ...EXP, riskReward: RR, breakevenAtR: BE, minStopPct: MINSTOP, maxLeverage: 5,
+    entryTimeframes: 'all', scalpEnabled: !opt.mechonly && !opt.contonly, swingEnabled: !opt.mechonly && !opt.contonly, ...EXP, riskReward: RR, breakevenAtR: BE, minStopPct: MINSTOP, maxLeverage: 5,
   };
   const ai = MODE === 'jev'
     ? { provider: 'jev', apiKey: process.env.OPENROUTER_API_KEY, model: 'typesafe/jev-1.13' }
@@ -194,13 +195,14 @@ async function main() {
   console.log(`Account: $5,000 (simulated, 1x, ${FEE}% fee/side) · 1:${RR} R:R${BE ? ` · breakeven at +${BE}R` : ''} · min stop ${MINSTOP}%${ONLY.length ? ` · only ${ONLY.join('+')}` : ''}${NOSIGNAL ? ' · no early signal exits' : ''} · 10% per trade · limits 5 swing / 5 scalp / 10 per day\n`);
   if (!opt.quiet) console.log('Trades:');
   for (const t of opt.quiet ? [] : closed) {
-    console.log(`  ${t.entryTime.slice(5, 16).replace('T', ' ')} ${String(t.ifvg?.grade || '').padEnd(2)} ${(t.ifvg?.entryModel === 'mech' ? 'mech' : t.category || 'swing').padEnd(5)} ${t.side.padEnd(5)} ${String(t.granularity / 60 + 'm').padEnd(3)} ${t.entryPrice.toFixed(0)} -> ${t.exitPrice.toFixed(0)} ${String(t.exitReason).padEnd(9)} ${t.status.toUpperCase().padEnd(9)} ${(t.r > 0 ? '+' : '') + t.r}R ${fmt(t.pnl)}`);
+    console.log(`  ${t.entryTime.slice(5, 16).replace('T', ' ')} ${String(t.ifvg?.grade || '').padEnd(2)} ${(t.ifvg?.entryModel || t.category || 'swing').padEnd(5)} ${t.side.padEnd(5)} ${String(t.granularity / 60 + 'm').padEnd(3)} ${t.entryPrice.toFixed(0)} -> ${t.exitPrice.toFixed(0)} ${String(t.exitReason).padEnd(9)} ${t.status.toUpperCase().padEnd(9)} ${(t.r > 0 ? '+' : '') + t.r}R ${fmt(t.pnl)}`);
     console.log(`        ${t.setupReason || ''}`);
   }
   for (const t of open) console.log(`  ${t.entryTime.slice(5, 16).replace('T', ' ')} ${t.side} still OPEN at the end (entry ${t.entryPrice.toFixed(0)})`);
   console.log(`\nSummary   ${stat(closed)}`);
-  for (const cat of ['swing', 'scalp']) console.log(`  ${cat.padEnd(6)}  ${stat(closed.filter((t) => (t.category || 'swing') === cat && t.ifvg?.entryModel !== 'mech'))}`);
+  for (const cat of ['swing', 'scalp']) console.log(`  ${cat.padEnd(6)}  ${stat(closed.filter((t) => (t.category || 'swing') === cat && !t.ifvg?.entryModel))}`);
   console.log(`  mech    ${stat(closed.filter((t) => t.ifvg?.entryModel === 'mech'))}`);
+  console.log(`  cont    ${stat(closed.filter((t) => t.ifvg?.entryModel === 'cont'))}`);
   console.log(`  A+      ${stat(closed.filter((t) => t.ifvg?.grade === 'A+'))}`);
   for (const side of ['long', 'short']) console.log(`  ${side.padEnd(6)}  ${stat(closed.filter((t) => t.side === side))}`);
   console.log('By day (UTC, exit date):');

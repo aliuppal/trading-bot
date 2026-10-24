@@ -215,7 +215,7 @@ const px = fmtPx;
  */
 export function describeSetup(setup, side) {
   if (!setup) return '';
-  const parts = [`${setup.grade ? `${setup.grade} ` : ''}${setup.entryModel === 'mech' ? 'MECH ' : ''}${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
+  const parts = [`${setup.grade ? `${setup.grade} ` : ''}${setup.entryModel === 'mech' ? 'MECH ' : setup.entryModel === 'cont' ? 'CONT ' : ''}${(setup.category || 'swing').toUpperCase()} ${side || (setup.direction === 'bearish' ? 'short' : 'long')}`];
   if (setup.qualityReasons?.length) parts.push(setup.qualityReasons.join(' + ').replace(' + -> ', ' -> '));
   // Jev model: no pattern, Jev's own call; the stop sits beyond the recent swing high/low.
   if (setup.model === 'jev') return [...parts, `stop beyond the ${tfName(setup.granularity)} swing ${setup.direction === 'bearish' ? 'high' : 'low'} ${px(setup.swingStop)}`].join(' · ');
@@ -1422,7 +1422,7 @@ export class TradingBot {
           }
           // Scalps (HTF FVG tapped -> IFVG on 1m-3m): an opposing 5m / 15m FVG in the way can be the target too
           // (near edge, or far edge when price is inside it), if it is at least 0.75R away.
-          if (setup.category === 'scalp' && setup.entryModel !== 'mech' && !setup.htfTarget && !htfBlock.length) {
+          if (setup.category === 'scalp' && !setup.entryModel && !setup.htfTarget && !htfBlock.length) {
             const ltf = pathBlockers(scan.zones || [], sd, price, tgt, ['5m', '15m']).map((z) => {
               const inside = z.bottom < price && z.top > price;
               const edge = sd === 'short' ? (inside ? z.bottom : z.top) : (inside ? z.top : z.bottom);
