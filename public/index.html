@@ -269,6 +269,7 @@
               <button type="button" role="tab" data-g="entry">Entry</button>
               <button type="button" role="tab" data-g="swing">Swing</button>
               <button type="button" role="tab" data-g="scalp">Scalp</button>
+              <button type="button" role="tab" data-g="v2">Strategy v2</button>
             </div>
             <div class="cfg-group" data-group="general">
               <label title="Auto-trading switches off Saturday 00:00 UTC and back on Monday 00:00 UTC (if it was on)">Pause on weekends<select name="weekendPause"><option value="true">On (Sat-Sun off)</option><option value="false">Off (trade 7 days)</option></select></label>
@@ -303,6 +304,27 @@
               <label>Scalp trades<select name="scalpEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
               <label>Scalp trades / day<input name="maxScalpPerDay" type="number" min="0" max="50" step="1" /></label>
               <label title="IFVG models: first tap of a 1h / 2h / 4h FVG, then an IFVG on 2m (preferred) or 1m, target the opposing 5m / 15m FVG 0.75R-5R away. Counts toward the scalp limit.">Mech entries<select name="mechEnabled"><option value="true">On (1h-4h tap, 2m / 1m IFVG, 5m / 15m FVG target)</option><option value="false">Off</option></select></label>
+            </div>
+            <div class="cfg-group" data-group="v2" hidden>
+              <p class="cfg-note">Strategy v2 test switches. Each one is off by default; off = the bot trades exactly as before.</p>
+              <label title="A sweep of the Asia / London / NY AM / NY PM high or low, PDH / PDL, PWH / PWL or equal highs / lows counts as context, like an ITH / ITL sweep">Session &amp; day pools as sweeps<select name="poolSweeps"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="Use the v2 grade: A+ = pool sweep AND HTF delivery, singular, chop 0-1, inversion within 5 candles, right side of the range, target 1R+; A = sweep OR delivery. B is logged only, C is skipped">v2 grade (B log only, C skip)<select name="gradeV2"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="A+ trades risk the full Risk per trade, A trades half (needs Position sizing = Risk $ per trade)">Risk by grade (A+ full, A half)<select name="riskByGrade"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="A candle body closing beyond the tapped HTF gap's CE (midpoint) since the touch drops A+ to A">HTF gap CE check<select name="ceCheck"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="More than one FVG in the inversion leg (unless they form one FVG on the next timeframe up) drops A+ to A">Singular FVG<select name="singularCheck"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="Candles closing inside the FVG before the inversion: 2-3 drops A+ to A, 4+ = no trade">Chop check<select name="chopCheck"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="Inversion more than 5 entry candles after the sweep / tap drops A+ to A, more than 10 = no trade">Speed check<select name="speedCheck"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="Longs only from discount, shorts only from premium of the 4h swing range; entry past the 75% / 25% line = no trade">Premium / discount<select name="pdCheck"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="Reference: ETH for BTC, BTC for the alts, none for gold. SMT against the trade = no trade; SMT for it waives the chop / singular caps">SMT veto / bonus<select name="smtV2"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="A long above both the midnight (New York) and day (UTC) open, or a short below both, drops A+ to A">Midnight / day open bias<select name="openBias"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="A setups only in London 02:00-05:00, NY AM 09:30-11:00 or NY PM 13:30-16:00 New York time; A+ at any time">Killzone test<select name="killzoneTest"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="BTC, ETH, SOL, BNB, XRP and DOGE are one cluster: at most 2 open trades in the same direction there (gold separate)">Correlation cap<select name="corrCap"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="No new entries for the rest of the UTC day once the closed trades of the day reach this loss (in R). 0 = off">Daily loss stop (R, 0 = off)<input name="dailyStopR" type="number" min="0" max="20" step="0.5" /></label>
+              <label title="After 2 losing trades in a row on a symbol, no new entry on it for 4 hours">Cooldown after 2 losses<select name="lossCooldown"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="Stop beyond the raided extreme or the swing, whichever is beyond the IFVG and nearer, plus 0.1 x ATR(14) of the entry timeframe">v2 stop (raid / swing + 0.1 ATR)<select name="stopV2"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="Smallest first target in R (0.75 = today's rule, the spec proposes 1)">Minimum first target (R)<input name="minTargetR" type="number" min="0.5" max="3" step="0.25" /></label>
+              <label title="When price closed more than 40% of the stop distance away from the IFVG edge, wait up to 3 entry candles for price to come back to the edge, then enter (filled at market on Binance)">Limit entry at the IFVG edge<select name="limitEntry"><option value="false">Off</option><option value="true">On</option></select></label>
+              <label title="An entry-timeframe candle closing its body back through the far side of the IFVG closes the trade at market">Invalidation exit<select name="invalidationExit"><option value="false">Off</option><option value="true">On</option></select></label>
             </div>
             <button type="submit" class="btn btn-ghost cfg-save">Save settings</button>
           </form>

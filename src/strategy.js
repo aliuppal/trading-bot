@@ -11,7 +11,7 @@
 // entry within 2 candles of the inversion.
 import { activeFvgs, closedCandles, findHtfTap, formingIfvg, latestSetup, minGapFor } from './ifvg.js';
 import { liquidityLevels, findSweep } from './liquidity.js';
-import { sessionPools, findPoolSweep, ceRespected, singularFvg, chopCount, inversionSpeed, premiumDiscount, pdSide, smtState, smtReference, NEXT_TF } from './grade.js';
+import { sessionPools, eqPools, keyOpens, findPoolSweep, ceRespected, singularFvg, chopCount, inversionSpeed, premiumDiscount, pdSide, smtState, smtReference, NEXT_TF } from './grade.js';
 
 /**
  * Setup grade.
@@ -189,6 +189,14 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
   const entryPx = closed.at(-1).close;
   sweep = findSweep(closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now), s.direction, since, { entry: entryPx });
   if (sweep) sweep = { ...sweep, tf: tfLabel(sweepTf) };
+  // v2 pools (poolSweeps, off by default): with no ITH / ITL sweep, a sweep of a session high / low, PDH / PDL,
+  // PWH / PWL or equal highs / lows is the context instead
+  if (settings.poolSweeps && !sweep) {
+    const sc = closedCandles(await market.getCandles(sweepTf, 200), sweepTf, now);
+    const pools = [...sessionPools(closedCandles(await market.getCandles(900, 300), 900, now), await market.getCandles(86400, 30).catch(() => []), now), ...eqPools(sc, since)];
+    const pool = findPoolSweep(sc, s.direction, since, pools, { entry: entryPx });
+    if (pool) sweep = { ...pool, tf: tfLabel(sweepTf), pool: true };
+  }
   // SMT: the correlated market (BTC <-> ETH) did NOT take the same liquidity
   let smt = null;
   if (sweep && opts.pairMarket) {
@@ -228,7 +236,7 @@ async function evaluate(market, g, category, zones, settings, now, liquidity, op
     r.note = `${tag}: ${s.direction} IFVG, no unmitigated ${allowed.join('/')} FVG tap and no ${s.direction === 'bullish' ? 'ITL' : 'ITH'} sweep`;
     return r;
   }
-  r.setup = { ...s, id: `${opts.mech ? 'mech:' : opts.cont ? 'cont:' : ''}${g}:${s.id}`, granularity: g, category, htf, sweep, smt, gapAtr, swingStop, ...quality, ...(opts.mech && { entryModel: 'mech' }), ...(opts.cont && { entryModel: 'cont' }) };
+  r.setup = { ...s, id: `${opts.mech ? 'mech:' : opts.cont ? 'cont:' : ''}${g}:${s.id}`, granularity: g, category, htf, sweep, smt, gapAtr, swingStop, atr, ...quality, ...(opts.mech && { entryModel: 'mech' }), ...(opts.cont && { entryModel: 'cont' }) };
   return r;
 }
 
@@ -264,8 +272,10 @@ async function v2Inputs(market, v2m, pair, setup, now, symbol) {
   const since = closed.at(-1).time - TAP_WINDOW_MINUTES[setup.category] * 60000;
   const sweepTf = SWEEP_TF[setup.category];
   const sweepC = closedCandles(await v2m.getCandles(sweepTf, 200), sweepTf, now);
-  const pools = sessionPools(closedCandles(await v2m.getCandles(900, 300), 900, now), await v2m.getCandles(86400, 30).catch(() => []), now);
+  const m15 = closedCandles(await v2m.getCandles(900, 300), 900, now);
+  const pools = [...sessionPools(m15, await v2m.getCandles(86400, 30).catch(() => []), now), ...eqPools(sweepC, since)];
   const pool = findPoolSweep(sweepC, setup.direction, since, pools, { entry: entryPx });
+  const opens = keyOpens(m15, now);
   const htf = setup.htf;
   let ce = null;
   if (htf) {
@@ -285,7 +295,8 @@ async function v2Inputs(market, v2m, pair, setup, now, symbol) {
   if (pair && smtReference(symbol)) smt = smtState(sweepC, closedCandles(await pair.getCandles(sweepTf, 200), sweepTf, now), setup.direction, since);
   return {
     sweep: Boolean(setup.sweep || pool), delivery: Boolean(htf), displacement: Boolean(setup.displacement),
-    poolSwept: pool ? { type: pool.type, price: Number(pool.price.toPrecision(8)), sweptAt: pool.sweptAt } : null,
+    poolSwept: pool ? { type: pool.type, price: Number(pool.price.toPrecision(8)), sweptAt: pool.sweptAt, extreme: pool.extreme } : null,
+    opens,
     ce, singular: sing.singular, merged: sing.merged, fvgCount: sing.count, chop, speed,
     pdPct: pd?.pct ?? null, pdEntryPct: pd?.entryPct ?? null, pdRange: pd ? [pd.low, pd.high] : null, pd: pdSide(setup.direction, pd), smt,
   };

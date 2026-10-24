@@ -3,12 +3,15 @@ import { summarize } from './indicators.js';
 import { bracketFor, closedCandles } from './ifvg.js';
 import { scanModel, MODELS, MODEL_RULES } from './models.js';
 import { inSession, scanSetups, pathBlockers, wickBlockers } from './strategy.js';
-import { gradeV2, killzoneOf } from './grade.js';
+import { gradeV2, killzoneOf, applyV2Rules, corrCapHit, dailyR, cooldownUntil, stopV2Level, invalidationCandle, limitEntryPrice } from './grade.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
 import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } from './liquidity.js';
 import { trackRecord, approvedEffects, experienceSuggestions } from './learn.js';
 
+/** Strategy v2 (section 3) on / off switches, all off by default: off = today's behaviour. */
+export const V2_SWITCHES = ['poolSweeps', 'openBias', 'ceCheck', 'singularCheck', 'chopCheck', 'speedCheck', 'pdCheck', 'smtV2', 'gradeV2',
+  'riskByGrade', 'corrCap', 'lossCooldown', 'killzoneTest', 'stopV2', 'limitEntry', 'invalidationExit'];
 /** Settings only the pattern models use; the Jev model ignores them, so suggestions for it skip them. */
 const PATTERN_ONLY = ['requireDisplacement', 'requireSweep', 'stopMode', 'earlyExit', 'smt', 'ifvgMaxAge', 'minGapAtr', 'requireHtfTap'];
 
@@ -267,8 +270,50 @@ export class TradingBot {
 
   get settings() { return this.state.settings; }
 
+  /** Limit entry price for a setup (limitEntry, 3.8): the IFVG edge when the price is far from it, else null (market). */
+  limitFor(side, price, setup) {
+    const st = this.state.settings;
+    const b0 = bracketFor(side, price, this.stopZone(setup), { rr: st.riskReward ?? 1, minRiskPct: st.minStopPct ?? 0.15 });
+    return b0 ? limitEntryPrice(side, price, setup, b0.stop) : null;
+  }
+
+  /**
+   * A waiting limit entry: filled (entered, with the normal bracket) once a 1m candle trades to the limit before it
+   * expires, kept while it waits (also when all trade slots are taken), cancelled after 3 entry candles.
+   * Returns { done, side, trade?, order?, note }.
+   */
+  async checkPendingEntry(p, { candles, liquidity, zones, openAll = 0 }) {
+    const now = this.now();
+    const short = p.side === 'short';
+    const recent = (await this.market.getCandles(60, 20).catch(() => [])).filter((c) => c.time + 60000 > p.createdAt && c.time < p.expiresAt);
+    const touched = recent.some((c) => (short ? c.high >= p.limit : c.low <= p.limit));
+    const until = new Date(p.expiresAt).toISOString().slice(11, 16);
+    const slots = this.state.settings.maxOpenTrades ?? 2;
+    if (!touched || openAll >= slots) {
+      if (now >= p.expiresAt) {
+        delete this.state.pendingEntry;
+        return { done: true, side: p.side, note: `Limit ${p.side} at ${fmtPx(p.limit)} not filled within 3 candles: cancelled` };
+      }
+      return { done: false, side: p.side, note: touched ? `Limit ${p.side} at ${fmtPx(p.limit)} touched, waiting for a free slot (until ${until} UTC)` : `Waiting for the limit ${p.side} at ${fmtPx(p.limit)} (IFVG edge, until ${until} UTC)` };
+    }
+    delete this.state.pendingEntry;
+    const account = await this.broker.getAccount(p.limit);
+    const res = await this.openTrade({ side: p.side, setup: p.setup, decision: p.decision, account, price: p.limit, candles, liquidity, zones, limitPrice: p.limit });
+    return { done: true, side: p.side, trade: res.trade, order: res.order, note: `Limit ${p.side} at ${fmtPx(p.limit)} reached · ${res.note}` };
+  }
+
+  /** $ risk of a trade: riskPerTradeUsd, halved for A setups when riskByGrade is on (A+ = full risk, 4.). */
+  riskUsd(setup) {
+    const st = this.state.settings;
+    const base = st.riskPerTradeUsd ?? 50;
+    return st.riskByGrade && setup?.grade !== 'A+' ? base / 2 : base;
+  }
+
   /** Stop zone: the IFVG, widened to the recent swing high / low when stopMode = swing. */
   stopZone(setup) {
+    // v2 stop (stopV2, off by default): beyond the raided extreme or the swing (nearer one) + 0.1 x ATR
+    const v2 = this.state.settings.stopV2 && setup ? stopV2Level(setup) : null;
+    if (v2 != null) return setup.direction === 'bearish' ? { ...setup, top: v2 } : { ...setup, bottom: v2 };
     if (this.state.settings.stopMode !== 'swing' || !Number.isFinite(setup?.swingStop)) return setup;
     return setup.direction === 'bearish' ? { ...setup, top: Math.max(setup.top, setup.swingStop) } : { ...setup, bottom: Math.min(setup.bottom, setup.swingStop) };
   }
@@ -401,7 +446,10 @@ export class TradingBot {
     if (MODELS[patch.model]) s.model = patch.model;
     if (['jev', 'displacement'].includes(patch.earlyExit)) s.earlyExit = patch.earlyExit;
     if (['off', 'info', 'require'].includes(patch.smt)) s.smt = patch.smt;
-    for (const k of ['requireSweep', 'sessionFilter', 'weekendPause', 'learnFromTrades', 'jevShadow']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
+    for (const k of ['requireSweep', 'sessionFilter', 'weekendPause', 'learnFromTrades', 'jevShadow', ...V2_SWITCHES]) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
+    // strategy v2: daily loss stop in R (0 = off) and the smallest first target in R (0.75 = today's rule)
+    if (patch.dailyStopR !== undefined && patch.dailyStopR !== '' && !Number.isNaN(Number(patch.dailyStopR))) s.dailyStopR = Math.min(20, Math.max(0, Number(patch.dailyStopR)));
+    if (patch.minTargetR !== undefined && patch.minTargetR !== '' && !Number.isNaN(Number(patch.minTargetR))) s.minTargetR = Math.min(3, Math.max(0.5, Number(patch.minTargetR)));
     for (const k of ['minGapAtr', 'partialPct']) if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Math.max(0, Number(patch[k]));
     s.partialPct = Math.min(90, s.partialPct || 0);
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
@@ -554,6 +602,22 @@ export class TradingBot {
         }
         if (!live(open, amt) && this.broker.cancelAllAlgos) await this.broker.cancelAllAlgos(); // flat: no leftovers
         return last;
+      }
+    }
+    // strategy v2 invalidation exit (invalidationExit, off by default, 3.9): an entry-timeframe candle body closes back
+    // through the far side of the IFVG before TP1 (no partial taken yet): close at market
+    if (this.state.settings.invalidationExit && open.ifvg && !open.partial) {
+      const g = open.ifvg.granularity || open.granularity;
+      const inv = g ? invalidationCandle(await this.market.getCandles(g, 60).catch(() => []), open, g, this.now()) : null;
+      // an exchange stop / target that already filled is booked by the bracket check below, not closed again here
+      const live = inv && (!(open.exchangeBracket && this.broker.positionAmt)
+        || ((a) => (open.side === 'short' ? a < 0 : a > 0))(await this.broker.positionAmt()));
+      if (live) {
+        await this.log({
+          time: new Date(this.now()).toISOString(), price, action: 'HOLD', source: 'rules', executed: false, tradeId: open.id,
+          note: `Invalidation: ${g / 60}m candle at ${new Date(inv.time).toISOString().slice(11, 16)} UTC closed its body ${open.side === 'short' ? 'above' : 'below'} the IFVG (${open.ifvg.bottom}-${open.ifvg.top}): closing the ${open.side || 'long'} at market`,
+        });
+        return this.closeTrade(open, price, 'invalidation', candles);
       }
     }
     if (open.exchangeBracket && open.broker === this.broker.name && this.broker.supportsBrackets) {
@@ -843,10 +907,11 @@ export class TradingBot {
     return trade;
   }
 
-  async openTrade({ side, setup, decision, account, price, candles, liquidity, zones = [] }) {
+  async openTrade({ side, setup, decision, account, price, candles, liquidity, zones = [], limitPrice = null }) {
     const label = side === 'short' ? 'SHORT' : 'BUY';
-    // size on the live price, not the last candle close (a stale price under-sizes the stop distance)
-    const live = Number(await this.market.getPrice?.().catch(() => null));
+    // size on the live price, not the last candle close (a stale price under-sizes the stop distance).
+    // A touched limit entry fills at the limit in the simulator; a real exchange fills it at market.
+    const live = limitPrice && this.broker.name === 'local' ? limitPrice : Number(await this.market.getPrice?.().catch(() => null));
     if (live > 0) price = live;
     if (!bracketFor(side, price, setup)) return { note: `${label} skipped: price is on the wrong side of the IFVG, no valid stop` };
     const st = this.state.settings;
@@ -856,13 +921,13 @@ export class TradingBot {
       const b0 = bracketFor(side, price, this.stopZone(setup), { rr: st.riskReward ?? 1, minRiskPct: st.minStopPct ?? 0.15 });
       if (!(b0?.risk > 0)) return { note: `${label} skipped: stop distance is zero` };
       const rs = riskSize({
-        riskUsd: st.riskPerTradeUsd ?? 50, stopDist: b0.risk, price, cash: account.cash,
+        riskUsd: this.riskUsd(setup), stopDist: b0.risk, price, cash: account.cash,
         levPick: decision.leverage, maxLev: st.maxLeverage ?? 5, canLever: Boolean(this.broker.supportsLeverage),
       });
       if (rs.notional < MIN_ORDER_USD) return { note: `${label} skipped: not enough cash for the risk size` };
       ({ margin, leverage } = rs);
       size = rs.notional;
-      sizing = ` · risk-sized $${rs.riskUsd}${rs.capped ? ` (trimmed from $${st.riskPerTradeUsd ?? 50}: not enough margin at ${leverage}x)` : ''}`;
+      sizing = ` · risk-sized $${rs.riskUsd}${st.riskByGrade ? ` (${setup.grade || 'A'} risk)` : ''}${rs.capped ? ` (trimmed from $${this.riskUsd(setup)}: not enough margin at ${leverage}x)` : ''}`;
     } else {
       margin = entryNotional(decision.sizePct, account, st);
       if (!margin) return { note: `${label} skipped: position limit reached or not enough cash` };
@@ -888,7 +953,7 @@ export class TradingBot {
     // Slippage guard (risk sizing): the fill moved away from the stop, so the $ risk grew. Trim the extra size right away.
     let trimmed = '';
     if ((st.sizingMode ?? 'percent') === 'risk') {
-      const want = st.riskPerTradeUsd ?? 50;
+      const want = this.riskUsd(setup);
       const dist = Math.abs(entryPrice - b.stop);
       const keep = want / dist;
       if (qty * dist > want * 1.2 && keep < qty) {
@@ -916,7 +981,7 @@ export class TradingBot {
       // Jev's pick when it chose one (still on the right side of the fill, >= 0.5R), else the nearest valid level
       const p = decision?.targetPick;
       const pr = p && (side === 'short' ? entryPrice - p.price : p.price - entryPrice) / b.risk;
-      const lt = pr >= 0.5 ? { ...p, r: Number(pr.toFixed(2)), byJev: true } : liquidityTarget(liquidity, side, entryPrice, b.risk, { category: setup.category });
+      const lt = pr >= 0.5 ? { ...p, r: Number(pr.toFixed(2)), byJev: true } : liquidityTarget(liquidity, side, entryPrice, b.risk, { category: setup.category, minR: st.minTargetR ?? 0.75 });
       if (lt) { b.target = lt.price; b.rr = lt.r; targetLevel = `${lt.level.label || lt.level.type} ${fmtPx(lt.price)}${lt.byJev ? ' (Jev pick)' : ''}`; }
     }
     // HTF FVG chosen as the target at scan time (it was in the way): recompute from the actual fill
@@ -1404,7 +1469,8 @@ export class TradingBot {
           // A+ needs a clear path; without it an untapped "A+" is not tradeable.
           if (setup.grade === 'A+' && !setup.clearPath) setup.grade = 'A';
           // Hard rule: no trade with an opposing 30m / 1h / 2h / 4h FVG between entry and the target it would use.
-          let tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk, { category: setup.category })?.price ?? b0.target) : b0.target;
+          const minR = s.minTargetR ?? 0.75; // smallest first target (strategy v2 proposes 1R)
+          let tgt = (s.targetMode ?? 'rr') === 'liquidity' ? (liquidityTarget(liquidity, sd, price, b0.risk, { category: setup.category, minR })?.price ?? b0.target) : b0.target;
           // Mech: the target is the nearest opposing 5m / 15m FVG 0.75R-5R away (near edge, far edge when price is inside it)
           let mech = null;
           if (setup.entryModel === 'mech') {
@@ -1413,7 +1479,7 @@ export class TradingBot {
               const inside = z.bottom < price && z.top > price;
               const edge = sd === 'short' ? (inside ? z.bottom : z.top) : (inside ? z.top : z.bottom);
               return { z, inside, edge, r: Math.abs(price - edge) / b0.risk };
-            }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price) && e.r >= 0.75)
+            }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price) && e.r >= minR)
               .sort((x, y) => Math.abs(x.edge - price) - Math.abs(y.edge - price))[0] || null;
             if (mech) tgt = mech.edge;
           }
@@ -1428,7 +1494,7 @@ export class TradingBot {
             }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price))
               .sort((x, y) => Math.abs(x.edge - price) - Math.abs(y.edge - price));
             const first = edges[0];
-            if (first && first.r >= 0.75) {
+            if (first && first.r >= minR) {
               tgt = first.edge;
               setup.htfTarget = { price: first.edge, tf: first.z.tf, type: first.z.type, inside: first.inside };
               setup.qualityReasons = [...(setup.qualityReasons || []), `target ${first.z.tf} ${first.z.type} FVG ${first.inside ? 'far edge (gap fill)' : 'near edge'} ${fmtPx(first.edge)} (${first.r.toFixed(2)}R)`];
@@ -1451,7 +1517,7 @@ export class TradingBot {
               const inside = z.bottom < price && z.top > price;
               const edge = sd === 'short' ? (inside ? z.bottom : z.top) : (inside ? z.top : z.bottom);
               return { z, inside, edge, r: Math.abs(price - edge) / b0.risk };
-            }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price) && e.r >= 0.75)
+            }).filter((e) => (sd === 'short' ? e.edge < price : e.edge > price) && e.r >= minR)
               .sort((x, y) => Math.abs(x.edge - price) - Math.abs(y.edge - price));
             if (ltf[0]) {
               const f = ltf[0];
@@ -1468,6 +1534,14 @@ export class TradingBot {
             const targetR = clear.length ? Number(Math.min(...clear).toFixed(2)) : null;
             const g2 = gradeV2({ ...setup.v2, targetR });
             setup.v2 = { ...setup.v2, targetR, killzone: killzoneOf(this.now()), grade: g2.grade, missing: g2.missing, ...(g2.smtLift && { smtLift: g2.smtLift }) };
+          }
+          // strategy v2 rules (section 3), each behind its own switch: grade caps now, skips after the checks below
+          let v2Skip = null;
+          if (V2_SWITCHES.some((k) => s[k])) {
+            const rules = applyV2Rules(setup, s, { now: this.now(), opens: setup.v2?.opens, price });
+            if (rules.notes.length) setup.qualityReasons = [...(setup.qualityReasons || []), ...rules.notes];
+            setup.grade = rules.grade;
+            v2Skip = rules.skip;
           }
           // and no recent long-wick rejection candle (15m and the entry timeframe) between entry and target
           const m15 = await this.market.getCandles(900, 120).catch(() => []);
@@ -1498,6 +1572,13 @@ export class TradingBot {
             scan.setup = null;
             setup = null;
           }
+          // a strategy v2 rule said no trade: keep the setup for the log (B setups are logged, not traded)
+          if (v2Skip && setup) {
+            scan.note = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG skipped (strategy v2): ${v2Skip}`;
+            scan.v2Skipped = setup;
+            scan.setup = null;
+            setup = null;
+          }
         }
       }
       if (isIfvg(model) && setup && !setup.htf && !setup.sweep && s.requireHtfTap !== false) {
@@ -1506,6 +1587,12 @@ export class TradingBot {
         setup = null;
       }
       entry.setup = zoneSummary(scan.setup);
+      // a setup a v2 rule skipped is logged once with the rule that skipped it
+      if (scan.v2Skipped && !(this.state.askedIfvgs || []).includes(scan.v2Skipped.id)) {
+        entry.v2Skipped = zoneSummary(scan.v2Skipped);
+        this.rememberAsked(scan.v2Skipped.id);
+        persist = true;
+      }
       const trades = await this.trades();
       open = trades.find((t) => t.status === 'open');
       const everything = await this.allTrades();
@@ -1523,14 +1610,33 @@ export class TradingBot {
       // IFVG (no Jev): no timed reviews, trades run to stop / target (an opposite IFVG still closes them)
       const review = Boolean(open && !opposite && !strictExit && model !== 'ifvg_nojev' && reviewDue(open, this.now()));
 
+      // strategy v2 limit entry waiting on this symbol: fill it when price trades back to the limit, cancel after 3 candles
+      let pendingNote = null;
+      if (this.state.pendingEntry && open) delete this.state.pendingEntry;
+      else if (this.state.pendingEntry) {
+        const pr = await this.checkPendingEntry(this.state.pendingEntry, { candles, liquidity, zones: scan.zones || [], openAll });
+        if (pr.done) {
+          persist = true;
+          Object.assign(entry, { action: pr.trade ? ENTRY_ACTION[pr.side] : 'HOLD', note: pr.note, executed: Boolean(pr.trade), source: 'rules' });
+          if (pr.trade) Object.assign(entry, { tradeId: pr.trade.id, order: pr.order, label: pr.side === 'short' ? 'SHORT' : 'LONG' });
+          return entry;
+        }
+        pendingNote = pr.note;
+      }
+
       let reason = null; // why the AI is not consulted / an entry can't be taken
-      if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
+      if (pendingNote) reason = pendingNote;
+      else if (open && !opposite && !review) reason = `Managing open trade (bracket active, next review ${nextReviewLabel(open)})`;
       else if (!open && count >= s.maxTradesPerDay) reason = `Daily limit reached (${count}/${s.maxTradesPerDay})`;
       else if (!open && !swingLeft && !scalpLeft) reason = `Daily swing (${s.maxSwingPerDay ?? 5}) and scalp (${s.maxScalpPerDay ?? 5}) limits reached`;
       else if (!open && !setup) reason = `${!swingLeft ? 'Swing limit reached · ' : ''}${!scalpLeft ? 'Scalp limit reached · ' : ''}${scan.note ? `No setup · ${scan.note}` : 'No fresh IFVG setup'}`;
       else if (!open && s.sessionFilter && !inSession(this.now())) reason = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG outside the London / New York session`;
       // open-trade cap: keep scanning, only the entry waits for a free slot
       else if (!open && openAll >= (s.maxOpenTrades ?? 2)) reason = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG found · waiting for a free slot (max ${s.maxOpenTrades ?? 2} trades at a time)`;
+      // strategy v2 portfolio filters (3.7), each off by default
+      else if (!open && s.corrCap && corrCapHit(everything, this.symbol, want)) reason = `${setup.category} ${setup.granularity / 60}m ${setup.direction} IFVG found · correlation cap: ${corrCapHit(everything, this.symbol, want)} ${want} trades already open in the ${/^XA[UG]/.test(this.symbol) ? 'metals' : 'crypto'} cluster (max 2)`;
+      else if (!open && s.dailyStopR > 0 && dailyR(everything, this.now()) <= -s.dailyStopR) reason = `Daily loss stop: ${dailyR(everything, this.now())}R closed today (stop at -${s.dailyStopR}R), no new entries until 00:00 UTC`;
+      else if (!open && s.lossCooldown && cooldownUntil(everything, this.symbol, this.now())) reason = `${this.symbol} cooldown after 2 losses in a row, until ${new Date(cooldownUntil(everything, this.symbol, this.now())).toISOString().slice(11, 16)} UTC`;
       else if (!open && want === 'short' && !canShort) reason = 'Bearish IFVG: this broker cannot short BTC (use BROKER=local)';
       else if (!open && asked) reason = 'Already evaluated this IFVG';
 
@@ -1614,7 +1720,14 @@ export class TradingBot {
         } else if (!open && want && decision.action === ENTRY_ACTION[want]) {
           if (reason) entry.note = `${decision.action} not taken: ${reason}`;
           else if (!confident) entry.note = `Confidence ${decision.confidence} below minimum ${s.minConfidence}`;
-          else {
+          else if (s.limitEntry && this.limitFor(want, price, setup)) {
+            // strategy v2 limit entry: the inversion candle closed far from the IFVG edge, wait for price to come back
+            const lim = this.limitFor(want, price, setup);
+            const g = setup.granularity || 300;
+            this.state.pendingEntry = { side: want, limit: lim, setup, decision, createdAt: this.now(), expiresAt: this.now() + 3 * g * 1000 };
+            entry.note = `Limit ${want} at ${fmtPx(lim)} (IFVG edge) for 3 ${g / 60}m candles: price ${fmtPx(price)} closed more than 40% of the stop distance away`;
+            entry.label = 'LIMIT';
+          } else {
             const res = await this.openTrade({ side: want, setup, decision, account, price, candles, liquidity, zones: scan.zones || [] });
             entry.note = res.note;
             if (res.trade) { entry.executed = true; entry.tradeId = res.trade.id; entry.order = res.order; entry.label = want === 'short' ? 'SHORT' : 'LONG'; }
@@ -1631,8 +1744,9 @@ export class TradingBot {
       }
       // Jev shadow (strategy v2, 5.1): on the no-Jev model Jev grades each new setup once, after any order is placed.
       // Logged only: the answer never opens, sizes or closes a trade.
-      if (setup && model === 'ifvg_nojev' && s.jevShadow === true) {
-        const sh = await this.shadowJev(setup, { liquidity, candles: scan.candles || candles, granularity: scan.granularity }).catch(() => null);
+      const shadowOf = setup || scan.v2Skipped; // B setups a v2 rule skipped are graded too (5.1)
+      if (shadowOf && model === 'ifvg_nojev' && s.jevShadow === true) {
+        const sh = await this.shadowJev(shadowOf, { liquidity, candles: scan.candles || candles, granularity: scan.granularity }).catch(() => null);
         if (sh) { entry.jevShadow = { verdict: sh.verdict ?? null, total: sh.total ?? null, error: sh.error ?? null }; persist = true; }
       }
     } catch (err) {

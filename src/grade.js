@@ -13,7 +13,7 @@
 //   smtState          'for' | 'against' | 'none' against the reference symbol over the same window
 //   gradeV2           A+ / A / B / C from the above (3.6)
 import { findFvgs, minGapFor } from './ifvg.js';
-import { swings } from './liquidity.js';
+import { swings, equalLevels } from './liquidity.js';
 
 const NY = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
@@ -108,7 +108,10 @@ export function findPoolSweep(candles, direction, since, pools, { entry = null }
         let back = -1;
         for (let k = j; k < Math.min(candles.length, j + 4); k++) if (bull ? candles[k].close > p.price : candles[k].close < p.price) { back = k; break; }
         const broke = back >= 0 && candles.slice(back + 1).some((x) => (bull ? x.close < p.price : x.close > p.price));
-        if (back >= 0 && !broke && (!best || c.time > best.sweptAt)) best = { type: p.type, price: p.price, sweptAt: c.time };
+        if (back >= 0 && !broke && (!best || c.time > best.sweptAt)) {
+          const raid = candles.slice(j, back + 1);
+          best = { type: p.type, price: p.price, sweptAt: c.time, extreme: bull ? Math.min(...raid.map((x) => x.low)) : Math.max(...raid.map((x) => x.high)) };
+        }
       }
       break; // the first raid of the pool decides
     }
@@ -259,4 +262,152 @@ export function gradeV2(f) {
   if (!plus.length && !soft.length) return { grade: 'A+', missing: [] };
   if (!plus.length && f.smt === 'for') return { grade: 'A+', missing: [], smtLift: soft };
   return { grade: 'A', missing: [...plus, ...soft] };
+}
+
+/**
+ * Equal highs / lows (3.1) as pools: 2+ untaken swing points within 0.05% of each other on the candles before `since`
+ * (the levels resting there when the sweep window opened). Returns pools like sessionPools, formed at `since`.
+ */
+export function eqPools(candles, since) {
+  const before = (candles || []).filter((c) => c.time < since);
+  if (before.length < 10) return [];
+  const sw = swings(before, 2);
+  return [
+    ...equalLevels(before, sw.highs, 'high').map((e) => ({ type: 'EQH', side: 'high', price: e.price, formedAt: since })),
+    ...equalLevels(before, sw.lows, 'low').map((e) => ({ type: 'EQL', side: 'low', price: e.price, formedAt: since })),
+  ];
+}
+
+/**
+ * Midnight open (00:00 New York) and day open (00:00 UTC) of the current day (3.1, key opens), from oldest-first
+ * candles of 1h or less. Returns { midnight, day } (null when the opening candle is not in the series).
+ */
+export function keyOpens(candles, now = Date.now()) {
+  const today = nyTime(now).date;
+  const utc = Date.parse(`${new Date(now).toISOString().slice(0, 10)}T00:00:00Z`);
+  const mid = (candles || []).find((c) => { const t = nyTime(c.time); return t.date === today && t.minute === 0; });
+  const day = (candles || []).find((c) => c.time === utc);
+  return { midnight: mid?.open ?? null, day: day?.open ?? null };
+}
+
+/** Bias from the key opens: 'with' (long below both / short above both), 'against' (the opposite) or 'mixed'. */
+export function openBias(direction, price, opens) {
+  const lv = [opens?.midnight, opens?.day].filter((x) => Number.isFinite(x));
+  if (!lv.length) return 'mixed';
+  const below = lv.every((x) => price < x), above = lv.every((x) => price > x);
+  const bull = direction === 'bullish';
+  return (bull ? below : above) ? 'with' : (bull ? above : below) ? 'against' : 'mixed';
+}
+
+/**
+ * Section-3 rules, each behind its own switch (all off = nothing changes). setup: the scanned setup with setup.v2
+ * (Phase 1 inputs + grade); s: settings. Returns { grade, skip: reason | null, notes: [] }.
+ *   gradeV2        use the v2 grade: B logged only, C skipped
+ *   ceCheck        a body close beyond the HTF gap's CE caps A+ at A
+ *   singularCheck  not singular caps A+ at A          (an SMT for the trade waives it when smtV2 is on)
+ *   chopCheck      chop 2-3 caps A+ at A, 4+ = no trade (an SMT for the trade waives the cap when smtV2 is on)
+ *   speedCheck     inversion > 5 candles after the context caps A+ at A, > 10 = no trade
+ *   pdCheck        context on the wrong side of the 4h range (or unknown), or entry past 75% / 25% = no trade
+ *   smtV2          SMT against the trade = no trade
+ *   openBias       a long above both key opens / a short below both caps A+ at A
+ *   killzoneTest   A setups only in London, NY AM or NY PM; A+ any time
+ */
+export function applyV2Rules(setup, s, { now = Date.now(), opens = null, price = null } = {}) {
+  const v2 = setup.v2 || {};
+  const notes = [];
+  let grade = setup.grade;
+  if (s.gradeV2 && v2.grade) {
+    grade = v2.grade;
+    if (grade === 'B' || grade === 'C') return { grade, skip: `v2 grade ${grade} (${(v2.missing || []).join(', ') || 'misses an A item'})${grade === 'B' ? ', logged only' : ''}`, notes };
+  }
+  const cap = (why) => { if (grade === 'A+') { grade = 'A'; notes.push(`A+ -> A: ${why}`); } };
+  const smtFor = s.smtV2 && v2.smt === 'for';
+  if (s.smtV2 && v2.smt === 'against') return { grade, skip: 'SMT against the trade', notes };
+  if (s.pdCheck) {
+    const pd = v2.pd || { side: 'unknown' };
+    if (pd.side !== 'right') return { grade, skip: pd.side === 'unknown' ? 'premium / discount unknown (no 4h range)' : `${setup.direction === 'bullish' ? 'long context in premium' : 'short context in discount'} (${v2.pdPct}%)`, notes };
+    if (pd.tooFar) return { grade, skip: `entry too far into ${setup.direction === 'bullish' ? 'premium' : 'discount'} (${v2.pdEntryPct}%)`, notes };
+  }
+  if (s.chopCheck && v2.chop >= 4) return { grade, skip: `chop ${v2.chop} candles inside the FVG (B)`, notes };
+  if (s.speedCheck && v2.speed > 10) return { grade, skip: `inversion ${v2.speed} candles after the sweep / tap (> 10)`, notes };
+  if (s.ceCheck && v2.ce === false) cap('a body closed beyond the HTF gap CE');
+  if (s.singularCheck && v2.singular === false && !smtFor) cap(`not a singular FVG (${v2.fvgCount} FVGs)`);
+  if (s.chopCheck && v2.chop >= 2 && !smtFor) cap(`choppy (${v2.chop})`);
+  if (s.speedCheck && v2.speed > 5) cap(`inversion ${v2.speed} candles after context`);
+  if (s.openBias && Number.isFinite(price) && openBias(setup.direction, price, opens) === 'against') cap(`${setup.direction === 'bullish' ? 'long above' : 'short below'} the midnight / day open`);
+  if (s.killzoneTest && grade !== 'A+' && !inTradingKillzone(now)) return { grade, skip: `${grade} setup outside the London / NY AM / NY PM killzones`, notes };
+  return { grade, skip: null, notes };
+}
+
+/** Correlation cap (3.7): BTC, ETH, SOL, BNB, XRP and DOGE are one cluster; gold / silver are separate. */
+export const inCryptoCluster = (symbol) => !/^(XAU|XAG)/.test(String(symbol || 'BTCUSDC').toUpperCase());
+
+/** Open (or pending) trades in the same direction in the symbol's cluster; returns that count when >= max, else 0. */
+export function corrCapHit(trades, symbol, side, max = 2) {
+  const cluster = inCryptoCluster(symbol);
+  const n = (trades || []).filter((t) => ['open', 'pending'].includes(t.status) && (t.side || 'long') === side
+    && inCryptoCluster(t.symbol) === cluster).length;
+  return n >= max ? n : 0;
+}
+
+const tradeR = (t) => (Number.isFinite(t.r) ? t.r : 0);
+const closedOn = (t, day) => t.status !== 'open' && t.status !== 'pending' && String(t.exitTime || '').slice(0, 10) === day;
+
+/** R closed today (UTC day of now), every symbol. */
+export function dailyR(trades, now = Date.now()) {
+  const day = new Date(now).toISOString().slice(0, 10);
+  return Number((trades || []).filter((t) => closedOn(t, day)).reduce((n, t) => n + tradeR(t), 0).toFixed(2));
+}
+
+/**
+ * Symbol cooldown (3.7): after `losses` losing trades in a row on a symbol, no new entry there for `hours` after the
+ * last of them closed. Returns the time it ends (ms) while it is running, else 0.
+ */
+export function cooldownUntil(trades, symbol, now = Date.now(), { losses = 2, hours = 4 } = {}) {
+  const mine = (trades || []).filter((t) => (t.symbol || 'BTCUSDC') === symbol && t.exitTime && !['open', 'pending'].includes(t.status))
+    .sort((a, b) => Date.parse(b.exitTime) - Date.parse(a.exitTime)).slice(0, losses);
+  if (mine.length < losses || !mine.every((t) => t.status === 'loss' || tradeR(t) < 0)) return 0;
+  const until = Date.parse(mine[0].exitTime) + hours * 3600000;
+  return now < until ? until : 0;
+}
+
+/**
+ * v2 stop (3.8): beyond the raided extreme or the swing, whichever lies beyond the IFVG and is nearer to it, plus
+ * 0.1 x ATR(14) of the entry timeframe; never inside the gap. setup: { direction, top, bottom, swingStop, atr,
+ * sweep?.extreme, v2?.poolSwept?.extreme }. Returns the stop price, or null without an ATR.
+ */
+export function stopV2Level(setup) {
+  if (!(setup.atr > 0)) return null;
+  const bull = setup.direction === 'bullish';
+  const edge = bull ? setup.bottom : setup.top;
+  const cands = [setup.swingStop, setup.sweep?.extreme, setup.v2?.poolSwept?.extreme]
+    .filter((x) => Number.isFinite(x) && (bull ? x < edge : x > edge));
+  const base = cands.length ? (bull ? Math.max(...cands) : Math.min(...cands)) : edge;
+  const pad = 0.1 * setup.atr;
+  return Number((bull ? base - pad : base + pad).toPrecision(8));
+}
+
+/**
+ * Invalidation (3.9): an entry-timeframe candle that closed after the entry with its body back through the far side of
+ * the IFVG (below the bottom for a long, above the top for a short). Returns that candle or null.
+ */
+export function invalidationCandle(candles, trade, seconds, now = Date.now()) {
+  const z = trade.ifvg;
+  if (!z || !Number.isFinite(z.top) || !Number.isFinite(z.bottom)) return null;
+  const from = Date.parse(trade.entryTime);
+  const short = trade.side === 'short';
+  return (candles || []).find((c) => c.time >= from && c.time + seconds * 1000 <= now
+    && (short ? Math.min(c.open, c.close) > z.top : Math.max(c.open, c.close) < z.bottom)) || null;
+}
+
+/**
+ * Limit entry (3.8): when the inversion candle closed more than 40% of the stop distance away from the IFVG edge,
+ * enter with a limit at that edge instead of at market. Returns the limit price or null (market).
+ */
+export function limitEntryPrice(side, price, setup, stop) {
+  const edge = side === 'long' ? setup.top : setup.bottom;
+  const dist = Math.abs(price - stop);
+  if (!(dist > 0) || !Number.isFinite(edge)) return null;
+  const away = side === 'long' ? price - edge : edge - price;
+  return away > 0.4 * dist ? edge : null;
 }

@@ -12,6 +12,11 @@ import { aggregate } from '../src/ifvg.js';
 
 // Named options: --days=3 --mode=mechanical|jev --rr=1 --be=0 --fee=0.1 --minstop=0.15 --only=clear|aplus|scalp|swing|long|short --nosignal --quiet
 const opt = Object.fromEntries(process.argv.slice(2).map((a) => a.replace(/^--/, '').split('=')).map(([k, v]) => [k, v ?? true]));
+// --set=gradeV2,riskByGrade,dailyStopR:3 : any bot setting (strategy v2 switches); "key" = true, "key:value" = that value
+const SET = Object.fromEntries(String(process.argv.find((a) => a.startsWith('--set='))?.slice(6) || '').split(',').filter(Boolean).map((kv) => {
+  const [k, v] = kv.split(':');
+  return [k, v === undefined ? true : v === 'true' ? true : v === 'false' ? false : Number.isNaN(Number(v)) ? v : Number(v)];
+}));
 const DAYS = Number(opt.days || 3);
 const MODE = opt.mode || 'mechanical';
 const RR = Number(opt.rr || 1); // risk:reward target multiple
@@ -163,6 +168,7 @@ async function main() {
     intervalMinutes: 1, granularity: 300, minConfidence: 0.6, maxPositionPct: 50, maxTradePct: 10,
     maxTradesPerDay: 20, maxSwingPerDay: 10, maxScalpPerDay: 10, ifvgMaxAge: 7, requireHtfTap: true,
     entryTimeframes: 'all', scalpEnabled: !opt.mechonly && !opt.contonly, swingEnabled: !opt.mechonly && !opt.contonly, ...EXP, riskReward: RR, breakevenAtR: BE, minStopPct: MINSTOP, maxLeverage: 5,
+    ...SET,
   };
   const ai = MODE === 'jev'
     ? { provider: 'jev', apiKey: process.env.OPENROUTER_API_KEY, model: 'typesafe/jev-1.13' }

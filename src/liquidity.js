@@ -63,7 +63,11 @@ export function findSweep(candles, direction, since, { n = 2, entry = null } = {
         let back = -1;
         for (let k = j; k < Math.min(candles.length, j + 4); k++) if (bull ? candles[k].close > p.price : candles[k].close < p.price) { back = k; break; }
         const broke = back >= 0 && candles.slice(back + 1).some((x) => (bull ? x.close < p.price : x.close > p.price));
-        if (back >= 0 && !broke && (!best || c.time > best.sweptAt)) best = { type: bull ? 'ITL' : 'ITH', price: p.price, sweptAt: c.time };
+        if (back >= 0 && !broke && (!best || c.time > best.sweptAt)) {
+          // extreme: the furthest wick of the raid (the v2 stop sits beyond it)
+          const raid = candles.slice(j, back + 1);
+          best = { type: bull ? 'ITL' : 'ITH', price: p.price, sweptAt: c.time, extreme: bull ? Math.min(...raid.map((x) => x.low)) : Math.max(...raid.map((x) => x.high)) };
+        }
       }
       break;
     }

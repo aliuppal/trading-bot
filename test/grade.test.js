@@ -64,14 +64,14 @@ for (const type of LOWS) {
   test(`findPoolSweep: bullish sweep of ${type}`, () => {
     const pools = [{ type, side: 'low', price: 95, formedAt: T0 }];
     const s = findPoolSweep(sweepCandles(true), 'bullish', T0 + 15 * 5 * M, pools, { entry: 100 });
-    assert.deepEqual(s, { type, price: 95, sweptAt: T0 + 20 * 5 * M });
+    assert.deepEqual(s, { type, price: 95, sweptAt: T0 + 20 * 5 * M, extreme: 94 });
   });
 }
 for (const type of HIGHS) {
   test(`findPoolSweep: bearish sweep of ${type}`, () => {
     const pools = [{ type, side: 'high', price: 105, formedAt: T0 }];
     const s = findPoolSweep(sweepCandles(false), 'bearish', T0 + 15 * 5 * M, pools, { entry: 100 });
-    assert.deepEqual(s, { type, price: 105, sweptAt: T0 + 20 * 5 * M });
+    assert.deepEqual(s, { type, price: 105, sweptAt: T0 + 20 * 5 * M, extreme: 106 });
   });
 }
 
