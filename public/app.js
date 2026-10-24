@@ -454,7 +454,12 @@ function renderOpenTrade(t) {
   if (!t) return '';
   const price = (symOf(t) === chartSymbol ? candles.at(-1)?.close : t.lastPrice) ?? t.entryPrice;
   const short = t.side === 'short';
-  const pos = Math.min(100, Math.max(0, ((price - t.stop) / (t.target - t.stop)) * 100));
+  // bar from the ORIGINAL stop to the target, split at the entry: profit sits on the green side even after the stop
+  // moved to breakeven (the red part then shows the risk that is no longer there)
+  const sl0 = t.initialStop ?? t.stop;
+  const span = t.target - sl0 || 1;
+  const pos = Math.min(100, Math.max(0, ((price - sl0) / span) * 100));
+  const split = Math.min(100, Math.max(0, ((t.entryPrice - sl0) / span) * 100));
   const upnl = (short ? t.entryPrice - price : price - t.entryPrice) * t.qty;
   return `<div class="ot-head"><span><span class="pill OPEN">OPEN ${short ? 'SHORT' : 'LONG'}</span> <b>${esc(symOf(t))}</b> ${t.ifvg?.grade === 'A+' ? '<span class="pill APLUS">A+</span> ' : ''}${t.ifvg?.entryModel === 'mech' ? '<span class="pill MECH">MECH</span> ' : ''}<span class="pill ${t.category === 'scalp' ? 'SCALP' : 'SWING'}">${t.category === 'scalp' ? 'SCALP' : 'SWING'}${t.granularity ? ` · ${tfText(t.granularity)}` : ''}</span> <span class="pill">1:${t.rr ?? 1}</span>${(t.leverage ?? 1) > 1 ? ` <span class="pill">${t.leverage}x</span>` : ''}${t.breakeven ? ' <span class="pill BE">BE</span>' : ''} ${fmtTime(t.entryTime)}</span>
       <span class="num ${upnl >= 0 ? 'up' : 'down'}">${signedUsd(upnl)}</span></div>
@@ -463,7 +468,7 @@ function renderOpenTrade(t) {
       <div><span>Entry</span>${px(t.entryPrice)}</div>
       <div><span>Target</span><em class="up">${px(t.target)}</em></div>
     </div>
-    <div class="ot-bar" title="Price between stop and target"><b style="left:${pos}%"></b></div>
+    <div class="ot-bar${t.breakeven ? ' be' : ''}" style="--split:${split.toFixed(1)}%" title="Price between the original stop and the target (split at the entry)"><b style="left:${pos}%"></b></div>
     <div class="ot-risk">${t.breakeven ? `Stop at entry: <b>no risk</b> · aiming for <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>` : `Risking <b>${usd((t.riskUsd ?? (t.qty && (t.initialStop ?? t.stop) ? Math.abs(t.entryPrice - (t.initialStop ?? t.stop)) * t.qty : null)))}</b> to make <b>${usd(Math.abs(t.target - t.entryPrice) * t.qty)}</b>`}${(t.leverage ?? 1) > 1 ? ` · ${t.leverage}x` : ''}</div>
     ${t.nextReviewAt && t.model !== 'ifvg_nojev' ? `<div class="ot-risk">Next Jev review <b>${new Date(t.nextReviewAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b></div>` : ''}
     ${reasonHtml(t)}`;
