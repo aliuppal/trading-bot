@@ -134,6 +134,16 @@ app.get('/api/jev/last', wrap(async (req, res) => {
   if ((bot.state.settings.model || 'ifvg') === 'ifvg_nojev') return res.json(mine.find((d) => /^rules/.test(d.source || '')) || null);
   res.json(mine.find((d) => /^jev/.test(d.source || '') && d.reasoning) || mine.find((d) => d.reasoning) || mine[0] || null);
 }));
+// Jev shadow log (strategy v2, 5.1): Jev's grade of each setup on the no-Jev model, joined with the trade it became.
+app.get('/api/jev/shadow', wrap(async (req, res) => {
+  const list = await kv.get('jev_shadow', []);
+  const trades = await bot.allTrades();
+  const byKey = new Map(trades.filter((t) => t.ifvg?.id).map((t) => [`${t.symbol || 'BTCUSDC'}:${t.ifvg.id}`, t]));
+  res.json(list.slice(0, Number(req.query.limit) || 200).map((x) => {
+    const t = byKey.get(x.id);
+    return t ? { ...x, trade: { id: t.id, status: t.status, r: t.r ?? null, pnl: t.pnl ?? null } } : x;
+  }));
+}));
 app.get('/api/trades', wrap(async (req, res) => res.json(await bot.allTrades())));
 // Redis + Neon storage: rebuild the trades list from the Neon archive.
 app.post('/api/storage/repair-trades', wrap(async (req, res) => {

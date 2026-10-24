@@ -567,6 +567,112 @@ export async function askJev(context, { apiKey, model }, fetchImpl = fetch) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Jev shadow grading (strategy v2, 5.1 / 5.2): Jev scores a setup the rules found; the answer is logged, never traded.
+// ---------------------------------------------------------------------------------------------
+
+/** Stored with every shadow answer so results from different prompt versions are never mixed (5.8). */
+export const SHADOW_PROMPT_VERSION = 'shadow-v1';
+
+const SCORE_0_2 = (what) => [`0: ${what[0]}`, `1: ${what[1]}`, `2: ${what[2]}`];
+export const SHADOW_QUESTIONS = {
+  draw_obvious: {
+    type: 'score',
+    instructions: 'Grade one IFVG setup the trading rules already found (the rules decide eligibility, you only grade it). '
+      + 'How obvious is the liquidity this trade is drawn to (equal highs / lows, session high / low, PDH / PDL, an LRLR, an unfilled gap)?',
+    criteria: SCORE_0_2(['no obvious draw in the trade direction', 'a draw exists but is unclear or far', 'a clear, obvious draw the trade aims at']),
+  },
+  narrative_agrees: {
+    type: 'score',
+    instructions: 'Does the narrative agree with the trade: the daily / 4h bias, and price relative to the day open and midnight open (longs better below, shorts above)?',
+    criteria: SCORE_0_2(['the narrative is against the trade', 'mixed or neutral', 'the narrative clearly supports the trade']),
+  },
+  clean_price_action: {
+    type: 'score',
+    instructions: 'How clean is the price action into the setup: one displacing leg through a single FVG, no chop through it?',
+    criteria: SCORE_0_2(['choppy, overlapping candles, several gaps', 'acceptable but not clean', 'clean displacement, a single FVG, no chop']),
+  },
+  event_risk: {
+    type: 'choice',
+    instructions: 'Is there event risk right now (a scheduled high-impact release such as CPI, NFP, FOMC or PCE close by, or an abnormal market)?',
+    criteria: { YES: 'Event risk: the setup should be skipped', NO: 'No unusual event risk' },
+  },
+};
+
+/** 5.2: total 5-6 = full grade risk, 3-4 = half, 0-2 or event risk = skip. */
+export function shadowVerdict(scores, eventRisk) {
+  const total = ['draw_obvious', 'narrative_agrees', 'clean_price_action'].reduce((n, k) => n + (scores[k] ?? 0), 0);
+  return { total, verdict: eventRisk ? 'skip' : total >= 5 ? 'full' : total >= 3 ? 'half' : 'skip' };
+}
+
+/** Compact state for the shadow grade: the setup, its v2 fields and the liquidity around it. */
+export function buildShadowState({ setup, symbol, liquidity, recentCandles = [], granularity, now = Date.now() }) {
+  const v2 = setup.v2 || {};
+  return {
+    symbol,
+    trade_direction: setup.direction === 'bullish' ? 'long' : 'short',
+    trade_type: setup.category ?? null,
+    entry_model: setup.entryModel || 'standard',
+    entry_timeframe: granularity ? `${granularity / 60}m` : null,
+    setup_grade_rules: setup.grade ?? null,
+    setup_grade_v2: v2.grade ?? null,
+    v2_missing: v2.missing?.length ? v2.missing.join(', ') : 'none',
+    setup_quality: setup.qualityReasons?.length ? setup.qualityReasons.join(', ') : null,
+    ifvg: `${setup.bottom}-${setup.top}, formed in ${setup.formationCandles ?? '?'} candles from the first of ${setup.seriesFvgs || 1} FVGs${setup.displacement ? ', displacement candle' : ''}`,
+    htf_fvg_tap: setup.htf ? `${setup.htf.tf} ${setup.htf.type} FVG ${setup.htf.bottom}-${setup.htf.top}${v2.ce === false ? ', a body closed beyond its CE' : ''}` : 'none',
+    liquidity_sweep: setup.sweep ? `${setup.sweep.tf} ${setup.sweep.type} ${setup.sweep.price}` : 'none',
+    pool_swept: v2.poolSwept ? `${v2.poolSwept.type} ${v2.poolSwept.price}` : 'none',
+    chop_candles: v2.chop ?? null,
+    singular_fvg: v2.singular == null ? null : v2.singular ? (v2.merged ? 'yes (merges into one FVG on the next timeframe up)' : 'yes') : 'no',
+    inversion_speed_candles: v2.speed ?? null,
+    premium_discount_pct: v2.pdPct ?? null,
+    smt: v2.smt ?? 'n/a',
+    killzone: v2.killzone ?? null,
+    htf_bias_4h: setup.bias || 'unclear',
+    liquidity_above: liquidity ? describeLevels(liquidity.above, 4) : 'unknown',
+    liquidity_below: liquidity ? describeLevels(liquidity.below, 4) : 'unknown',
+    draw_on_liquidity: liquidity?.draw ?? null,
+    lrlr: liquidity?.lrlr ? `${liquidity.lrlr.side}: ${liquidity.lrlr.prices.map((p) => Number(p.toPrecision(6))).join(', ')}` : 'none',
+    time_utc: new Date(now).toISOString().slice(0, 16),
+    recent_closes: recentCandles.map((c) => Number(c.close.toPrecision(8))),
+  };
+}
+
+/**
+ * Ask Jev to grade a setup (shadow mode). Returns { scores, eventRisk, total, verdict, promptVersion, model, cost }.
+ * Throws on HTTP / format errors; the caller logs the error and carries on.
+ */
+export async function askJevShadow(context, { apiKey, model }, fetchImpl = fetch, { timeoutMs = 20000 } = {}) {
+  const res = await fetchImpl(JEV_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://github.com/aliuppal/trading-bot',
+      'X-Title': 'CryptoQuant Pro',
+    },
+    body: JSON.stringify({ model, state: buildShadowState(context), questions: SHADOW_QUESTIONS }),
+    ...(typeof AbortSignal !== 'undefined' && AbortSignal.timeout && { signal: AbortSignal.timeout(timeoutMs) }),
+  });
+  if (!res.ok) {
+    const err = new Error(`Jev HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  if (data.error) throw new Error(`Jev: ${data.error.message || JSON.stringify(data.error)}`);
+  const ans = data.answers || {};
+  const scores = {};
+  for (const k of ['draw_obvious', 'narrative_agrees', 'clean_price_action']) {
+    const v = Number(ans[k]?.score);
+    if (!Number.isFinite(v)) throw new Error(`Jev shadow: no score for ${k}: ${JSON.stringify(data).slice(0, 200)}`);
+    scores[k] = Math.round(Math.min(2, Math.max(0, v)));
+  }
+  const er = String(ans.event_risk?.choice || '').toUpperCase();
+  if (!['YES', 'NO'].includes(er)) throw new Error(`Jev shadow: no event_risk answer: ${JSON.stringify(data).slice(0, 200)}`);
+  return { scores, eventRisk: er === 'YES', ...shadowVerdict(scores, er === 'YES'), promptVersion: SHADOW_PROMPT_VERSION, model: data.model || model, cost: data.usage?.cost };
+}
+
 /** Rule-based fallback so the site still works without an API key. */
 export function ruleBasedDecision(ind) {
   const { rsi_14: r, macd: m, sma_20, sma_50, price } = ind;

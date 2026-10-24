@@ -1,8 +1,9 @@
-import { decide, askJev, researchSuggestions } from './ai.js';
+import { decide, askJev, researchSuggestions, askJevShadow, SHADOW_PROMPT_VERSION } from './ai.js';
 import { summarize } from './indicators.js';
 import { bracketFor, closedCandles } from './ifvg.js';
 import { scanModel, MODELS, MODEL_RULES } from './models.js';
 import { inSession, scanSetups, pathBlockers, wickBlockers } from './strategy.js';
+import { gradeV2, killzoneOf } from './grade.js';
 import { renderTradeImage } from './snapshot.js';
 import { appendList } from './store.js';
 import { liquidityLevels, liquidityTarget, liquidityTargets, describeLevels } from './liquidity.js';
@@ -235,6 +236,7 @@ const zoneSummary = (z) => z && {
   }),
   ...(z.sweep && { sweep: z.sweep }), ...(z.htfTarget && { htfTarget: z.htfTarget }), ...(z.lrlrToTp != null && { lrlrToTp: z.lrlrToTp }),
   ...(z.smt != null && { smt: z.smt }), ...(z.gapAtr != null && { gapAtr: z.gapAtr }), ...(z.bias && { bias: z.bias, withBias: z.withBias }),
+  ...(z.v2 && { v2: z.v2 }),
 };
 
 export class TradingBot {
@@ -399,7 +401,7 @@ export class TradingBot {
     if (MODELS[patch.model]) s.model = patch.model;
     if (['jev', 'displacement'].includes(patch.earlyExit)) s.earlyExit = patch.earlyExit;
     if (['off', 'info', 'require'].includes(patch.smt)) s.smt = patch.smt;
-    for (const k of ['requireSweep', 'sessionFilter', 'weekendPause', 'learnFromTrades']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
+    for (const k of ['requireSweep', 'sessionFilter', 'weekendPause', 'learnFromTrades', 'jevShadow']) if (patch[k] !== undefined) s[k] = patch[k] === true || patch[k] === 'true';
     for (const k of ['minGapAtr', 'partialPct']) if (patch[k] !== undefined && patch[k] !== '' && !Number.isNaN(Number(patch[k]))) s[k] = Math.max(0, Number(patch[k]));
     s.partialPct = Math.min(90, s.partialPct || 0);
     if (patch.requireDisplacement !== undefined) s.requireDisplacement = patch.requireDisplacement === true || patch.requireDisplacement === 'true';
@@ -1002,6 +1004,28 @@ export class TradingBot {
     if (i >= 0) { trades[i] = trade; await this.kv.set('trades', trades); }
   }
 
+  /** Jev shadow grade of a setup (once per setup id), kept in 'jev_shadow' (newest first). Never affects a trade. */
+  async shadowJev(setup, { liquidity, candles = [], granularity }) {
+    if (!this.ai?.apiKey || this.ai.provider !== 'jev') return null;
+    const seen = this.state.shadowed || [];
+    if (seen.includes(setup.id)) return null;
+    this.state.shadowed = [...seen, setup.id].slice(-50);
+    const base = {
+      id: `${this.symbol}:${setup.id}`, setupId: setup.id, symbol: this.symbol, time: new Date(this.now()).toISOString(),
+      direction: setup.direction, category: setup.category, entryModel: setup.entryModel || null, granularity,
+      grade: setup.grade ?? null, v2grade: setup.v2?.grade ?? null,
+    };
+    let rec;
+    try {
+      rec = { ...base, ...(await askJevShadow({ setup, symbol: this.symbol, liquidity, recentCandles: candles.slice(-24), granularity, now: this.now() }, this.ai, this.fetch)) };
+    } catch (err) {
+      rec = { ...base, error: err.message, promptVersion: SHADOW_PROMPT_VERSION };
+    }
+    const list = await this.kv.get('jev_shadow', []);
+    await this.kv.set('jev_shadow', [rec, ...list.filter((x) => x.id !== rec.id)].slice(0, 1000));
+    return rec;
+  }
+
   rememberAsked(id) {
     this.state.askedIfvgs = [id, ...(this.state.askedIfvgs || []).filter((x) => x !== id)].slice(0, 50);
   }
@@ -1055,7 +1079,7 @@ export class TradingBot {
     if (model === 'jev') return this.jevModelView(s, open);
     // the selected model's own scan (IFVG, ICT 2022, Unicorn, AMD, Forever)
     const scan = isIfvg(model)
-      ? await scanSetups(this.market, s, this.now(), { pairMarket: this.pairMarket })
+      ? await scanSetups(this.market, s, this.now(), { pairMarket: this.pairMarket, symbol: this.symbol })
       : await scanModel(model, this.market, s, this.now(), { pairMarket: this.pairMarket });
     const indicators = summarize(scan.candles);
     const st = scan.setup;
@@ -1348,7 +1372,7 @@ export class TradingBot {
       }
       const scanSettings = { ...s, swingEnabled: s.swingEnabled !== false && swingLeft, scalpEnabled: s.scalpEnabled !== false && scalpLeft };
       const scan = isIfvg(model)
-        ? await scanSetups(this.market, scanSettings, this.now(), { pairMarket: this.pairMarket })
+        ? await scanSetups(this.market, scanSettings, this.now(), { pairMarket: this.pairMarket, symbol: this.symbol })
         : await scanModel(model, this.market, scanSettings, this.now(), { pairMarket: this.pairMarket });
       let { setup } = scan;
       const { candles } = scan;
@@ -1435,6 +1459,15 @@ export class TradingBot {
               setup.htfTarget = { price: f.edge, tf: f.z.tf, type: f.z.type, inside: f.inside };
               setup.qualityReasons = [...(setup.qualityReasons || []), `scalp target ${f.z.tf} ${f.z.type} FVG ${f.inside ? 'far edge (gap fill)' : 'near edge'} ${fmtPx(f.edge)} (${f.r.toFixed(2)}R)`];
             }
+          }
+          // v2 grade (log only): clear target = the nearest FVG / liquidity target at least 1R away
+          if (setup.v2 && !setup.v2.error) {
+            const rOf = (p) => Math.abs(p - price) / b0.risk;
+            const clear = [setup.htfTarget && rOf(setup.htfTarget.price), liquidityTargets(liquidity, sd, price, b0.risk, { minR: 1, category: setup.category })[0]?.r]
+              .filter((r) => r >= 1);
+            const targetR = clear.length ? Number(Math.min(...clear).toFixed(2)) : null;
+            const g2 = gradeV2({ ...setup.v2, targetR });
+            setup.v2 = { ...setup.v2, targetR, killzone: killzoneOf(this.now()), grade: g2.grade, missing: g2.missing, ...(g2.smtLift && { smtLift: g2.smtLift }) };
           }
           // and no recent long-wick rejection candle (15m and the entry timeframe) between entry and target
           const m15 = await this.market.getCandles(900, 120).catch(() => []);
@@ -1595,6 +1628,12 @@ export class TradingBot {
             ? `Jev ${decision.action} ${decision.confidence} against the open ${open.side || 'long'}, below the ${s.minConfidence} minimum to close it`
             : setup ? `Jev ${decision.action} does not match the ${setup.direction} IFVG setup` : `Jev ${decision.action}, but there is no IFVG setup to enter`;
         }
+      }
+      // Jev shadow (strategy v2, 5.1): on the no-Jev model Jev grades each new setup once, after any order is placed.
+      // Logged only: the answer never opens, sizes or closes a trade.
+      if (setup && model === 'ifvg_nojev' && s.jevShadow === true) {
+        const sh = await this.shadowJev(setup, { liquidity, candles: scan.candles || candles, granularity: scan.granularity }).catch(() => null);
+        if (sh) { entry.jevShadow = { verdict: sh.verdict ?? null, total: sh.total ?? null, error: sh.error ?? null }; persist = true; }
       }
     } catch (err) {
       Object.assign(entry, { action: 'ERROR', note: err.message, executed: false });

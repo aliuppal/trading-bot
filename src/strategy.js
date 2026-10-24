@@ -11,6 +11,7 @@
 // entry within 2 candles of the inversion.
 import { activeFvgs, closedCandles, findHtfTap, formingIfvg, latestSetup, minGapFor } from './ifvg.js';
 import { liquidityLevels, findSweep } from './liquidity.js';
+import { sessionPools, findPoolSweep, ceRespected, singularFvg, chopCount, inversionSpeed, premiumDiscount, pdSide, smtState, smtReference, NEXT_TF } from './grade.js';
 
 /**
  * Setup grade.
@@ -243,7 +244,51 @@ export async function scanSetups(rawMarket, settings, now = Date.now(), opts = {
   const bias = await htfBias(market).catch(() => null);
   const res0 = await scanCore(market, settings, now, liquidity, { pairMarket, bias });
   if (res0.setup) res0.setup = { ...res0.setup, bias, withBias: bias ? bias === res0.setup.direction : null };
+  // v2 grade inputs (log only). Other timeframes come from a separate cache so the scan above sees the same candles.
+  if (res0.setup) {
+    res0.setup.v2 = await v2Inputs(market, cachedMarket(rawMarket), opts.pairMarket ? cachedMarket(opts.pairMarket) : null, res0.setup, now, opts.symbol)
+      .catch((err) => ({ error: err.message }));
+  }
   return { ...res0, liquidity };
+}
+
+/**
+ * Inputs of the v2 grade (strategy v2, section 3) for a found setup: pool sweep, CE respect, singular FVG, chop,
+ * speed, premium / discount and SMT. Logged with the setup; nothing here decides a trade. market: the scan's
+ * candle cache (the setup's own timeframe, so its candle indexes match); v2m / pair: separate caches for the rest.
+ */
+async function v2Inputs(market, v2m, pair, setup, now, symbol) {
+  const g = setup.granularity;
+  const closed = closedCandles(await market.getCandles(g, 200), g, now);
+  const entryPx = closed.at(-1).close;
+  const since = closed.at(-1).time - TAP_WINDOW_MINUTES[setup.category] * 60000;
+  const sweepTf = SWEEP_TF[setup.category];
+  const sweepC = closedCandles(await v2m.getCandles(sweepTf, 200), sweepTf, now);
+  const pools = sessionPools(closedCandles(await v2m.getCandles(900, 300), 900, now), await v2m.getCandles(86400, 30).catch(() => []), now);
+  const pool = findPoolSweep(sweepC, setup.direction, since, pools, { entry: entryPx });
+  const htf = setup.htf;
+  let ce = null;
+  if (htf) {
+    const zs = ZONE_TFS[htf.tf];
+    ce = ceRespected(await v2m.getCandles(zs, 300), htf, zs, now).ok;
+  }
+  const up = NEXT_TF[g];
+  const sing = singularFvg(setup, closed, g, up ? closedCandles(await v2m.getCandles(up, 200), up, now) : []);
+  const chop = chopCount(closed, setup);
+  // speed: from the latest context event (sweep or tap) to the inversion
+  const ctxTimes = [setup.sweep?.sweptAt, pool?.sweptAt, htf?.tappedAt].filter((t) => t != null);
+  const speed = inversionSpeed(closed, setup, ctxTimes.length ? Math.max(...ctxTimes) : null);
+  // premium / discount of the swept level, else the tapped gap's CE
+  const ctxPrice = setup.sweep?.price ?? pool?.price ?? (htf ? (htf.top + htf.bottom) / 2 : null);
+  const pd = premiumDiscount(await v2m.getCandles(14400, 120), ctxPrice, entryPx);
+  let smt = null;
+  if (pair && smtReference(symbol)) smt = smtState(sweepC, closedCandles(await pair.getCandles(sweepTf, 200), sweepTf, now), setup.direction, since);
+  return {
+    sweep: Boolean(setup.sweep || pool), delivery: Boolean(htf), displacement: Boolean(setup.displacement),
+    poolSwept: pool ? { type: pool.type, price: Number(pool.price.toPrecision(8)), sweptAt: pool.sweptAt } : null,
+    ce, singular: sing.singular, merged: sing.merged, fvgCount: sing.count, chop, speed,
+    pdPct: pd?.pct ?? null, pdEntryPct: pd?.entryPct ?? null, pdRange: pd ? [pd.low, pd.high] : null, pd: pdSide(setup.direction, pd), smt,
+  };
 }
 
 async function scanCore(market, settings, now, liquidity, opts = {}) {

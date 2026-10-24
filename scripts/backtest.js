@@ -168,7 +168,7 @@ async function main() {
     ? { provider: 'jev', apiKey: process.env.OPENROUTER_API_KEY, model: 'typesafe/jev-1.13' }
     : { provider: 'jev', apiKey: 'mechanical', model: 'mechanical' };
   if (MODE === 'jev' && !ai.apiKey) throw new Error('OPENROUTER_API_KEY is required for mode=jev');
-  const bot = new TradingBot({ broker, market, ai, settings, kv, autoStart: true, now: () => now, fetchImpl: MODE === 'jev' ? realFetch : mechanical, pairMarket });
+  const bot = new TradingBot({ broker, market, ai, settings, kv, autoStart: true, now: () => now, fetchImpl: MODE === 'jev' ? realFetch : mechanical, pairMarket, symbol: PRODUCT });
 
   const t0 = Date.now();
   let steps = 0, lastDay = '';
@@ -217,6 +217,13 @@ async function main() {
   console.log(`  partial ${stat(closed.filter((t) => t.partial))}`);
   const R_ = closed.reduce((a, t) => a + (t.r || 0), 0);
   const w = closed.filter((t) => t.status === 'win').length, l = closed.filter((t) => t.status === 'loss').length;
+  // v2 grade (log only in phase 1): how the trades taken today would grade under strategy v2
+  const v2 = {};
+  for (const t of closed) { const g = t.ifvg?.v2?.grade || (t.ifvg?.v2?.error ? 'error' : 'none'); (v2[g] ||= []).push(t); }
+  console.log(`  v2 grades: ${Object.entries(v2).map(([g, ts]) => `${g} ${ts.length} (${ts.reduce((n, t) => n + (t.r || 0), 0).toFixed(2)}R)`).join(' · ')}`);
+  const why = {};
+  for (const t of closed) for (const m of t.ifvg?.v2?.missing || []) why[m.replace(/[0-9]+/g, 'N')] = (why[m.replace(/[0-9]+/g, 'N')] || 0) + 1;
+  console.log(`  v2 missing: ${Object.entries(why).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(' · ') || 'none'}`);
   console.log(`RESULT ${opt.label || 'run'} | trades ${closed.length} | win ${w + l ? Math.round((w / (w + l)) * 100) : 0}% | netR ${R_.toFixed(2)} | avgR ${(closed.length ? R_ / closed.length : 0).toFixed(2)}`);
   const asked = decisions.filter((d) => d.confidence !== undefined && d.source !== 'bracket');
   console.log(`\nSetups decided by ${MODE === 'jev' ? 'Jev' : 'the stand-in'}: ${asked.length} · executed: ${asked.filter((d) => d.executed).length}`);
