@@ -36,7 +36,7 @@ const EXP = {
 const CACHE = opt.cache || null;
 const PRODUCT = opt.product || 'BTC-USD'; // --product=ETH-USD: any Coinbase product (SMT pair: ETH for BTC, BTC for the rest)
 const BINANCE = !PRODUCT.includes('-'); // e.g. XAUUSDT, BTCUSDT
-const PAIR = BINANCE ? (PRODUCT === 'BTCUSDT' ? 'ETHUSDT' : 'BTCUSDT') : PRODUCT === 'BTC-USD' ? 'ETH-USD' : 'BTC-USD';
+const PAIR = BINANCE ? (PRODUCT.startsWith('BTC') ? 'ETHUSDT' : 'BTCUSDT') : PRODUCT === 'BTC-USD' ? 'ETH-USD' : 'BTC-USD';
 const candlesFor = (gran, start, end, product) => (BINANCE ? fetchBinance(gran, start, end, product) : fetchRange(gran, start, end, product));
 const MIN = 60000;
 
@@ -77,6 +77,7 @@ async function fetchBinance(gran, start, end, symbol) {
     if (!rows.length) break;
     for (const k of rows) out.push({ time: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] });
     t = rows.at(-1)[0] + gran * 1000;
+    await new Promise((r) => setTimeout(r, 250)); // stay under Binance's request weight limit on long downloads
   }
   return out;
 }
@@ -115,6 +116,7 @@ async function main() {
     pairSeries = { 300: await candlesFor(300, start - 320 * 5 * MIN, end + MIN, PAIR), 900: await candlesFor(900, start - 320 * 15 * MIN, end + MIN, PAIR) };
     if (CACHE) fs.writeFileSync(CACHE, JSON.stringify({ series, pairSeries }));
   }
+  if (opt.fetchonly) { console.log(`cached ${PRODUCT}: ${series[60].length} 1m candles`); return; } // --fetchonly: download the candles, no run
   series[120] = aggregate(series[60], 120);
   series[180] = aggregate(series[60], 180);
   series[1800] = aggregate(series[900], 1800);
@@ -192,6 +194,13 @@ async function main() {
   const fmt = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
   const closed = trades.filter((t) => t.status !== 'open').reverse();
   const open = trades.filter((t) => t.status === 'open');
+  // --json=file: the closed trades, for the strategy v2 report (scripts/v2report.js)
+  if (opt.json) {
+    fs.writeFileSync(opt.json, JSON.stringify(closed.map((t) => ({
+      symbol: PRODUCT, side: t.side, entryTime: t.entryTime, exitTime: t.exitTime, r: t.r, status: t.status, exitReason: t.exitReason,
+      category: t.category, entryModel: t.ifvg?.entryModel || null, grade: t.ifvg?.grade || null, v2: t.ifvg?.v2 || null, entryPrice: t.entryPrice,
+    }))));
+  }
   const stat = (arr) => {
     const w = arr.filter((t) => t.status === 'win').length, l = arr.filter((t) => t.status === 'loss').length, be = arr.filter((t) => t.status === 'breakeven').length;
     const pnl = arr.reduce((a, t) => a + (t.pnl || 0), 0);
