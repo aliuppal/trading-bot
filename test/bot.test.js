@@ -955,6 +955,14 @@ test('weekend pause: off on Saturday, back on Monday; manual switch is respected
   t = MON + 7 * 864e5;
   assert.equal(await bot.weekendGuard(), 'resumed');
   assert.equal(bot.state.running, true);
+  // paused under a model with the pause on, then the setting is off (other model selected): it must not stay off
+  t = SAT + 14 * 864e5;
+  assert.equal(await bot.weekendGuard(), 'paused');
+  bot.state.settings.weekendPause = false;
+  assert.equal(await bot.weekendGuard(), 'resumed', 'pause switched off: resumes right away');
+  assert.equal(bot.state.running, true);
+  assert.equal(bot.state.weekendPaused, false);
+  assert.equal(await bot.weekendGuard(), null);
 });
 
 test('reviewMinutes: 5m swings every 2 min (any model), scalps 3, 15m swings 30', async () => {

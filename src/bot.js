@@ -510,9 +510,16 @@ export class TradingBot {
    */
   async weekendGuard() {
     const s = this.state;
-    if (s.settings.weekendPause === false) return null;
     const now = this.now();
     const note = (msg) => this.log({ time: new Date(now).toISOString(), action: 'HOLD', source: 'weekend', executed: false, note: msg }).catch(() => null);
+    if (s.settings.weekendPause === false) {
+      // paused while the setting was on (e.g. under another model) and the setting is off now: switch back on
+      if (!s.weekendPaused) return null;
+      Object.assign(s, { running: true, weekendPaused: false });
+      await this.save();
+      await note('Weekend pause is off: auto-trading resumed');
+      return 'resumed';
+    }
     if (isWeekend(now)) {
       const key = weekendKey(now);
       if (s.running && s.weekendPausedFor !== key) {
